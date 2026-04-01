@@ -1,0 +1,363 @@
+
+PRODUCT REQUIREMENTS DOCUMENT
+Gemini to Copilot
+via Copilot Pages
+Fully admin-driven bulk migration — Google Vault exports Gemini data for all users, the migration tool processes each user's data in isolation and creates Copilot Pages in their M365 account. Zero user involvement at any step.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Version	1.0
+Status	Draft
+Date	March 30, 2026
+Owner	Product Team
+Deployment	Admin-run bulk — Google Vault source
+Platform	Microsoft 365 Business / Enterprise
+Classification	Internal
+ 
+1. Executive Summary
+This document defines requirements for the Gemini-to-Copilot Pages Migration Tool — a fully admin-driven utility that migrates Google Gemini conversation history for all users in an organization into their respective Microsoft Copilot Pages. Users are not involved at any step of the process.
+
+The IT admin exports all users' Gemini conversation history in a single operation using Google Vault — Google's enterprise eDiscovery tool available in Workspace Business Plus and Enterprise plans. The migration tool reads the Vault export, processes each user's data in complete isolation, and creates Copilot Pages in each user's M365 account via delegated Microsoft Graph API permissions. Each user logs into Copilot after migration and finds their conversations waiting in the sidebar.
+
+Key principle	The IT admin runs two operations: (1) export from Google Vault, (2) run the migration tool. No user action is required at any point — no Takeout exports, no ZIP submissions, no user notifications during migration.
+
+2. Problem Statement
+2.1 The Core Gap
+Users on Microsoft 365 Business/Enterprise switching from Google Gemini to Microsoft Copilot have no way to carry their conversation history across. Copilot starts completely empty for every user. Valuable prompts, iterative work, and generated content built up in Gemini becomes inaccessible once the organisation moves to Copilot.
+
+2.2 Why Native Chat History Injection Is Not Possible
+Approach	Why It Fails
+Microsoft Graph API write to chat history	No write endpoint exists for Copilot conversation history in any API version including beta
+Browser automation (Playwright/Puppeteer)	Creates new conversations dated today only; breaks on UI updates; blocked by M365 bot detection
+Copilot Studio import	No import feature for external chat history from third-party platforms
+Direct database access	Not available to customers; M365 backend is closed infrastructure
+
+2.3 Why Copilot Pages Is the Right Solution
+Property	Detail
+Appears in Copilot sidebar	Pages show under 'Recent pages' in the Copilot interface — visible on the user's first login after migration
+Fully editable by user	User can add notes, annotations, and highlights directly on the page after migration
+Ask Copilot from the page	User can ask Copilot follow-up questions about any page without copy-pasting context
+Shareable across M365 tenant	Pages can be shared with colleagues via standard M365 permissions
+Supported Graph API	Pages created via Microsoft Graph Loop/Pages API — stable, documented, enterprise-supported
+Gemini link inline	Each page includes an expandable Gemini original response with a direct link back to the Gemini conversation
+
+3. Data Source — Google Vault
+3.1 What Is Google Vault
+Google Vault is Google's enterprise eDiscovery, archiving, and data export tool included in Google Workspace Business Plus, Enterprise Standard, and Enterprise Plus plans. It allows IT admins to export data for any user or all users in the domain without any user involvement or notification.
+
+Prerequisite	Google Vault must be enabled for your Workspace plan. Verify access at admin.google.com → Apps → Google Vault. If not available, upgrade to Business Plus or Enterprise Standard before proceeding.
+
+3.2 Why Google Vault Over Other Options
+Option	Verdict
+Google Vault (eDiscovery)	Recommended — admin exports all users' Gemini history in one operation, no user involvement
+Google Workspace Admin Data Export	Available but does NOT include Gemini AI conversation history — covers Gmail, Drive, Calendar only
+Google Workspace Admin SDK	No Gemini chat API available — cannot pull conversation history programmatically
+Individual user Takeout	Requires each user to act — not suitable for fully admin-driven migration
+
+3.3 How Admin Exports Gemini Data via Google Vault
+Step	Action
+1. Open Vault	Navigate to vault.google.com — sign in with Google Workspace admin credentials
+2. Create a matter	Matters → Create matter → Name: 'Gemini Migration [date]'
+3. Create an export	Inside the matter → Exports → Create export
+4. Select data type	Data type: Gemini for Google Workspace → Select all accounts in domain
+5. Set date range	Optional: set date range to capture full conversation history
+6. Start export	Click Export → Google Vault queues the job (duration depends on data volume)
+7. Download	When complete, download the export ZIP from Vault → transfer to migration machine
+
+3.4 Vault Export Structure
+Google Vault produces a ZIP archive structured per user. The migration tool reads this structure automatically — no manual mapping or users.json config required:
+
+vault_export/
+  ├── alice@company.com/
+  │     └── gemini_conversations.json
+  ├── bob@company.com/
+  │     └── gemini_conversations.json
+  ├── carol@company.com/
+  │     └── gemini_conversations.json
+  └── export_metadata.json
+
+The tool reads export_metadata.json to discover all users, then processes each user's gemini_conversations.json in isolation. The user's email address is derived directly from the directory structure — no manual configuration needed.
+
+3.5 Vault Export Contents
+Data Type	Included in Vault Gemini Export
+Gemini chat conversation history	Yes — all conversations within the specified date range
+User prompts	Yes — full text of every prompt the user sent
+Gemini responses	Yes — full text of every Gemini response
+Conversation IDs	Yes — used to construct Gemini conversation URLs
+Conversation timestamps	Yes — original dates preserved in export
+Conversation titles	Yes — Gemini-generated titles for each conversation
+AI-generated images (in-chat)	No — images are not stored or exportable from Vault
+Rendered charts (in-chat)	No — visual renders are not stored; code that generated them is included if present in response text
+Uploaded files	No — files uploaded to Gemini are processed temporarily and not retained
+
+4. Deployment Architecture
+4.1 End-to-End Admin Flow
+Zero user involvement	Users are never contacted, notified, or asked to perform any action during this migration. The entire process runs between the IT admin, Google Vault, and Microsoft Graph API.
+
+Step	Action
+1. Vault export	Admin exports all users' Gemini history from Google Vault in one operation — downloads export ZIP
+2. Configure tool	Admin sets API credentials in .env file — Microsoft Graph OAuth token and Azure OpenAI key
+3. Dry run	Admin runs: migrate --vault ./vault_export --dry-run — reviews per-user summary and total cost estimate
+4. Visual scan	Tool auto-runs visual asset scanner per user — admin reviews pre-migration report for flagged conversations
+5. Run migration	Admin runs: migrate --vault ./vault_export — tool processes all users sequentially
+6. Per-user processing	Tool auto-discovers each user from Vault structure → parses → replays prompts → creates Copilot Pages in that user's account → clears memory → next user
+7. Report	Tool produces migration_report.json — admin reviews per-user page counts, errors, and flagged assets
+8. Users log in	Each user opens Copilot and sees their migrated conversations under 'Recent pages' — no action needed from them
+
+4.2 Per-User Data Isolation
+Guarantee	Detail
+User auto-discovery	Tool reads user list from Vault export_metadata.json — no manual config file needed
+Export isolation	Each user's gemini_conversations.json is loaded, processed, and cleared from memory before the next user begins
+Pages scoped to owner	Tool calls POST /users/{email}/drive/root/children — pages created in the specific user's account only
+Admin visibility	Admin sees only the migration log: email, page count, status, duration, errors. Never sees page content
+Default page privacy	All created pages are private to the user — standard M365 permissions apply
+No user credentials	Tool uses admin's delegated Graph API token — no individual user passwords or tokens required
+Memory clearing	Each user's conversation data, prompts, and responses are cleared from memory after their pages are created
+
+4.3 CLI Interface
+The migration tool is a single CLI command with the following flags:
+
+migrate --vault <path>              Run full migration from Vault export directory
+migrate --vault <path> --dry-run    Preview per-user summary and cost, no API calls
+migrate --vault <path> --user <email>  Process one user only
+migrate --vault <path> --resume     Skip users already in checkpoint file
+migrate --vault <path> --parallel 3 Process up to 3 users concurrently
+migrate --vault <path> --from-date 2024-01-01  Filter conversations by date
+
+5. Prerequisites
+5.1 Google Workspace Requirements
+Requirement	Detail
+Google Vault license	Included in Workspace Business Plus, Enterprise Standard, Enterprise Plus — verify at admin.google.com → Apps → Google Vault
+Vault admin role	Admin account must have Google Vault admin privileges
+Gemini for Workspace	Users must have had Gemini for Workspace enabled — personal Google Gemini (gmail.com) data is not accessible via Vault
+Data retention policy	Vault export only includes conversations within the organisation's retention period — check Vault retention rules before export
+
+5.2 Microsoft 365 Requirements
+Action	Where	Permission Scope
+Register Azure AD application	Azure Portal → App Registrations	N/A — registration only
+Grant delegated Graph permissions	Azure Portal → App → API Permissions	Files.ReadWrite.All, Sites.ReadWrite.All, User.Read.All
+Enable Copilot API access	M365 Admin Center → Copilot settings	Tenant-level setting
+Grant admin consent for all users	Azure Portal → Enterprise Applications	Approves delegated permissions across the tenant
+Assign Copilot license to each user	M365 Admin Center → Users → Licenses	Per-user Copilot license required for Pages
+
+5.3 Migration Machine Requirements
+Requirement	Detail
+Runtime	Node.js 18+ or Python 3.10+
+Disk space	At least 2× the size of the Vault export ZIP for processing headroom
+Network	Direct internet access to graph.microsoft.com and openai.azure.com
+Credentials	Microsoft Graph OAuth token and Azure OpenAI API key stored in .env file
+Vault export	Downloaded and unzipped to a local directory on the migration machine
+
+6. Functional Requirements
+6.1 Module 1 — Vault Export Reader & User Discovery
+ID	Requirement
+FR-1.1	Accept a path to an unzipped Google Vault export directory as the sole input: --vault <path>
+FR-1.2	Read export_metadata.json to auto-discover all users in the export — no manual user config required
+FR-1.3	Validate that a gemini_conversations.json file exists for each discovered user — skip and log missing users
+FR-1.4	Parse each user's JSON: extract conversation ID, title, timestamp, user prompts, and Gemini responses
+FR-1.5	Construct Gemini conversation URL from conversation ID: https://gemini.google.com/app/{id}
+FR-1.6	Support --from-date and --to-date flags to filter conversations by date range across all users
+FR-1.7	Output auto-discovered user list with conversation counts before any processing begins
+
+6.2 Module 2 — Visual Asset Scanner (per user)
+ID	Requirement
+FR-2.1	Scan each user's conversations for responses referencing images or visual content using heuristic keyword matching
+FR-2.2	Scan for conversations containing chart/graph code (Python matplotlib, Chart.js, D3, SQL) in response text
+FR-2.3	Generate a pre-migration visual asset report per user: flagged conversations with title, date, and Gemini URL
+FR-2.4	Display warning: flagged conversations may contain images — these must be downloaded from Gemini before migration as they are not in the Vault export
+FR-2.5	Migration proceeds automatically after scan — admin can review the report but no manual confirmation gate is required
+FR-2.6	Pages for flagged conversations display a red warning banner with the Gemini conversation URL for post-migration image retrieval
+
+6.3 Module 3 — Copilot Response Generator (per user)
+ID	Requirement
+FR-3.1	Primary: replay each user's prompts via Microsoft Graph API Copilot interactions endpoint
+FR-3.2	Fallback: use Azure OpenAI API (GPT-4o) when Graph API is unavailable or admin approval is pending
+FR-3.3	Send each prompt as a stateless standalone request — no conversation threading between prompts
+FR-3.4	Flag follow-up prompts (e.g. 'make it shorter', 'continue') — include with a context prefix or skip based on --skip-followups flag
+FR-3.5	Implement exponential backoff on rate limit (429) and server error (5xx) responses
+FR-3.6	Write per-user checkpoint after each successful response — interrupted runs resume from last prompt
+FR-3.7	Configurable concurrency per user (default: 3 parallel prompt requests, max: 10)
+FR-3.8	Prompt and response data held in memory only — never written to any intermediate disk file
+
+6.4 Module 4 — Copilot Pages Creator (per user) — Core Feature
+ID	Requirement
+FR-4.1	Authenticate using admin's delegated Graph API token, scoped to each user's account via /users/{email}/ path
+FR-4.2	Create one Copilot Page per Gemini conversation: POST /users/{email}/drive/root/children
+FR-4.3	Page title = original Gemini conversation title from Vault export
+FR-4.4	Metadata header on each page: original conversation date, prompt count, direct Gemini conversation URL link
+FR-4.5	Visual asset warning banner at top of page if conversation was flagged — includes Gemini URL for image download
+FR-4.6	Per prompt structure: [Prompt block] → [Copilot response block] → [Gemini reference toggle] → [Notes block]
+FR-4.7	Gemini reference toggle: expands inline to show archived Gemini response text from Vault export
+FR-4.8	Gemini URL link inside toggle: 'Open original Gemini conversation' hyperlink to https://gemini.google.com/app/{id}
+FR-4.9	Notes block: empty editable section per prompt — pre-labelled 'Add your notes here'
+FR-4.10	Pages must appear in user's Copilot sidebar under 'Recent pages' within 60 seconds of creation
+FR-4.11	After all pages for a user are created, clear that user's data from memory before processing the next user
+
+6.5 Module 5 — Admin Migration Report
+ID	Requirement
+FR-5.1	Write migration_report.json on completion of all users
+FR-5.2	Per-user row: email, conversations processed, pages created, prompts replayed, visual assets flagged, errors, duration
+FR-5.3	Summary row: total users, total pages, total errors, total estimated API cost, total duration
+FR-5.4	Error entries include: user email, conversation title, error message, and recommended action
+FR-5.5	Report contains metadata only — zero conversation content, zero prompt text, zero response text
+FR-5.6	Separate visual_assets_report.json listing per-user flagged conversations with Gemini URLs for admin reference
+
+6.6 Module 6 — Google Drive → OneDrive Document Migration (per user)
+ID	Requirement
+FR-6.1	Use admin's Google service account with domain-wide delegation to access each user's Google Drive
+FR-6.2	List Drive files for each user from the Gemini usage period via Google Drive API v3
+FR-6.3	Download files in Office format: Docs → .docx, Sheets → .xlsx, Slides → .pptx
+FR-6.4	Upload converted files to each user's OneDrive via Graph API: PUT /users/{email}/drive/root:/{path}:/content
+FR-6.5	Flag Sheets files containing charts — note in report that charts survive .xlsx conversion
+FR-6.6	Per-user document migration report: files moved, skipped, conversion errors, total size transferred
+
+7. Copilot Page Structure
+7.1 Page Layout
+Block	Content
+Page title	Original Gemini conversation title (from Vault export)
+Metadata header	Original conversation date · Prompt count · 'Open in Gemini' hyperlink
+Visual asset warning	Red banner — shown only if visual assets were flagged. Includes Gemini URL for manual image download
+Prompt block (repeated)	Original user question — locked reference block, not editable
+Copilot response block	Fresh Copilot response generated during migration — locked reference block
+Gemini reference toggle	'View Gemini's original answer' — expands inline to show Vault-archived response
+Gemini URL link	Inside toggle: 'Open original Gemini conversation' — links to https://gemini.google.com/app/{id}
+Notes block	Empty editable section per prompt — user adds annotations post-migration
+Ask Copilot bar	Persistent input at bottom of every page for follow-up questions
+
+7.2 Gemini Reference Toggle Behaviour
+Condition	Behaviour
+Gemini URL recoverable	Toggle expands Vault-archived response text + shows hyperlink to open original Gemini conversation
+No Gemini URL recoverable	Toggle expands response text + shows original date only — no hyperlink
+Responses differ significantly	Orange 'Responses differ' badge shown inside the Gemini panel
+Visual asset flagged	Red warning banner at top of page with Gemini URL for manual image download
+Chart code in Vault response	Green 'Chart code — re-runnable' badge inside Gemini panel
+
+8. Technical Architecture
+8.1 System Flow
+Stage	Detail
+Source	Google Vault export ZIP → unzipped to local directory on migration machine
+Discovery	Tool reads export_metadata.json → auto-discovers all users and their export file paths
+Scan	Visual asset scanner runs per user → generates visual_assets_report.json
+Dry run	Per-user summary printed: conversation count, prompt count, estimated cost — no API calls made
+Processing loop	For each user: parse JSON → filter → replay prompts → create pages → clear memory → next user
+Response generation	Primary: Graph API Copilot interactions / Fallback: Azure OpenAI GPT-4o
+Page creation	Graph Loop/Pages API: POST /users/{email}/drive/root/children per conversation
+Reporting	migration_report.json written on completion — metadata only, no conversation content
+
+8.2 API Stack
+API	Purpose	Auth	Notes
+Microsoft Graph — Copilot interactions	Replay prompts for Copilot responses	Delegated OAuth 2.0	Requires admin to enable Copilot API
+Azure OpenAI (GPT-4o)	Fallback response generator	Azure AD / API key	No admin approval needed
+Microsoft Graph — Loop/Pages	Create Copilot Pages per user	Delegated OAuth 2.0	POST /users/{email}/drive/root/children
+Microsoft Graph — Files	Upload documents to OneDrive per user	Delegated OAuth 2.0	PUT /users/{email}/drive/root:/{path}:/content
+Google Drive API v3	Access and convert user Drive files	Service account + domain-wide delegation	Admin-level, no user OAuth needed
+
+8.3 Technology Stack
+Component	Technology	Rationale
+Runtime	Node.js 18+ or Python 3.10+	Cross-platform; strong JSON and HTTP support
+CLI	Commander.js (Node) / Click (Python)	Mature CLI with flag and config file support
+Graph API client	@microsoft/microsoft-graph-client / msgraph-sdk-python	Official Microsoft SDK with built-in auth handling
+M365 auth	@azure/msal-node / msal-python	MSAL delegated OAuth 2.0 flow
+Azure OpenAI client	openai npm / openai Python SDK	Official SDK compatible with Azure endpoints
+Google Drive client	googleapis npm / google-api-python-client	Official Google SDK for Drive API v3
+Secrets	dotenv (.env file) + environment variables	Zero credentials in code, logs, or reports
+Checkpointing	Per-user JSON checkpoint file	Resume from last successful prompt on interruption
+
+9. User Stories
+Role	Story	Acceptance Criteria
+End user	After migration I want to open Copilot and see my conversations in the sidebar without doing anything myself	Pages visible under 'Recent pages' on first Copilot login — user took no action
+End user	I want to open a page and see what Gemini originally said for each of my prompts	Gemini reference toggle expands correctly on every prompt block
+End user	I want a link to go directly to my original Gemini conversation to recover any images	Gemini URL hyperlink present and functional in every reference panel
+End user	I want to add notes to a migrated conversation	Notes block is editable and changes persist
+End user	I want to ask Copilot follow-up questions about a migrated conversation	Ask Copilot bar functional at bottom of every page
+IT admin	I want to export all users' Gemini data in one operation without involving users	Google Vault bulk export covers all users in the domain — zero user action needed
+IT admin	I want the tool to auto-discover users from the Vault export without manual configuration	Tool reads export_metadata.json and processes all users automatically
+IT admin	I want each user's data to be completely isolated from all other users	Zero cross-user data access confirmed in migration report
+IT admin	I want a report showing migration status for every user	migration_report.json produced with per-user rows and summary totals
+IT admin	I want to re-run migration for a single user if it failed	--user flag processes one user only, --resume skips completed users
+IT admin	I want to preview the migration before running it for real	--dry-run shows per-user summary and cost estimate with no API calls
+
+10. Security & Data Governance
+Critical	User conversation data must never be written to any shared location, logged, or retained after the user's migration is complete. Each user's data exists in memory only during their processing window.
+
+10.1 Data Handling Rules
+Rule	Implementation
+Vault export files	Stored only on admin's migration machine — never uploaded to any cloud service by the tool
+Conversation data in processing	Held in memory only — never written to any intermediate disk file
+API credentials	Stored in .env file only — never in code, CLI arguments, logs, or reports
+Migration report content	Metadata only: counts, statuses, durations, error codes — zero conversation content
+Checkpoint file content	Conversation IDs and completion booleans only — no prompt or response text
+Admin access to pages	Delegated token used only to create pages — admin cannot read or modify page content after creation
+Memory clearing	Each user's full dataset (prompts, responses, page content) cleared from memory after their pages are created
+Vault export cleanup	Admin should delete the Vault export from the migration machine after successful migration and report sign-off
+
+10.2 Required Permission Scopes
+Permission	Type	Purpose
+Files.ReadWrite.All	Delegated M365	Create Copilot Pages in each user's OneDrive
+Sites.ReadWrite.All	Delegated M365	Write Loop/Pages content to user's M365 workspace
+User.Read.All	Delegated M365	Resolve user email to M365 account for routing
+Copilot.ReadWrite	Delegated M365	Replay prompts via M365 Copilot API (if available)
+https://www.googleapis.com/auth/drive.readonly	Google service account	Read and export user Drive files for document migration
+
+11. Non-Functional Requirements
+Category	Requirement	Target	Priority
+Performance	Pages created per hour per user	200+ pages/hour	High
+Performance	Time to process 100 users sequentially	< 12 hours	Medium
+Reliability	Page creation success rate with retries	> 98% per user	High
+Latency	Page visible in user sidebar after creation	< 60 seconds	High
+Security	Credentials in logs or output files	Zero tolerance	Critical
+Security	Cross-user data access	Zero tolerance	Critical
+Security	Data routed through third-party services	None — direct API only	Critical
+Resumability	Recovery from interrupted run	--resume flag from checkpoint	High
+Cost transparency	Per-user cost shown before execution	Always in --dry-run	High
+Portability	Admin machine OS	Mac, Windows, Linux	Medium
+Usability	Admin setup time from README	< 30 minutes	Medium
+Scalability	Max users in single run	500+ users	Medium
+
+12. Known Limitations
+Limitation	Mitigation
+Vault not included in all Workspace plans	Verify Vault access before project starts — upgrade to Business Plus or Enterprise Standard if needed
+Pages appear under 'Recent pages', not 'Recent chats'	Closest achievable experience — Microsoft provides no chat history write API
+Pages show migration date, not original Gemini date	Original date preserved as metadata in the page header from Vault export
+Copilot responses differ from Gemini originals	Gemini reference link lets users compare both responses — difference is expected and useful
+AI-generated images not in Vault export	Visual asset scanner flags affected conversations with Gemini URLs — admin can retrieve post-migration
+Gemini URL expires if user's Google account is deleted	Migrated pages retain the Gemini response text from Vault — URL is optional access path
+Graph API admin approval takes 3–5 days	Azure OpenAI fallback available immediately with zero admin dependency
+Vault retention policy may exclude old conversations	Check and extend retention window before export if historical data is needed
+Follow-up prompts lack standalone context	--skip-followups flag excludes them; or include with auto-generated context prefix
+
+13. Milestones & Phasing
+Phase	Deliverable	Timeline	Status
+Phase 1	Google Vault export reader — auto-discovery of users from export_metadata.json	Week 1	Planned
+Phase 2	Per-user Gemini JSON parser + conversation ID extractor + URL builder	Week 1–2	Planned
+Phase 3	Visual asset scanner + per-user visual_assets_report.json	Week 2–3	Planned
+Phase 4	Azure OpenAI fallback integration + rate limiting + per-user checkpointing	Week 3–4	Planned
+Phase 5	Microsoft Graph Copilot API integration (primary response generator)	Week 4–5	Planned
+Phase 6	Copilot Pages creator — per-user Graph API page creation with full page structure	Week 5–7	Planned
+Phase 7	Gemini reference toggle + Vault response text + Gemini URL + diff badge	Week 7–8	Planned
+Phase 8	Admin migration report (migration_report.json) — metadata only	Week 8	Planned
+Phase 9	Google Drive → OneDrive document migration using service account	Week 9–10	Planned
+Phase 10	CLI flags: --dry-run, --resume, --user, --parallel, --from-date	Week 10	Planned
+Phase 11	End-to-end testing with real Vault exports, security review, admin setup guide	Week 11–12	Planned
+
+14. Success Metrics
+•	All migrated pages appear in each user's Copilot sidebar within 60 seconds of creation
+•	Zero instances of User A's data appearing in User B's Copilot Pages
+•	Tool auto-discovers all users from Vault export with zero manual configuration
+•	Gemini reference toggle present and functional on every prompt block in every page
+•	Gemini conversation URL resolves correctly for all conversations with a recoverable ID
+•	100% of conversations with potential visual assets flagged in visual_assets_report.json
+•	90%+ of standalone prompts replay successfully without manual intervention
+•	Zero credentials or conversation content appear in any log, report, or checkpoint file
+•	Admin setup and first dry-run completed in under 30 minutes following the README
+•	Tool processes 100 users successfully in under 12 hours running sequentially
+•	Cost estimate accuracy within 10% of actual API spend
+
+15. Open Questions
+#	Question	Owner / Notes
+1	Does Google Vault export Gemini conversation data in the same JSON structure as individual Takeout exports, or is the schema different?	Engineering — must test with a real Vault export before building the parser
+2	Does the Microsoft Graph Loop/Pages API support locked (read-only) prompt and response blocks alongside editable notes blocks in the same page?	Engineering — prototype needed to confirm Loop API capabilities
+3	What is the Graph API rate limit for Loop/Pages creation per user at scale? Does processing 200+ pages/hour trigger tenant-level throttling?	Engineering — load test with real M365 tenant required
+4	Should the tool extend the Google Vault retention window programmatically via the Vault API before export, to ensure all historical conversations are captured?	Engineering + Legal — assess Vault API capabilities and data governance policy
+5	What happens if a user's Vault export JSON is empty (user had no Gemini conversations) — skip silently or flag in report?	Engineering — define handling for zero-conversation users
+6	Should migrated pages be created in a dedicated folder named 'Migrated from Gemini' in each user's Copilot, or added directly to the root Recent pages list?	Design — UX consistency across users
+
+Gemini to Copilot via Copilot Pages  •  Admin-run via Google Vault  •  PRD v1.0  •  Confidential & Internal

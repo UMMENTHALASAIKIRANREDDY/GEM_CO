@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gemini → Copilot Migration | CloudFuze</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --blue:    #0078d4;
+      --blue-dk: #005a9e;
+      --green:   #107c10;
+      --red:     #d13438;
+      --orange:  #ca5010;
+      --gray:    #f3f2f1;
+      --gray-dk: #e1dfdd;
+      --text:    #201f1e;
+      --muted:   #605e5c;
+      --border:  #d2d0ce;
+      --white:   #ffffff;
+      --radius:  8px;
+      --shadow:  0 2px 8px rgba(0,0,0,.12);
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #faf9f8;
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--blue);
+      color: var(--white);
+      padding: 0 32px;
+      height: 52px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 2px 6px rgba(0,0,0,.2);
+    }
+    header img { height: 24px; }
+    header h1 { font-size: 16px; font-weight: 600; letter-spacing: .3px; }
+    header span { font-size: 13px; opacity: .8; margin-left: 4px; }
+
+    /* ── Layout ── */
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 420px;
+      gap: 24px;
+      max-width: 1200px;
+      margin: 32px auto;
+      padding: 0 24px;
+    }
+
+    /* ── Card ── */
+    .card {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .card-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--gray-dk);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .card-header .step-badge {
+      background: var(--blue);
+      color: var(--white);
+      width: 24px; height: 24px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 700;
+      flex-shrink: 0;
+    }
+    .card-header h2 { font-size: 14px; font-weight: 600; }
+    .card-body { padding: 20px; }
+
+    /* ── Steps ── */
+    .steps { display: flex; flex-direction: column; gap: 20px; }
+
+    /* ── Upload Zone ── */
+    .upload-zone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 40px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+      position: relative;
+    }
+    .upload-zone:hover, .upload-zone.drag-over {
+      border-color: var(--blue);
+      background: #f0f6fc;
+    }
+    .upload-zone input[type=file] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer;
+    }
+    .upload-zone .icon { font-size: 36px; margin-bottom: 10px; }
+    .upload-zone p { color: var(--muted); font-size: 13px; margin-top: 6px; }
+    .upload-zone strong { color: var(--blue); }
+    .upload-zone.uploaded { border-color: var(--green); background: #f0f8f0; }
+    .upload-zone.uploaded .icon::after { content: '✓'; color: var(--green); }
+
+    /* ── Form fields ── */
+    .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+    .field label { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+    .field input, .field select {
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 8px 10px;
+      font-size: 14px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color .2s;
+    }
+    .field input:focus, .field select:focus { border-color: var(--blue); box-shadow: 0 0 0 2px rgba(0,120,212,.15); }
+
+    /* ── User mapping table ── */
+    #mapping-section { display: none; }
+    .mapping-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .mapping-table th {
+      background: var(--gray);
+      text-align: left;
+      padding: 8px 10px;
+      font-weight: 600;
+      font-size: 11px;
+      text-transform: uppercase;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+    }
+    .mapping-table td { padding: 6px 6px; border-bottom: 1px solid var(--gray-dk); vertical-align: middle; }
+    .mapping-table tr:last-child td { border-bottom: none; }
+    .mapping-table input {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 5px 8px;
+      font-size: 12px;
+      font-family: inherit;
+    }
+    .mapping-table input:focus { outline: none; border-color: var(--blue); }
+    .source-email { color: var(--muted); font-size: 12px; font-family: monospace; }
+    .conv-count {
+      background: var(--gray);
+      border-radius: 10px;
+      padding: 2px 8px;
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    /* ── Options ── */
+    .options-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+    .checkbox-row input[type=checkbox] { width: 15px; height: 15px; cursor: pointer; accent-color: var(--blue); }
+
+    /* ── Buttons ── */
+    .btn-row { display: flex; gap: 10px; margin-top: 4px; }
+    .btn {
+      padding: 9px 20px;
+      border-radius: 4px;
+      border: none;
+      font-size: 14px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background .15s, opacity .15s;
+      display: flex; align-items: center; gap: 7px;
+    }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-primary { background: var(--blue); color: var(--white); }
+    .btn-primary:hover:not(:disabled) { background: var(--blue-dk); }
+    .btn-secondary { background: var(--gray); color: var(--text); border: 1px solid var(--border); }
+    .btn-secondary:hover:not(:disabled) { background: var(--gray-dk); }
+    .btn-danger { background: var(--red); color: var(--white); }
+
+    /* ── Log panel ── */
+    .log-panel {
+      background: #1e1e1e;
+      border-radius: var(--radius);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      height: calc(100vh - 120px);
+      min-height: 500px;
+      position: sticky;
+      top: 24px;
+    }
+    .log-header {
+      background: #2d2d2d;
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .log-header span { color: #ccc; font-size: 13px; font-weight: 600; }
+    .log-status {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 12px; color: #888;
+    }
+    .log-status .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #555;
+    }
+    .log-status.running .dot { background: #4ec9b0; animation: pulse 1s infinite; }
+    .log-status.done .dot { background: #4ec9b0; }
+    .log-status.error .dot { background: #f44747; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+    #log-output {
+      flex: 1;
+      overflow-y: auto;
+      padding: 14px 16px;
+      font-family: 'Cascadia Code', 'Consolas', monospace;
+      font-size: 12px;
+      line-height: 1.7;
+      color: #d4d4d4;
+    }
+    #log-output .line { display: flex; gap: 10px; }
+    #log-output .ts { color: #569cd6; flex-shrink: 0; user-select: none; }
+    #log-output .msg-info   { color: #d4d4d4; }
+    #log-output .msg-success{ color: #4ec9b0; }
+    #log-output .msg-warn   { color: #dcdcaa; }
+    #log-output .msg-error  { color: #f44747; }
+    #log-output .msg-done   { color: #b5cea8; font-weight: bold; }
+    #log-output .msg-user   { color: #9cdcfe; }
+
+    .log-footer {
+      padding: 10px 16px;
+      border-top: 1px solid #3c3c3c;
+      display: flex; gap: 8px;
+    }
+    .log-footer button {
+      background: #3c3c3c; color: #ccc; border: none;
+      padding: 5px 12px; border-radius: 3px;
+      font-size: 11px; cursor: pointer;
+    }
+    .log-footer button:hover { background: #4c4c4c; }
+
+    /* ── Summary cards ── */
+    #summary { display: none; margin-top: 20px; }
+    .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .stat-card {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      text-align: center;
+    }
+    .stat-card .stat-value { font-size: 28px; font-weight: 700; color: var(--blue); }
+    .stat-card .stat-label { font-size: 11px; color: var(--muted); margin-top: 4px; text-transform: uppercase; }
+
+    /* ── Upload progress ── */
+    .progress-bar {
+      height: 3px;
+      background: var(--gray-dk);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 10px;
+      display: none;
+    }
+    .progress-bar .fill {
+      height: 100%;
+      background: var(--blue);
+      width: 0%;
+      transition: width .3s;
+      animation: indeterminate 1.5s infinite;
+    }
+    @keyframes indeterminate {
+      0% { transform: translateX(-100%); width: 60%; }
+      100% { transform: translateX(200%); width: 60%; }
+    }
+
+    /* ── Alerts ── */
+    .alert {
+      padding: 10px 14px;
+      border-radius: 4px;
+      font-size: 13px;
+      margin-bottom: 16px;
+      display: none;
+    }
+    .alert-info    { background: #f0f6fc; border-left: 3px solid var(--blue); color: #003d6b; }
+    .alert-success { background: #f0f8f0; border-left: 3px solid var(--green); color: #0a4a0a; }
+    .alert-error   { background: #fdf0f0; border-left: 3px solid var(--red); color: #6b0000; }
+
+    /* ── Responsive ── */
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; }
+      .log-panel { height: 400px; position: static; }
+      .summary-grid { grid-template-columns: repeat(2,1fr); }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Gemini → Copilot Pages Migration</h1>
+  <span>powered by CloudFuze</span>
+</header>
+
+<div class="layout">
+
+  <!-- ── Left column: Steps ── -->
+  <div>
+    <div class="steps">
+
+      <!-- Step 1: Upload ZIP -->
+      <div class="card">
+        <div class="card-header">
+          <div class="step-badge">1</div>
+          <h2>Upload Google Vault Export ZIP</h2>
+        </div>
+        <div class="card-body">
+          <div class="alert alert-error" id="upload-error"></div>
+          <div class="upload-zone" id="upload-zone">
+            <input type="file" id="file-input" accept=".zip" />
+            <div class="icon">📦</div>
+            <p><strong>Click to browse</strong> or drag &amp; drop your Vault export ZIP</p>
+            <p>vault_export.zip — exported from Google Vault</p>
+            <div class="progress-bar" id="upload-progress"><div class="fill"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 2: Customer Config -->
+      <div class="card" id="step-config" style="display:none">
+        <div class="card-header">
+          <div class="step-badge">2</div>
+          <h2>Customer Configuration</h2>
+        </div>
+        <div class="card-body">
+          <div class="field">
+            <label>Customer Name</label>
+            <input type="text" id="customer-name" placeholder="e.g. Acme Corp" />
+          </div>
+          <div class="field">
+            <label>Microsoft 365 Tenant ID</label>
+            <input type="text" id="tenant-id" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" value="807d6772-847c-40e2-9bec-e2c930b3a42e" />
+          </div>
+
+          <!-- Microsoft Auth -->
+          <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--gray-dk)">
+            <div id="auth-status" style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+              <div id="auth-dot" style="width:10px;height:10px;border-radius:50%;background:#d13438"></div>
+              <span id="auth-text" style="font-size:13px;color:var(--muted)">Not signed in — required for live migration</span>
+            </div>
+            <button class="btn btn-secondary" id="btn-auth" onclick="signInMicrosoft()" style="background:#fff;border:1px solid #8c8c8c;gap:10px">
+              <img src="https://learn.microsoft.com/en-us/entra/identity-platform/media/howto-add-branding-in-apps/ms-symbollockup_mssymbol_19.svg" width="18" height="18" alt="MS">
+              Sign in with Microsoft
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 3: User Mappings -->
+      <div class="card" id="mapping-section">
+        <div class="card-header">
+          <div class="step-badge">3</div>
+          <h2>User Mappings <span style="font-weight:400;color:var(--muted);font-size:12px;margin-left:6px">Google email → M365 email</span></h2>
+        </div>
+        <div class="card-body">
+          <div class="alert alert-info" id="mapping-info" style="display:block">
+            Enter the M365 email for each user. If the Google and M365 emails are the same, leave the M365 field as-is.
+          </div>
+          <div style="overflow-x:auto">
+            <table class="mapping-table">
+              <thead>
+                <tr>
+                  <th>Google Email (from Vault)</th>
+                  <th>M365 Email (target)</th>
+                  <th style="text-align:right">Conversations</th>
+                </tr>
+              </thead>
+              <tbody id="mapping-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 4: Options + Run -->
+      <div class="card" id="step-run" style="display:none">
+        <div class="card-header">
+          <div class="step-badge">4</div>
+          <h2>Migration Options</h2>
+        </div>
+        <div class="card-body">
+          <div class="options-grid" style="margin-bottom:20px">
+            <label class="checkbox-row">
+              <input type="checkbox" id="opt-dryrun" checked />
+              Dry run (preview only — no API calls)
+            </label>
+            <label class="checkbox-row">
+              <input type="checkbox" id="opt-skipfollowups" />
+              Skip follow-up prompts
+            </label>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">
+            <div class="field" style="margin:0">
+              <label>From Date (optional)</label>
+              <input type="date" id="opt-fromdate" />
+            </div>
+            <div class="field" style="margin:0">
+              <label>To Date (optional)</label>
+              <input type="date" id="opt-todate" />
+            </div>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-primary" id="btn-run" onclick="startMigration()">
+              <span>▶</span> Start Migration
+            </button>
+            <button class="btn btn-secondary" id="btn-reset" onclick="resetAll()" style="display:none">
+              ↺ Reset
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Summary -->
+      <div id="summary">
+        <div class="summary-grid">
+          <div class="stat-card"><div class="stat-value" id="stat-users">—</div><div class="stat-label">Users</div></div>
+          <div class="stat-card"><div class="stat-value" id="stat-pages">—</div><div class="stat-label">Pages Created</div></div>
+          <div class="stat-card"><div class="stat-value" id="stat-errors">—</div><div class="stat-label">Errors</div></div>
+          <div class="stat-card"><div class="stat-value" id="stat-flagged">—</div><div class="stat-label">Flagged Assets</div></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── Right column: Log panel ── -->
+  <div>
+    <div class="log-panel">
+      <div class="log-header">
+        <span>Migration Log</span>
+        <div class="log-status" id="log-status">
+          <div class="dot"></div>
+          <span id="log-status-text">Waiting</span>
+        </div>
+      </div>
+      <div id="log-output">
+        <div class="line"><span class="ts">--:--:--</span><span class="msg-info">Upload a Vault ZIP to begin...</span></div>
+      </div>
+      <div class="log-footer">
+        <button onclick="clearLog()">Clear</button>
+        <button onclick="scrollToBottom()">↓ Bottom</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  let uploadData = null;
+  let sseSource = null;
+  let statsTracker = { users: 0, pages: 0, errors: 0, flagged: 0 };
+  let isAdminAuthed = false;
+
+  // ── Microsoft Auth ──────────────────────────────────────────────────────────
+  function signInMicrosoft() {
+    const tenantId = document.getElementById('tenant-id').value.trim();
+    if (!tenantId) { alert('Please enter Tenant ID first'); return; }
+    // Open auth in popup
+    const popup = window.open(
+      `/auth/login?tenant_id=${tenantId}`,
+      'msauth',
+      'width=500,height=700,left=300,top=100'
+    );
+    // Listen for success message from popup
+    window.addEventListener('message', function onMsg(e) {
+      if (e.data?.type === 'auth-success') {
+        window.removeEventListener('message', onMsg);
+        updateAuthStatus(true);
+        log('success', 'Microsoft admin signed in successfully');
+      }
+    });
+  }
+
+  function updateAuthStatus(authenticated) {
+    isAdminAuthed = authenticated;
+    const dot = document.getElementById('auth-dot');
+    const text = document.getElementById('auth-text');
+    const btn = document.getElementById('btn-auth');
+    if (authenticated) {
+      dot.style.background = '#107c10';
+      text.textContent = 'Signed in — ready for live migration';
+      text.style.color = '#107c10';
+      btn.innerHTML = '<span style="color:#107c10">✓</span> Signed in';
+      btn.disabled = true;
+    }
+  }
+
+  // Check auth status on load
+  fetch('/auth/status').then(r => r.json()).then(d => {
+    if (d.authenticated) updateAuthStatus(true);
+  }).catch(() => {});
+
+  // ── Upload ──────────────────────────────────────────────────────────────────
+  const fileInput = document.getElementById('file-input');
+  const uploadZone = document.getElementById('upload-zone');
+
+  // Drag and drop
+  uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+  uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+  uploadZone.addEventListener('drop', e => {
+    e.preventDefault();
+    uploadZone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) handleUpload(file);
+  });
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files[0]) handleUpload(fileInput.files[0]);
+  });
+
+  async function handleUpload(file) {
+    if (!file.name.endsWith('.zip')) {
+      showUploadError('Only ZIP files are accepted.');
+      return;
+    }
+
+    document.getElementById('upload-progress').style.display = 'block';
+    log('info', `Uploading ${file.name} (${(file.size/1024/1024).toFixed(1)} MB)...`);
+
+    const formData = new FormData();
+    formData.append('vault_zip', file);
+
+    try {
+      const res = await fetch('/api/upload', { method: 'POST', body: formData });
+      const data = await res.json();
+      document.getElementById('upload-progress').style.display = 'none';
+
+      if (!res.ok) {
+        showUploadError(data.error || 'Upload failed');
+        return;
+      }
+
+      uploadData = data;
+      uploadZone.classList.add('uploaded');
+      uploadZone.innerHTML = `
+        <div class="icon" style="font-size:32px">✅</div>
+        <p><strong>${file.name}</strong> uploaded successfully</p>
+        <p style="margin-top:6px">${data.total_users} users · ${data.total_conversations} conversations · ${data.organization || data.google_domain}</p>
+      `;
+
+      log('success', `ZIP extracted — ${data.total_users} users, ${data.total_conversations} conversations`);
+
+      // Pre-fill customer name
+      if (data.organization) document.getElementById('customer-name').value = data.organization;
+
+      // Show config + mapping
+      document.getElementById('step-config').style.display = 'block';
+      document.getElementById('mapping-section').style.display = 'block';
+      document.getElementById('step-run').style.display = 'block';
+
+      // Populate user mapping table
+      const tbody = document.getElementById('mapping-tbody');
+      tbody.innerHTML = '';
+      data.users.forEach(u => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="source-email">${u.email}</td>
+          <td><input type="email" class="m365-email" data-google="${u.email}" value="${u.email}" placeholder="m365user@tenant.com" /></td>
+          <td style="text-align:right"><span class="conv-count">${u.conversation_count}</span></td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+    } catch (err) {
+      document.getElementById('upload-progress').style.display = 'none';
+      showUploadError('Upload failed: ' + err.message);
+    }
+  }
+
+  function showUploadError(msg) {
+    const el = document.getElementById('upload-error');
+    el.textContent = msg;
+    el.style.display = 'block';
+    log('error', msg);
+  }
+
+  // ── Migration ───────────────────────────────────────────────────────────────
+  async function startMigration() {
+    if (!uploadData) { log('error', 'Please upload a Vault ZIP first.'); return; }
+
+    const tenantId = document.getElementById('tenant-id').value.trim();
+    if (!tenantId) { log('error', 'Tenant ID is required.'); return; }
+
+    const isDryRun = document.getElementById('opt-dryrun').checked;
+    if (!isDryRun && !isAdminAuthed) {
+      log('error', 'Admin not signed in. Click "Sign in with Microsoft" first.');
+      return;
+    }
+
+    const userMappings = {};
+    document.querySelectorAll('.m365-email').forEach(input => {
+      userMappings[input.dataset.google] = input.value.trim() || input.dataset.google;
+    });
+
+    const customerName = document.getElementById('customer-name').value.trim() || 'Gemini';
+
+    const payload = {
+      extract_path: uploadData.extract_path,
+      tenant_id: tenantId,
+      customer_name: customerName,
+      user_mappings: userMappings,
+      dry_run: document.getElementById('opt-dryrun').checked,
+      skip_followups: document.getElementById('opt-skipfollowups').checked,
+      from_date: document.getElementById('opt-fromdate').value || null,
+      to_date: document.getElementById('opt-todate').value || null
+    };
+
+    const btn = document.getElementById('btn-run');
+    btn.disabled = true;
+    btn.innerHTML = '<span>⏳</span> Running...';
+    document.getElementById('btn-reset').style.display = 'inline-flex';
+    setLogStatus('running', 'Running');
+    statsTracker = { users: 0, pages: 0, errors: 0, flagged: 0 };
+
+    // Step 1 — open SSE log stream
+    openSSE();
+
+    // Step 2 — start migration (after short delay so SSE is ready)
+    setTimeout(async () => {
+      try {
+        const res = await fetch('/api/migrate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          log('error', data.error || 'Failed to start migration');
+          setLogStatus('error', 'Error');
+          btn.disabled = false;
+          btn.innerHTML = '<span>▶</span> Start Migration';
+        }
+      } catch (err) {
+        log('error', 'Cannot reach server: ' + err.message);
+        setLogStatus('error', 'Error');
+        btn.disabled = false;
+        btn.innerHTML = '<span>▶</span> Start Migration';
+      }
+    }, 300);
+  }
+
+  function openSSE() {
+    if (sseSource) { sseSource.close(); sseSource = null; }
+    sseSource = new EventSource('/api/migration-log');
+
+    sseSource.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        log(data.type, data.message);
+
+        if (data.type === 'success' && data.message.includes('Page created')) statsTracker.pages++;
+        if (data.type === 'error') statsTracker.errors++;
+        if (data.type === 'warn' && data.message.includes('flagged')) {
+          const m = data.message.match(/(\d+) conversations flagged/);
+          if (m) statsTracker.flagged += parseInt(m[1]);
+        }
+        if (data.type === 'info' && data.message.includes('Processing:')) statsTracker.users++;
+
+        if (data.type === 'done') {
+          setLogStatus('done', 'Complete');
+          sseSource.close();
+          document.getElementById('btn-run').disabled = false;
+          document.getElementById('btn-run').innerHTML = '<span>▶</span> Run Again';
+          showSummary();
+        }
+      } catch (e) { /* ignore parse errors */ }
+    };
+
+    sseSource.onerror = () => {
+      // SSE will auto-reconnect — only log if we were running
+      if (document.getElementById('log-status-text').textContent === 'Running') {
+        log('warn', 'Log stream reconnecting...');
+      }
+    };
+  }
+
+  // ── Log helpers ─────────────────────────────────────────────────────────────
+  function log(type, message) {
+    const out = document.getElementById('log-output');
+    const line = document.createElement('div');
+    line.className = 'line';
+    const ts = new Date().toTimeString().slice(0, 8);
+    line.innerHTML = `<span class="ts">${ts}</span><span class="msg-${type}">${escHtml(message)}</span>`;
+    out.appendChild(line);
+    scrollToBottom();
+  }
+
+  function clearLog() {
+    document.getElementById('log-output').innerHTML = '';
+  }
+
+  function scrollToBottom() {
+    const out = document.getElementById('log-output');
+    out.scrollTop = out.scrollHeight;
+  }
+
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function setLogStatus(state, text) {
+    const el = document.getElementById('log-status');
+    el.className = 'log-status ' + state;
+    document.getElementById('log-status-text').textContent = text;
+  }
+
+  function showSummary() {
+    document.getElementById('summary').style.display = 'block';
+    document.getElementById('stat-users').textContent = statsTracker.users;
+    document.getElementById('stat-pages').textContent = statsTracker.pages;
+    document.getElementById('stat-errors').textContent = statsTracker.errors;
+    document.getElementById('stat-flagged').textContent = statsTracker.flagged;
+    document.getElementById('summary').scrollIntoView({ behavior: 'smooth' });
+  }
+
+  function resetAll() {
+    uploadData = null;
+    if (sseSource) { sseSource.close(); sseSource = null; }
+    location.reload();
+  }
+</script>
+</body>
+</html>

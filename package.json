@@ -1,0 +1,30 @@
+{
+  "name": "gemini-to-copilot",
+  "version": "1.0.0",
+  "description": "Gemini to Copilot Pages Migration Tool — CloudFuze",
+  "type": "module",
+  "bin": {
+    "migrate": "./migrate.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "migrate": "node migrate.js"
+  },
+  "dependencies": {
+    "@azure/msal-node": "^2.9.2",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
+    "adm-zip": "^0.5.16",
+    "chalk": "^5.3.0",
+    "cli-table3": "^0.6.5",
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.5",
+    "express": "^5.2.1",
+    "googleapis": "^140.0.0",
+    "multer": "^2.1.1",
+    "openai": "^4.52.0",
+    "xml2js": "^0.6.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

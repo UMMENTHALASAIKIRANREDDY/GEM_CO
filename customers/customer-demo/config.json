@@ -1,0 +1,8 @@
+{
+  "customer_name": "Demo Corp",
+  "m365_tenant_id": "807d6772-847c-40e2-9bec-e2c930b3a42e",
+  "google_domain": "",
+  "vault_zip": "./vault_export.zip",
+  "vault_export_path": "./vault_export",
+  "contact_email": ""
+}
