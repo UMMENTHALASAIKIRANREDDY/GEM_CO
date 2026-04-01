@@ -1,0 +1,31 @@
+{
+  "report_type": "migration_report",
+  "generated_at": "2026-04-01T14:27:32.510Z",
+  "summary": {
+    "total_users": 2,
+    "total_pages_created": 3,
+    "total_errors": 0,
+    "total_visual_assets_flagged": 0,
+    "total_duration_seconds": 70.7
+  },
+  "users": [
+    {
+      "email": "alex@filefuze.co",
+      "conversations_processed": 2,
+      "pages_created": 2,
+      "visual_assets_flagged": 0,
+      "error_count": 0,
+      "errors": [],
+      "status": "success"
+    },
+    {
+      "email": "erik@filefuze.co",
+      "conversations_processed": 1,
+      "pages_created": 1,
+      "visual_assets_flagged": 0,
+      "error_count": 0,
+      "errors": [],
+      "status": "success"
+    }
+  ]
+}

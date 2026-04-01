@@ -4,11 +4,17 @@ import { getLogger } from '../utils/logger.js';
 const logger = getLogger('auth:microsoft');
 
 // Delegated permission scopes needed for migration
+// Copilot Chat API requires all 7 scopes below
 const DELEGATED_SCOPES = [
   'https://graph.microsoft.com/Files.ReadWrite.All',
-  'https://graph.microsoft.com/Sites.ReadWrite.All',
+  'https://graph.microsoft.com/Sites.Read.All',
   'https://graph.microsoft.com/User.Read.All',
-  'https://graph.microsoft.com/Notes.ReadWrite.All',
+  'https://graph.microsoft.com/Mail.Read',
+  'https://graph.microsoft.com/People.Read.All',
+  'https://graph.microsoft.com/OnlineMeetingTranscript.Read.All',
+  'https://graph.microsoft.com/Chat.Read',
+  'https://graph.microsoft.com/ChannelMessage.Read.All',
+  'https://graph.microsoft.com/ExternalItem.Read.All',
 ];
 
 let _msalApp = null;

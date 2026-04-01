@@ -1,0 +1,62 @@
+<?xml version='1.0' encoding='utf-8'?>
+<GeminiUserConversationHistory>
+  <User>
+    <Email>austin@fuzebot.co</Email>
+  </User>
+  <Conversations>
+    <Conversation>
+      <ConversationId>c_f4163b1713f0f3a6</ConversationId>
+      <ConversationTopic>Ready to Help with Anything</ConversationTopic>
+      <ConversationTurns>
+        <ConversationTurn>
+          <RequestId>r_50f03784e0908f77</RequestId>
+          <ModelVersion>bard_paid_fast_uft75_prod_candidate</ModelVersion>
+          <Timestamp>2026-03-31T16:07:52.917379+05:30</Timestamp>
+          <Prompt>
+            <Text>hello </Text>
+          </Prompt>
+          <PrimaryResponse>
+            <ResponseId>rc_3095bd7f55f6e5e6</ResponseId>
+            <Text>Hello! How can I help you today? Whether you&#39;re looking to brainstorm a project, solve a tricky problem, or just need a bit of creative inspiration, I&#39;m ready when you are. 
+
+              What’s on your mind?</Text>
+          </PrimaryResponse>
+        </ConversationTurn>
+        <ConversationTurn>
+          <RequestId>r_4201857b0fa55cdb</RequestId>
+          <ModelVersion>bard_paid_fast_uft75_prod_candidate</ModelVersion>
+          <Timestamp>2026-03-31T16:08:06.434472+05:30</Timestamp>
+          <Prompt>
+            <Text>test</Text>
+          </Prompt>
+          <PrimaryResponse>
+            <ResponseId>rc_0f1cf35e435b860b</ResponseId>
+            <Text>Loud and clear! I&#39;m here and ready to roll. 
+
+              What’s on your mind? Whether you need a hand with a complex project, a bit of creative brainstorming, or just want to see what I can do, I&#39;ve got you covered.</Text>
+          </PrimaryResponse>
+        </ConversationTurn>
+      </ConversationTurns>
+    </Conversation>
+    <Conversation>
+      <ConversationId>c_9c6147eb2f9bcf36</ConversationId>
+      <ConversationTopic>Minimalist Opening, Ready for Anything</ConversationTopic>
+      <ConversationTurns>
+        <ConversationTurn>
+          <RequestId>r_4a6cd764fc4e128e</RequestId>
+          <ModelVersion>bard_paid_fast_uft75_prod_candidate</ModelVersion>
+          <Timestamp>2026-03-31T16:08:16.269991+05:30</Timestamp>
+          <Prompt>
+            <Text>test1</Text>
+          </Prompt>
+          <PrimaryResponse>
+            <ResponseId>rc_b146be2d4ecd1a23</ResponseId>
+            <Text>Test received! Loud and clear. 
+
+              Since that was a pretty minimalist opening, I&#39;m ready whenever you are. Whether you’re looking to dive into some complex math, generate a specific image, or just need a hand with a project, what&#39;s on your mind today?</Text>
+          </PrimaryResponse>
+        </ConversationTurn>
+      </ConversationTurns>
+    </Conversation>
+  </Conversations>
+</GeminiUserConversationHistory>

@@ -5,15 +5,16 @@ const logger = getLogger('module:pagesCreator');
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 
 /**
- * Module 4 — Pages Creator.
- * Creates one HTML page per Gemini conversation in each user's OneDrive.
- * Uses delegated admin token (Files.ReadWrite.All) to write to any user's OneDrive.
- * Folder structure: OneDrive / {customerName} / {conversation title}.html
+ * Module 4 — OneNote Pages Creator.
+ * Creates one OneNote page per Gemini conversation in each TARGET user's account.
+ * Uses delegated admin token to access /users/{targetEmail}/onenote/.
+ * Structure: {customerName} notebook → {customerName} Conversations section → pages
  */
 export class PagesCreator {
   constructor(tenantId, customerName = 'Gemini') {
     this.tenantId = tenantId;
     this.customerName = customerName;
+    this._sectionIds = {};  // cached per target email
   }
 
   _headers() {
@@ -21,38 +22,115 @@ export class PagesCreator {
   }
 
   /**
-   * Create a single page for one Gemini conversation.
-   * Uploads HTML file to the mapped user's OneDrive under /{customerName}/ folder.
+   * Get or create notebook + section in the TARGET user's OneNote.
+   * Creates: /users/{targetEmail}/onenote/notebooks/{customerName}/sections/{conversations}
    */
-  async createPage(email, conversation, flaggedAssets = []) {
+  async _getOrCreateSection(targetEmail) {
+    if (this._sectionIds[targetEmail]) return this._sectionIds[targetEmail];
+
+    const headers = this._headers();
+    const notebookName = this.customerName;
+    const sectionName = `${this.customerName} Conversations`;
+
+    // 1. Find notebook by name using $filter (avoids listing all notebooks)
+    const filterNb = encodeURIComponent(`displayName eq '${notebookName}'`);
+    let nbRes = await fetch(
+      `${GRAPH_BASE}/users/${targetEmail}/onenote/notebooks?$filter=${filterNb}`,
+      { headers }
+    );
+
+    let notebook = null;
+
+    if (nbRes.ok) {
+      const nbData = await nbRes.json();
+      notebook = (nbData.value || [])[0] || null;
+    }
+
+    // If filter fails (5000+ items error) or notebook not found, just create it
+    // Creating a duplicate-named notebook is safe — OneNote allows it
+    if (!notebook) {
+      const createRes = await fetch(`${GRAPH_BASE}/users/${targetEmail}/onenote/notebooks`, {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ displayName: notebookName })
+      });
+      if (!createRes.ok) {
+        const err = await createRes.text();
+        throw new Error(`Cannot create notebook for ${targetEmail}: ${createRes.status} — ${err.slice(0, 200)}`);
+      }
+      notebook = await createRes.json();
+      logger.info(`Created notebook "${notebookName}" for ${targetEmail}`);
+    }
+
+    // 2. Find section by name using $filter (avoids listing all sections — fixes error 10008)
+    const filterSec = encodeURIComponent(`displayName eq '${sectionName}'`);
+    let secRes = await fetch(
+      `${GRAPH_BASE}/users/${targetEmail}/onenote/notebooks/${notebook.id}/sections?$filter=${filterSec}`,
+      { headers }
+    );
+
+    let section = null;
+
+    if (secRes.ok) {
+      const secData = await secRes.json();
+      section = (secData.value || [])[0] || null;
+    }
+
+    // If filter fails or section not found, create it
+    if (!section) {
+      const createRes = await fetch(
+        `${GRAPH_BASE}/users/${targetEmail}/onenote/notebooks/${notebook.id}/sections`,
+        {
+          method: 'POST',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ displayName: sectionName })
+        }
+      );
+      if (!createRes.ok) {
+        const err = await createRes.text();
+        throw new Error(`Cannot create section for ${targetEmail}: ${createRes.status} — ${err.slice(0, 200)}`);
+      }
+      section = await createRes.json();
+      logger.info(`Created section "${sectionName}" for ${targetEmail}`);
+    }
+
+    this._sectionIds[targetEmail] = section.id;
+    return section.id;
+  }
+
+  /**
+   * Create a OneNote page in the TARGET user's account.
+   * The page contains the full conversation with prompts, Copilot + Gemini responses.
+   */
+  async createPage(targetEmail, conversation, flaggedAssets = []) {
     const flaggedIds = new Set(flaggedAssets.map(f => f.conversation_id));
     const isFlagged = flaggedIds.has(conversation.id);
 
-    const pageTitle = (conversation.title || 'Migrated Conversation')
-      .replace(/[<>:"/\\|?*]/g, '_')
-      .slice(0, 100);
+    const sectionId = await this._getOrCreateSection(targetEmail);
     const htmlContent = this._buildPageHtml(conversation, isFlagged);
 
-    // Upload HTML to user's OneDrive: /{customerName}/{pageTitle}.html
-    const url = `${GRAPH_BASE}/users/${email}/drive/root:/${this.customerName}/${pageTitle}.html:/content`;
-    const response = await fetch(url, {
-      method: 'PUT',
-      headers: { ...this._headers(), 'Content-Type': 'text/html' },
-      body: htmlContent
-    });
+    const response = await fetch(
+      `${GRAPH_BASE}/users/${targetEmail}/onenote/sections/${sectionId}/pages`,
+      {
+        method: 'POST',
+        headers: { ...this._headers(), 'Content-Type': 'text/html' },
+        body: htmlContent
+      }
+    );
 
     if (!response.ok) {
       const body = await response.text();
-      throw new Error(`Graph API ${response.status} for ${email}: ${body.slice(0, 300)}`);
+      throw new Error(`OneNote page creation failed for ${targetEmail}: ${response.status} — ${body.slice(0, 300)}`);
     }
 
     const data = await response.json();
-    logger.info(`Page created for ${email}: "${pageTitle}" → OneDrive/${this.customerName}/`);
+    logger.info(`OneNote page created for ${targetEmail}: "${conversation.title?.slice(0, 50)}"`);
     return data.id;
   }
 
   /**
-   * Build HTML page per the PRD page structure (Section 7).
+   * Build OneNote-compatible HTML page.
+   * Uses <table> for layout blocks — OneNote strips most CSS/divs.
    */
   _buildPageHtml(conversation, isFlagged) {
     const title = conversation.title || 'Migrated Conversation';
@@ -63,73 +141,74 @@ export class PagesCreator {
     const turns = conversation.turns || [];
 
     const geminiLink = geminiUrl
-      ? `<a href="${esc(geminiUrl)}" style="color:#0078d4;text-decoration:none">Open in Gemini ↗</a>`
-      : '<span style="color:#a19f9d">Gemini URL unavailable</span>';
+      ? `<a href="${esc(geminiUrl)}">Open in Gemini ↗</a>`
+      : 'Gemini URL unavailable';
 
     const warningBanner = isFlagged ? `
-      <div style="background:#fdf0f0;border-left:4px solid #d13438;padding:12px 16px;margin:0 0 20px;border-radius:6px;font-size:14px">
-        ⚠️ <strong>Visual assets detected</strong> — this conversation may contain images or charts not included here.
-        ${geminiUrl ? ` <a href="${esc(geminiUrl)}" style="color:#d13438">View original in Gemini ↗</a>` : ''}
-      </div>` : '';
+      <p style="background:#fdf0f0;border-left:4px solid #d13438;padding:10px 14px">
+        ⚠️ <b>Visual assets detected</b> — images or charts may be missing.
+        ${geminiUrl ? ` <a href="${esc(geminiUrl)}">View original ↗</a>` : ''}
+      </p>` : '';
 
     const turnsHtml = turns.map((turn, i) => {
       const prompt = esc(turn.prompt || '');
-      const copilotResponse = esc(turn.copilotResponse || '').replace(/\n/g, '<br>');
-      const geminiResponse = esc(turn.response || '').replace(/\n/g, '<br>');
+      const copilotResponse = esc(turn.copilotResponse || '').replace(/\n/g, '<br/>');
+      const geminiResponse = esc(turn.response || '').replace(/\n/g, '<br/>');
 
       return `
-      <div style="margin:24px 0">
-        <div style="border-top:1px solid #e1dfdd;margin-bottom:20px"></div>
-        <h2 style="color:#0078d4;font-size:16px;margin:0 0 12px">Prompt ${i + 1}</h2>
+        <p>─────────────────────────────────</p>
+        <h2>Prompt ${i + 1}</h2>
 
-        <div style="background:#eff6fc;border-left:4px solid #0078d4;padding:14px 18px;border-radius:6px;margin-bottom:16px;font-size:14px;line-height:1.6">
-          <strong style="color:#0078d4;font-size:12px;text-transform:uppercase;letter-spacing:.5px">You asked</strong><br>
-          <span style="color:#201f1e">${prompt}</span>
-        </div>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:10px">
+          <tr><td style="background:#eff6fc;border-left:4px solid #0078d4;padding:10px 14px">
+            <b style="color:#0078d4">YOU ASKED:</b><br/>
+            ${prompt}
+          </td></tr>
+        </table>
 
-        <h3 style="color:#107c10;font-size:14px;margin:0 0 8px">✦ Copilot Response</h3>
-        <div style="background:#f0f8f0;border-left:4px solid #107c10;padding:14px 18px;border-radius:6px;margin-bottom:16px;font-size:14px;line-height:1.6;color:#201f1e">
-          ${copilotResponse}
-        </div>
+        <p><b style="color:#107c10">✦ Copilot Response:</b></p>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:10px">
+          <tr><td style="background:#f0f8f0;border-left:4px solid #107c10;padding:10px 14px">
+            ${copilotResponse}
+          </td></tr>
+        </table>
 
-        <h3 style="color:#605e5c;font-size:13px;margin:12px 0 6px">📎 Original Gemini Answer</h3>
-        <div style="background:#faf9f8;border:1px solid #e1dfdd;padding:14px 18px;border-radius:6px;margin-bottom:16px;font-size:14px;line-height:1.6;color:#323130">
-          ${geminiResponse}
-          ${geminiUrl ? `<div style="margin-top:12px"><a href="${esc(geminiUrl)}" style="color:#0078d4;font-size:12px">Open original Gemini conversation ↗</a></div>` : ''}
-        </div>
+        <p><b style="color:#605e5c">📎 Original Gemini Answer:</b></p>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:10px">
+          <tr><td style="background:#faf9f8;border:1px solid #e1dfdd;padding:10px 14px">
+            ${geminiResponse}
+            ${geminiUrl ? `<br/><br/><a href="${esc(geminiUrl)}">Open in Gemini ↗</a>` : ''}
+          </td></tr>
+        </table>
 
-        <div style="border:1px dashed #c8c6c4;padding:14px 18px;border-radius:6px;min-height:40px">
-          <span style="color:#605e5c;font-size:13px;font-weight:600">📝 Your Notes</span><br>
-          <span style="color:#a19f9d;font-style:italic;font-size:13px">Add your notes here...</span>
-        </div>
-      </div>`;
+        <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
+          <tr><td style="border:1px dashed #c8c6c4;padding:10px 14px">
+            <b>📝 Notes:</b> <i style="color:#a19f9d">Add your notes here...</i>
+          </td></tr>
+        </table>`;
     }).join('\n');
 
     return `<!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="utf-8">
   <title>${esc(title)}</title>
-  <style>
-    body { font-family: 'Segoe UI', system-ui, sans-serif; max-width: 800px; margin: 0 auto; padding: 32px 24px; background: #fff; color: #201f1e; }
-    a { color: #0078d4; }
-  </style>
+  <meta name="created" content="${new Date().toISOString()}" />
 </head>
 <body>
-  <h1 style="color:#0078d4;font-size:22px;border-bottom:2px solid #0078d4;padding-bottom:10px;margin-bottom:16px">${esc(title)}</h1>
+  <h1>${esc(title)}</h1>
 
-  <div style="background:#f3f2f1;padding:12px 18px;border-radius:6px;margin-bottom:20px;font-size:13px;color:#605e5c;display:flex;gap:16px;flex-wrap:wrap;align-items:center">
-    <span>📅 <strong>Original date:</strong> ${date}</span>
-    <span>💬 <strong>Prompts:</strong> ${turns.length}</span>
-    <span>${geminiLink}</span>
-  </div>
+  <p style="background:#f3f2f1;padding:8px 14px;font-size:13px;color:#605e5c">
+    📅 <b>Date:</b> ${date} &nbsp;|&nbsp;
+    💬 <b>Prompts:</b> ${turns.length} &nbsp;|&nbsp;
+    ${geminiLink}
+  </p>
 
   ${warningBanner}
   ${turnsHtml}
 
-  <div style="margin-top:32px;padding-top:16px;border-top:1px solid #e1dfdd;font-size:11px;color:#a19f9d">
+  <p style="margin-top:20px;font-size:11px;color:#a19f9d">
     Migrated from Gemini by CloudFuze · ${new Date().toISOString().slice(0, 10)}
-  </div>
+  </p>
 </body>
 </html>`;
   }
