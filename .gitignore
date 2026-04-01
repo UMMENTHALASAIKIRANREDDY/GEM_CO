@@ -8,5 +8,8 @@ customers/*/checkpoint.json
 customers/*/migration_report.json
 customers/*/visual_assets_report.json
 
+# Uploads — contains vault exports and temp files
+uploads/
+
 # Node
 node_modules/
