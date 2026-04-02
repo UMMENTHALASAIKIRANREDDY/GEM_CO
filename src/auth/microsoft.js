@@ -15,14 +15,17 @@ const DELEGATED_SCOPES = [
   'https://graph.microsoft.com/Chat.Read',
   'https://graph.microsoft.com/ChannelMessage.Read.All',
   'https://graph.microsoft.com/ExternalItem.Read.All',
+  'https://graph.microsoft.com/AppCatalog.ReadWrite.All',
 ];
 
 let _msalApp = null;
+let _msalTenant = null;
 let _delegatedToken = null;
 let _delegatedTokenExpiry = 0;
 
 function getMsalApp(tenantId) {
-  if (!_msalApp) {
+  // Recreate if tenant changed
+  if (!_msalApp || _msalTenant !== tenantId) {
     _msalApp = new ConfidentialClientApplication({
       auth: {
         clientId: process.env.AZURE_CLIENT_ID,
@@ -30,6 +33,7 @@ function getMsalApp(tenantId) {
         authority: `https://login.microsoftonline.com/${tenantId}`
       }
     });
+    _msalTenant = tenantId;
   }
   return _msalApp;
 }

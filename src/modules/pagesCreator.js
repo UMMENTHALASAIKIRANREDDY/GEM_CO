@@ -130,7 +130,8 @@ export class PagesCreator {
 
   /**
    * Build OneNote-compatible HTML page.
-   * Uses <table> for layout blocks — OneNote strips most CSS/divs.
+   * Uses a single full-width table as the outer container so content fills the page.
+   * OneNote ignores most CSS but respects table widths and cell backgrounds.
    */
   _buildPageHtml(conversation, isFlagged) {
     const title = conversation.title || 'Migrated Conversation';
@@ -141,14 +142,17 @@ export class PagesCreator {
     const turns = conversation.turns || [];
 
     const geminiLink = geminiUrl
-      ? `<a href="${esc(geminiUrl)}">Open in Gemini ↗</a>`
+      ? `<a href="${esc(geminiUrl)}">Open in Gemini</a>`
       : 'Gemini URL unavailable';
 
-    const warningBanner = isFlagged ? `
-      <p style="background:#fdf0f0;border-left:4px solid #d13438;padding:10px 14px">
-        ⚠️ <b>Visual assets detected</b> — images or charts may be missing.
-        ${geminiUrl ? ` <a href="${esc(geminiUrl)}">View original ↗</a>` : ''}
-      </p>` : '';
+    const warningRow = isFlagged ? `
+        <tr>
+          <td style="background:#fdf0f0;border-left:4px solid #d13438;padding:12px 16px;font-size:14px">
+            <b>⚠️ Visual assets detected</b> — images or charts from the original conversation are not included.
+            ${geminiUrl ? ` <a href="${esc(geminiUrl)}">View original in Gemini</a>` : ''}
+          </td>
+        </tr>
+        <tr><td style="padding:6px 0">&nbsp;</td></tr>` : '';
 
     const turnsHtml = turns.map((turn, i) => {
       const prompt = esc(turn.prompt || '');
@@ -156,36 +160,44 @@ export class PagesCreator {
       const geminiResponse = esc(turn.response || '').replace(/\n/g, '<br/>');
 
       return `
-        <p>─────────────────────────────────</p>
-        <h2>Prompt ${i + 1}</h2>
+        <tr><td style="border-bottom:2px solid #0078d4;padding:16px 0 4px 0"><b style="font-size:16px;color:#0078d4">Prompt ${i + 1}</b></td></tr>
 
-        <table style="width:100%;border-collapse:collapse;margin-bottom:10px">
-          <tr><td style="background:#eff6fc;border-left:4px solid #0078d4;padding:10px 14px">
-            <b style="color:#0078d4">YOU ASKED:</b><br/>
+        <tr>
+          <td style="background:#deecf9;padding:12px 16px">
+            <b style="color:#0078d4">YOU ASKED</b><br/><br/>
             ${prompt}
-          </td></tr>
-        </table>
+          </td>
+        </tr>
+        <tr><td style="padding:6px 0">&nbsp;</td></tr>
 
-        <p><b style="color:#107c10">✦ Copilot Response:</b></p>
-        <table style="width:100%;border-collapse:collapse;margin-bottom:10px">
-          <tr><td style="background:#f0f8f0;border-left:4px solid #107c10;padding:10px 14px">
+        <tr>
+          <td style="padding:4px 0"><b style="color:#107c10">✦ Copilot Response</b></td>
+        </tr>
+        <tr>
+          <td style="background:#dff6dd;padding:12px 16px">
             ${copilotResponse}
-          </td></tr>
-        </table>
+          </td>
+        </tr>
+        <tr><td style="padding:6px 0">&nbsp;</td></tr>
 
-        <p><b style="color:#605e5c">📎 Original Gemini Answer:</b></p>
-        <table style="width:100%;border-collapse:collapse;margin-bottom:10px">
-          <tr><td style="background:#faf9f8;border:1px solid #e1dfdd;padding:10px 14px">
+        <tr>
+          <td style="padding:4px 0"><b style="color:#605e5c">📎 Original Gemini Answer</b></td>
+        </tr>
+        <tr>
+          <td style="background:#f5f5f5;border:1px solid #d2d0ce;padding:12px 16px">
             ${geminiResponse}
-            ${geminiUrl ? `<br/><br/><a href="${esc(geminiUrl)}">Open in Gemini ↗</a>` : ''}
-          </td></tr>
-        </table>
+            ${geminiUrl ? `<br/><br/><a href="${esc(geminiUrl)}" style="font-size:12px">Open original conversation in Gemini</a>` : ''}
+          </td>
+        </tr>
+        <tr><td style="padding:6px 0">&nbsp;</td></tr>
 
-        <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
-          <tr><td style="border:1px dashed #c8c6c4;padding:10px 14px">
-            <b>📝 Notes:</b> <i style="color:#a19f9d">Add your notes here...</i>
-          </td></tr>
-        </table>`;
+        <tr>
+          <td style="border:2px dashed #c8c6c4;padding:12px 16px">
+            <b>📝 Notes</b><br/><br/>
+            <i style="color:#a19f9d">Add your notes here...</i>
+          </td>
+        </tr>
+        <tr><td style="padding:12px 0">&nbsp;</td></tr>`;
     }).join('\n');
 
     return `<!DOCTYPE html>
@@ -194,21 +206,23 @@ export class PagesCreator {
   <title>${esc(title)}</title>
   <meta name="created" content="${new Date().toISOString()}" />
 </head>
-<body>
-  <h1>${esc(title)}</h1>
-
-  <p style="background:#f3f2f1;padding:8px 14px;font-size:13px;color:#605e5c">
-    📅 <b>Date:</b> ${date} &nbsp;|&nbsp;
-    💬 <b>Prompts:</b> ${turns.length} &nbsp;|&nbsp;
-    ${geminiLink}
-  </p>
-
-  ${warningBanner}
-  ${turnsHtml}
-
-  <p style="margin-top:20px;font-size:11px;color:#a19f9d">
-    Migrated from Gemini by CloudFuze · ${new Date().toISOString().slice(0, 10)}
-  </p>
+<body style="font-family:Calibri,sans-serif">
+  <h1 style="font-size:24px;color:#0078d4;margin-bottom:4px">${esc(title)}</h1>
+  <table border="0" width="100%" cellpadding="0" cellspacing="0" style="width:720px;border-collapse:collapse">
+    <tr>
+      <td style="background:#f3f2f1;padding:10px 16px;font-size:13px;color:#605e5c">
+        📅 <b>Date:</b> ${date} &nbsp;&nbsp;|&nbsp;&nbsp; 💬 <b>Prompts:</b> ${turns.length} &nbsp;&nbsp;|&nbsp;&nbsp; ${geminiLink}
+      </td>
+    </tr>
+    <tr><td style="padding:8px 0">&nbsp;</td></tr>
+    ${warningRow}
+    ${turnsHtml}
+    <tr>
+      <td style="border-top:1px solid #e1dfdd;padding:12px 0;font-size:11px;color:#a19f9d">
+        Migrated from Gemini by CloudFuze · ${new Date().toISOString().slice(0, 10)}
+      </td>
+    </tr>
+  </table>
 </body>
 </html>`;
   }

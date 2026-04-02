@@ -14,6 +14,7 @@ import { ResponseGenerator } from './src/modules/responseGenerator.js';
 import { PagesCreator } from './src/modules/pagesCreator.js';
 import { ReportWriter } from './src/modules/reportWriter.js';
 import { CheckpointManager } from './src/utils/checkpoint.js';
+import { AgentDeployer } from './src/agent/agentDeployer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -248,6 +249,22 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
     const visualPath = path.join(extract_path, '..', 'visual_assets_report.json');
     report.write(reportPath);
     scanner.writeReport(visualPath, visualReports);
+
+    // Auto-deploy Copilot Declarative Agent after migration
+    if (!dry_run) {
+      emit('info', '━━━ Deploying Copilot Agent ━━━');
+      try {
+        const targetEmails = users.map(u => user_mappings[u.email] || u.email);
+        const deployer = new AgentDeployer(customer_name, tenant_id);
+        const appInfo = await deployer.deployAgent(targetEmails);
+        emit('success', `Agent "${customer_name} Conversation Agent" published & installed for ${appInfo.installed}/${appInfo.totalUsers} mapped users`);
+        if (appInfo.failedEmails?.length > 0) {
+          emit('warn', `Could not auto-install for: ${appInfo.failedEmails.join(', ')} — install manually from Teams Admin Center → Manage Apps`);
+        }
+      } catch (err) {
+        emit('warn', `Agent deployment failed (can be done manually): ${err.message}`);
+      }
+    }
 
     emit('done', `━━━ Migration complete! Reports saved. ━━━`);
   } catch (err) {
