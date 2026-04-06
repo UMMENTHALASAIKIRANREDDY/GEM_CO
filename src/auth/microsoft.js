@@ -94,6 +94,11 @@ export function isAuthenticated() {
   return !!_delegatedToken && Date.now() < _delegatedTokenExpiry;
 }
 
+export function clearMsToken() {
+  _delegatedToken = null;
+  _delegatedTokenExpiry = 0;
+}
+
 /**
  * Acquire app-only token (client credentials) — used for user lookup only.
  */

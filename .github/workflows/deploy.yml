@@ -23,17 +23,19 @@ jobs:
           password: ${{ secrets.SSH_PASSWORD }}
           script: |
             cd /data/migration-combinations
+            git config --global --add safe.directory /data/migration-combinations
+            
             echo "Pulling latest changes..."
             git pull origin main
             
             echo "Stopping existing containers..."
-            docker compose down
+            sudo docker compose down
             
             echo "Building new image..."
-            docker compose build --no-cache
+            sudo docker compose build --no-cache
             
             echo "Starting containers..."
-            docker compose up -d
+            sudo docker compose up -d
             
             echo "Deployment complete!"
-            docker compose ps
+            sudo docker compose ps

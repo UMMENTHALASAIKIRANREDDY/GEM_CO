@@ -65,3 +65,9 @@ export function getGoogleOAuth2Client() {
 export function isGoogleAuthenticated() {
   return !!_tokens && Date.now() < _tokenExpiry;
 }
+
+export function clearGoogleToken() {
+  _tokens = null;
+  _tokenExpiry = 0;
+  if (_oauth2Client) _oauth2Client.setCredentials({});
+}

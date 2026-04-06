@@ -7,8 +7,8 @@ import { fileURLToPath } from 'url';
 import AdmZip from 'adm-zip';
 import { EventEmitter } from 'events';
 
-import { getAuthUrl, acquireTokenByCode, isAuthenticated, getDelegatedToken } from './src/auth/microsoft.js';
-import { getGoogleAuthUrl, acquireGoogleTokenByCode, isGoogleAuthenticated, getGoogleOAuth2Client } from './src/auth/googleOAuth.js';
+import { getAuthUrl, acquireTokenByCode, isAuthenticated, getDelegatedToken, clearMsToken } from './src/auth/microsoft.js';
+import { getGoogleAuthUrl, acquireGoogleTokenByCode, isGoogleAuthenticated, getGoogleOAuth2Client, clearGoogleToken } from './src/auth/googleOAuth.js';
 import { google } from 'googleapis';
 import { VaultReader } from './src/modules/vaultReader.js';
 import { VaultExporter } from './src/modules/vaultExporter.js';
@@ -125,6 +125,16 @@ app.get('/auth/google/callback', async (req, res) => {
 
 app.get('/auth/google/status', (_req, res) => {
   res.json({ authenticated: isGoogleAuthenticated() });
+});
+
+app.post('/auth/google/logout', (_req, res) => {
+  clearGoogleToken();
+  res.json({ ok: true });
+});
+
+app.post('/auth/logout', (_req, res) => {
+  clearMsToken();
+  res.json({ ok: true });
 });
 
 // ─── Google Users (Admin SDK) ────────────────────────────────────────────────
@@ -333,6 +343,23 @@ app.post('/api/upload', upload.single('vault_zip'), async (req, res) => {
   }
 });
 
+// ─── Report Downloads ─────────────────────────────────────────────────────────
+app.get('/api/reports/migration', (req, res) => {
+  const p = path.join(__dirname, 'uploads', 'migration_report.json');
+  if (!fs.existsSync(p)) return res.status(404).json({ error: 'No report yet' });
+  res.setHeader('Content-Disposition', 'attachment; filename="migration_report.json"');
+  res.setHeader('Content-Type', 'application/json');
+  fs.createReadStream(p).pipe(res);
+});
+
+app.get('/api/reports/visual-assets', (req, res) => {
+  const p = path.join(__dirname, 'uploads', 'visual_assets_report.json');
+  if (!fs.existsSync(p)) return res.status(404).json({ error: 'No report yet' });
+  res.setHeader('Content-Disposition', 'attachment; filename="visual_assets_report.json"');
+  res.setHeader('Content-Type', 'application/json');
+  fs.createReadStream(p).pipe(res);
+});
+
 // ─── SSE — live log stream ────────────────────────────────────────────────────
 app.get('/api/migration-log', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -380,6 +407,18 @@ app.post('/api/migrate', async (req, res) => {
   runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, from_date, to_date });
 });
 
+async function withConcurrency(items, limit, fn) {
+  const executing = [];
+  for (const item of items) {
+    const p = Promise.resolve().then(() => fn(item));
+    executing.push(p);
+    const clean = () => executing.splice(executing.indexOf(p), 1);
+    p.then(clean, clean);
+    if (executing.length >= limit) await Promise.race(executing);
+  }
+  return Promise.all(executing);
+}
+
 async function runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, from_date, to_date }) {
   logBuffer.length = 0; // clear previous run's logs
   await new Promise(r => setTimeout(r, 200));
@@ -417,7 +456,7 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
     const creator = new PagesCreator(tenant_id, customer_name);
     const checkpoint = new CheckpointManager(path.join(extract_path, '..', 'checkpoint.json'));
 
-    for (const u of users) {
+    await withConcurrency(users, 5, async (u) => {
       const googleEmail = u.email;
       const m365Email = user_mappings[googleEmail] || googleEmail;
 
@@ -429,17 +468,17 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
 
       try {
         conversations = await reader.loadUserConversations(googleEmail, from_date, to_date);
-        emit('info', `  Loaded ${conversations.length} conversations`);
+        emit('info', `  Loaded ${conversations.length} conversations for ${googleEmail}`);
 
         for (const conv of conversations) {
           try {
             const convWithResponses = await generator.generate(conv, skip_followups);
             await creator.createPage(m365Email, convWithResponses, visualReports[googleEmail] || []);
             pagesCreated++;
-            emit('success', `  ✓ Page created: ${conv.title?.slice(0, 60)}`);
+            emit('success', `  Page created: ${conv.title?.slice(0, 60)}`);
           } catch (err) {
             errors.push({ conversation: conv.title, error: err.message });
-            emit('error', `  ✗ Failed: ${conv.title?.slice(0, 40)} — ${err.message}`);
+            emit('error', `  Failed: ${conv.title?.slice(0, 40)} — ${err.message}`);
           }
         }
 
@@ -459,10 +498,10 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
       } finally {
         conversations = null;
       }
-    }
+    });
 
-    const reportPath = path.join(extract_path, '..', 'migration_report.json');
-    const visualPath = path.join(extract_path, '..', 'visual_assets_report.json');
+    const reportPath = path.join(__dirname, 'uploads', 'migration_report.json');
+    const visualPath = path.join(__dirname, 'uploads', 'visual_assets_report.json');
     report.write(reportPath);
     scanner.writeReport(visualPath, visualReports);
 

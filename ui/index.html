@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Gemini → Copilot Migration | CloudFuze</title>
+  <link rel="icon" type="image/png" href="/cloudfuze-logo.png" />
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet" />
   <style>
     @keyframes spin { from{transform:rotate(0)} to{transform:rotate(360deg)} }
@@ -60,12 +61,53 @@ const C = {
   dark: '#2e2e2e',
   muted: '#707070',
   border: '#EBEBEB',
-  success: '#20CC83',
+  success: '#0129AC',
   error: '#FF1F1F',
-  warn: '#F59E0B',
+  warn: '#809EFC',  // light blue — no yellow/orange in UI
 };
 
-/* ─── Tiny SVG Icons ─── */
+/* ─── localStorage helpers ─── */
+const LS_KEYS = {
+  step: 'gem_step',
+  uploadData: 'gem_upload_data',
+  config: 'gem_config',
+  mappings: 'gem_mappings',
+  logs: 'gem_logs',
+  authGoogle: 'gem_auth_google',
+  authMs: 'gem_auth_ms',
+};
+
+function lsGet(key, fallback) {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
+}
+function lsSet(key, val) {
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
+}
+function lsClear() {
+  Object.values(LS_KEYS).forEach(k => localStorage.removeItem(k));
+}
+
+/* ─── CSV parser (handles 100+ rows, quoted fields) ─── */
+function parseCsvLine(line) {
+  const fields = [];
+  let current = '';
+  let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQ && line[i+1] === '"') { current += '"'; i++; }
+      else inQ = !inQ;
+    } else if (ch === ',' && !inQ) {
+      fields.push(current.trim()); current = '';
+    } else {
+      current += ch;
+    }
+  }
+  fields.push(current.trim());
+  return fields;
+}
+
+/* ─── SVG Icons ─── */
 const Spinner = ({s=16}) => (
   <svg width={s} height={s} viewBox="0 0 24 24" className="spinner">
     <circle cx="12" cy="12" r="10" stroke={C.primary} strokeWidth="3" fill="none" strokeDasharray="31.4 31.4" strokeLinecap="round"/>
@@ -75,6 +117,99 @@ const Spinner = ({s=16}) => (
 const Check = ({s=16, c=C.success}) => (
   <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
     <polyline points="20 6 9 17 4 12"/>
+  </svg>
+);
+
+const IcoInfo = ({s=14}) => (
+  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+  </svg>
+);
+
+const IcoWarn = ({s=14}) => (
+  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+    <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+  </svg>
+);
+
+const IcoError = ({s=14}) => (
+  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
+  </svg>
+);
+
+const IcoDone = ({s=14}) => (
+  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+  </svg>
+);
+
+const IcoUser = ({s=14}) => (
+  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
+  </svg>
+);
+
+const IcoPage = ({s=14}) => (
+  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
+  </svg>
+);
+
+const IcoFlag = ({s=14}) => (
+  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>
+  </svg>
+);
+
+const IcoSearch = ({s=14}) => (
+  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+  </svg>
+);
+
+const IcoCloud = ({s=40, c=C.primary}) => (
+  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/>
+  </svg>
+);
+
+const IcoZip = ({s=40, c=C.primary}) => (
+  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+  </svg>
+);
+
+const IcoDownload = ({s=13, c=C.primary}) => (
+  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+  </svg>
+);
+
+const IcoUpload = ({s=13, c=C.muted}) => (
+  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+  </svg>
+);
+
+const IcoRocket = ({s=14}) => (
+  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 00-2.91-.09z"/>
+    <path d="M12 15l-3-3a22 22 0 012-3.95A12.88 12.88 0 0122 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 01-4 2z"/>
+    <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>
+  </svg>
+);
+
+const IcoLogout = ({s=13}) => (
+  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+  </svg>
+);
+
+const IcoReset = ({s=13}) => (
+  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/>
   </svg>
 );
 
@@ -131,7 +266,7 @@ const TypingDots = () => (
 
 /* ─── Avatar with initials ─── */
 function avatarColor(email) {
-  const colors = ['#0129AC','#8b5cf6','#06b6d4','#f59e0b','#20CC83','#ec4899','#ef4444'];
+  const colors = ['#0129AC','#0C18D4','#809EFC','#20CC83','#0ea5e9','#6366f1','#14b8a6'];
   let h = 0;
   for (let i = 0; i < email.length; i++) h = (h * 31 + email.charCodeAt(i)) % colors.length;
   return colors[h];
@@ -198,36 +333,57 @@ const Input = ({value, onChange, placeholder, type='text'}) => (
   />
 );
 
+/* ─── Small text button ─── */
+const TextBtn = ({children, onClick, style={}}) => {
+  const [hov, setHov] = useState(false);
+  return (
+    <button onClick={onClick}
+      onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
+      style={{fontSize:12,color:C.primary,background:'none',border:'none',cursor:'pointer',
+        fontWeight:500,fontFamily:'inherit',opacity:hov?.8:1,...style}}>
+      {children}
+    </button>
+  );
+};
+
 /* ══════════════════════════════ */
 /* ═══       STEP TRACKER     ═══ */
 /* ══════════════════════════════ */
-const STEPS = [
-  {label:'Import Data', icon:'📥'},
-  {label:'Configure',   icon:'⚙️'},
-  {label:'Map Users',   icon:'🔗'},
-  {label:'Options',     icon:'🎛️'},
-  {label:'Migrate',     icon:'🚀'},
-  {label:'Complete',    icon:'✅'},
+const STEP_ICONS = [
+  // Import
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
+  // Configure
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 010 14.14M4.93 4.93a10 10 0 000 14.14"/></svg>,
+  // Map Users
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>,
+  // Options
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="14" y2="12"/><line x1="4" y1="18" x2="18" y2="18"/></svg>,
+  // Migrate
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+  // Complete
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>,
 ];
+const STEP_LABELS = ['Import Data','Configure','Map Users','Options','Migrate','Complete'];
 
 const StepTracker = ({active}) => (
   <div style={{display:'flex',alignItems:'center',padding:'14px 24px',borderBottom:`1px solid ${C.border}`,background:'white'}}>
-    {STEPS.map((s, i) => {
+    {STEP_LABELS.map((label, i) => {
       const done = i < active, act = i === active;
       return (
         <React.Fragment key={i}>
           <div style={{display:'flex',alignItems:'center',gap:8,opacity:done||act?1:.4,transition:'all .3s'}}>
             <div style={{width:32,height:32,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',
-              fontSize:15,background:done?C.success:act?C.primary:'#e5e7eb',color:'white',
+              background:done?C.primary:act?C.tint:'#e5e7eb',color:done?'white':act?C.primary:C.muted,
               transition:'all .3s',boxShadow:act?`0 0 0 4px ${C.tint}`:'none',flexShrink:0,
+              border:act?`2px solid ${C.primary}`:'none',
               animation:act?'glow 2s ease-in-out infinite':undefined}}>
-              {done ? <span className="check-pop" style={{display:'flex'}}><Check s={15} c="white"/></span> : s.icon}
+              {done ? <span className="check-pop" style={{display:'flex'}}><Check s={15} c="white"/></span> : STEP_ICONS[i]}
             </div>
-            <span style={{fontSize:11,fontWeight:act?600:400,color:done?C.success:act?C.primary:C.muted,whiteSpace:'nowrap'}}>{s.label}</span>
+            <span style={{fontSize:11,fontWeight:act?600:400,color:done?C.primary:act?C.primary:C.muted,whiteSpace:'nowrap'}}>{label}</span>
           </div>
-          {i < STEPS.length-1 && (
+          {i < STEP_LABELS.length-1 && (
             <div style={{flex:1,height:2,margin:'0 8px',minWidth:12,
-              background:done?C.success:act?C.primaryL:C.border,transition:'background .5s',
+              background:done?C.primary:act?C.primaryL:C.border,transition:'background .5s',
               animation:act?'connectorPulse 1.6s ease-in-out infinite':undefined}}/>
           )}
         </React.Fragment>
@@ -244,12 +400,14 @@ const SearchBar = ({value, onChange, placeholder='Search...'}) => (
         fontSize:13,outline:'none',fontFamily:'inherit',background:'white'}}
       onFocus={e=>e.target.style.borderColor=C.primary}
       onBlur={e=>e.target.style.borderColor=C.border}/>
-    <span style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',fontSize:13,color:C.muted}}>🔍</span>
+    <span style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',display:'flex'}}>
+      <IcoSearch s={14}/>
+    </span>
   </div>
 );
 
 /* ─── Google User Select Panel ─── */
-const UserSelectPanel = ({users, selected, toggleUser, toggleAll, startExport}) => {
+const UserSelectPanel = ({users, selected, toggleUser, toggleAll, startExport, onLogout}) => {
   const [search, setSearch] = useState('');
   const filtered = users.filter(u =>
     u.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -269,14 +427,24 @@ const UserSelectPanel = ({users, selected, toggleUser, toggleAll, startExport}) 
         </span>
         <div style={{display:'flex',alignItems:'center',gap:8}}>
           <button onClick={downloadCsv} style={{fontSize:12,color:C.primary,background:'none',border:`1px solid ${C.primary}`,
-            borderRadius:5,padding:'4px 9px',cursor:'pointer',fontFamily:'inherit',fontWeight:500}}>⬇ CSV</button>
-          <button onClick={toggleAll} style={{fontSize:12,color:C.primary,background:'none',border:'none',cursor:'pointer',fontWeight:500,fontFamily:'inherit'}}>
-            {selected.size === users.length ? 'Deselect All' : 'Select All'}
+            borderRadius:5,padding:'4px 9px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,
+            display:'inline-flex',alignItems:'center',gap:4}}>
+            <IcoDownload s={11} c={C.primary}/> CSV
           </button>
+          <TextBtn onClick={toggleAll}>
+            {selected.size === users.length ? 'Deselect All' : 'Select All'}
+          </TextBtn>
+          {onLogout && (
+            <button onClick={onLogout} style={{fontSize:11,color:C.muted,background:'none',border:`1px solid ${C.border}`,
+              borderRadius:5,padding:'4px 8px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,
+              display:'inline-flex',alignItems:'center',gap:4}}>
+              <IcoLogout s={11}/> Sign Out
+            </button>
+          )}
         </div>
       </div>
       <SearchBar value={search} onChange={setSearch} placeholder="Search users..."/>
-      <div style={{maxHeight:260,overflowY:'auto',display:'flex',flexDirection:'column',gap:6,marginBottom:16}}>
+      <div style={{maxHeight:240,overflowY:'auto',display:'flex',flexDirection:'column',gap:6,marginBottom:16}}>
         {filtered.map((u,i) => (
           <div key={u.email} className="slide-r" style={{animationDelay:`${i*30}ms`,
             display:'flex',alignItems:'center',gap:12,padding:'10px 14px',
@@ -304,7 +472,7 @@ const UserSelectPanel = ({users, selected, toggleUser, toggleAll, startExport}) 
 };
 
 /* ─── MS User List Panel (shown after MS sign-in in Step 2) ─── */
-const MsUserPanel = () => {
+const MsUserPanel = ({onLogout}) => {
   const [msUsers, setMsUsers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -312,7 +480,15 @@ const MsUserPanel = () => {
 
   useEffect(() => {
     setLoading(true);
-    fetch('/api/ms/users').then(r=>r.json()).then(d => {
+    fetch('/api/ms/users').then(r => {
+      if (r.status === 401) {
+        // Server token expired (e.g. server restarted) — clear UI auth state
+        if (onLogout) onLogout();
+        return { users: null, _expired: true };
+      }
+      return r.json();
+    }).then(d => {
+      if (d._expired) return;
       if (d.users) setMsUsers(d.users);
       else setError(d.error || 'Failed to load users');
     }).catch(e => setError(e.message)).finally(() => setLoading(false));
@@ -330,15 +506,27 @@ const MsUserPanel = () => {
   });
 
   if (loading) return <div style={{display:'flex',alignItems:'center',gap:8,padding:'12px 0',fontSize:13,color:C.muted}}><Spinner s={16}/> Loading M365 users...</div>;
-  if (error) return <div style={{fontSize:12,color:C.error,padding:'8px 0'}}>⚠ {error}</div>;
+  if (error) return <div style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:C.error,padding:'8px 0'}}><IcoError s={13}/> {error}</div>;
   if (msUsers.length === 0) return null;
 
   return (
     <div className="scale-in" style={{marginTop:16}}>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
         <span style={{fontSize:13,fontWeight:600,color:C.dark}}>{msUsers.length} M365 Users Found</span>
-        <button onClick={downloadCsv} style={{fontSize:12,color:C.primary,background:'none',border:`1px solid ${C.primary}`,
-          borderRadius:5,padding:'4px 9px',cursor:'pointer',fontFamily:'inherit',fontWeight:500}}>⬇ Download CSV</button>
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          <button onClick={downloadCsv} style={{fontSize:12,color:C.primary,background:'none',border:`1px solid ${C.primary}`,
+            borderRadius:5,padding:'4px 9px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,
+            display:'inline-flex',alignItems:'center',gap:4}}>
+            <IcoDownload s={11} c={C.primary}/> Download CSV
+          </button>
+          {onLogout && (
+            <button onClick={onLogout} style={{fontSize:11,color:C.muted,background:'none',border:`1px solid ${C.border}`,
+              borderRadius:5,padding:'4px 8px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,
+              display:'inline-flex',alignItems:'center',gap:4}}>
+              <IcoLogout s={11}/> Sign Out
+            </button>
+          )}
+        </div>
       </div>
       <SearchBar value={search} onChange={setSearch} placeholder="Search M365 users..."/>
       <div style={{maxHeight:200,overflowY:'auto',display:'flex',flexDirection:'column',gap:4}}>
@@ -362,9 +550,8 @@ const MsUserPanel = () => {
 /* ══════════════════════════════ */
 /* ═══   STEP 1: IMPORT DATA  ═══ */
 /* ══════════════════════════════ */
-const Step1 = ({onComplete}) => {
+const Step1 = ({onComplete, googleAuthed, setGoogleAuthed}) => {
   const [tab, setTab] = useState('vault');
-  const [googleAuthed, setGoogleAuthed] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [users, setUsers] = useState([]);
   const [selected, setSelected] = useState(new Set());
@@ -376,20 +563,35 @@ const Step1 = ({onComplete}) => {
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
 
-  // No auto-check on mount — auth state resets on every page load/refresh
+  const [loadError, setLoadError] = useState('');
 
   const loadUsers = async () => {
     setLoadingUsers(true);
+    setLoadError('');
     try {
       const res = await fetch('/api/google/users');
+      if (res.status === 401) {
+        setGoogleAuthed(false);
+        setLoadingUsers(false);
+        return;
+      }
       const data = await res.json();
-      if (res.ok) {
+      if (res.ok && data.users) {
         setUsers(data.users);
         setSelected(new Set(data.users.map(u=>u.email)));
+      } else {
+        setLoadError(data.error || 'Failed to load users');
       }
-    } catch(e){}
+    } catch(e){
+      setLoadError(e.message);
+    }
     setLoadingUsers(false);
   };
+
+  // If already authed on mount (restored from localStorage), load users
+  useEffect(() => {
+    if (googleAuthed && users.length === 0) loadUsers();
+  }, [googleAuthed]);
 
   const signInGoogle = () => {
     window.open('/auth/google/login', 'googleauth', 'width=500,height=700,left=300,top=100');
@@ -400,6 +602,13 @@ const Step1 = ({onComplete}) => {
         loadUsers();
       }
     });
+  };
+
+  const logoutGoogle = async () => {
+    await fetch('/auth/google/logout', {method:'POST'});
+    setGoogleAuthed(false);
+    setUsers([]);
+    setSelected(new Set());
   };
 
   const toggleUser = (email) => {
@@ -485,7 +694,7 @@ const Step1 = ({onComplete}) => {
 
       {/* Tabs */}
       <div style={{display:'flex',gap:4,marginBottom:20,background:C.bg,borderRadius:8,padding:4}}>
-        {[['vault','☁️ Google Vault'],['upload','📦 Upload ZIP']].map(([id,label])=>(
+        {[['vault','Google Vault'],['upload','Upload ZIP']].map(([id,label])=>(
           <button key={id} onClick={()=>setTab(id)} style={{
             flex:1,padding:'8px 0',borderRadius:6,border:'none',fontSize:13,fontWeight:tab===id?600:400,
             background:tab===id?'white':C.bg,color:tab===id?C.primary:C.muted,
@@ -500,7 +709,9 @@ const Step1 = ({onComplete}) => {
         <div>
           {!googleAuthed ? (
             <Card className="fade-up" style={{textAlign:'center',padding:32}}>
-              <div style={{fontSize:40,marginBottom:12}}>☁️</div>
+              <div style={{display:'flex',justifyContent:'center',marginBottom:12}}>
+                <IcoCloud s={44} c={C.primaryL}/>
+              </div>
               <div style={{fontSize:15,fontWeight:600,marginBottom:6}}>Connect Google Workspace</div>
               <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Sign in with a Google Workspace admin account to access Vault.</div>
               <button onClick={signInGoogle} style={{display:'inline-flex',alignItems:'center',gap:10,
@@ -516,13 +727,20 @@ const Step1 = ({onComplete}) => {
               <Spinner s={28}/>
               <div style={{marginTop:12,fontSize:13,color:C.muted}}>Loading domain users...</div>
             </Card>
+          ) : loadError ? (
+            <Card className="fade-up" style={{textAlign:'center',padding:28}}>
+              <div style={{display:'flex',justifyContent:'center',marginBottom:12,color:C.error}}><IcoError s={28}/></div>
+              <div style={{fontSize:14,fontWeight:600,marginBottom:6}}>Failed to load users</div>
+              <div style={{fontSize:12,color:C.muted,marginBottom:16}}>{loadError}</div>
+              <Btn onClick={loadUsers}>Retry</Btn>
+            </Card>
           ) : exporting ? (
             <Card className="scale-in" style={{textAlign:'center',padding:28}}>
               <div style={{display:'flex',justifyContent:'center',marginBottom:16}}>
                 <div style={{position:'relative',display:'inline-flex',alignItems:'center',justifyContent:'center'}}>
                   <Ring pct={Math.min(elapsed * 1.5, 90)} size={88} stroke={6} color={C.primary}/>
                   <div style={{position:'absolute',textAlign:'center',transform:'rotate(0deg)'}}>
-                    <div style={{fontSize:18}}>☁️</div>
+                    <IcoCloud s={22} c={C.primaryL}/>
                     <div style={{fontSize:10,color:C.muted,fontWeight:600}}>{elapsed}s</div>
                   </div>
                 </div>
@@ -531,7 +749,7 @@ const Step1 = ({onComplete}) => {
               <div style={{fontSize:12,color:C.muted}}>{exportStatus}</div>
             </Card>
           ) : (
-            <UserSelectPanel users={users} selected={selected} toggleUser={toggleUser} toggleAll={toggleAll} startExport={startExport}/>
+            <UserSelectPanel users={users} selected={selected} toggleUser={toggleUser} toggleAll={toggleAll} startExport={startExport} onLogout={logoutGoogle}/>
           )}
         </div>
       )}
@@ -552,7 +770,9 @@ const Step1 = ({onComplete}) => {
               <div><Spinner s={32}/><div style={{marginTop:12,fontSize:13,color:C.muted}}>Uploading...</div></div>
             ) : (
               <>
-                <div style={{fontSize:40,marginBottom:10}}>📦</div>
+                <div style={{display:'flex',justifyContent:'center',marginBottom:12}}>
+                  <IcoZip s={44} c={dragOver?C.primary:C.primaryL}/>
+                </div>
                 <div style={{fontSize:14,fontWeight:500,marginBottom:4}}><span style={{color:C.primary,fontWeight:600}}>Click to browse</span> or drag & drop</div>
                 <div style={{fontSize:12,color:C.muted}}>Google Vault .zip export file</div>
               </>
@@ -578,6 +798,11 @@ const Step2 = ({uploadData, config, setConfig, msAuthed, setMsAuthed, onNext, on
     });
   };
 
+  const logoutMs = async () => {
+    await fetch('/auth/logout', {method:'POST'});
+    setMsAuthed(false);
+  };
+
   return (
     <div className="fade-up">
       <div style={{marginBottom:20}}>
@@ -588,7 +813,7 @@ const Step2 = ({uploadData, config, setConfig, msAuthed, setMsAuthed, onNext, on
       {uploadData && (
         <Card className="scale-in" style={{marginBottom:20,background:C.tint,border:`1px solid ${C.primary}30`,padding:'14px 16px'}}>
           <div style={{display:'flex',alignItems:'center',gap:10}}>
-            <div style={{fontSize:22}}>✅</div>
+            <span className="check-pop" style={{display:'flex',color:C.success}}><Check s={20} c={C.success}/></span>
             <div>
               <div style={{fontSize:13,fontWeight:600,color:C.primary}}>Gemini data imported</div>
               <div style={{fontSize:12,color:C.muted}}>{uploadData.total_users} users · {uploadData.total_conversations} conversations</div>
@@ -602,11 +827,20 @@ const Step2 = ({uploadData, config, setConfig, msAuthed, setMsAuthed, onNext, on
       </Field>
 
       <Card style={{marginBottom:20,padding:'14px 16px'}}>
-        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12}}>
-          <div style={{width:8,height:8,borderRadius:'50%',background:msAuthed?C.success:'#e5e7eb',transition:'background .3s'}}/>
-          <span style={{fontSize:13,color:msAuthed?C.success:C.muted,fontWeight:500}}>
-            {msAuthed ? 'Signed in to Microsoft 365' : 'Not signed in — required for live migration'}
-          </span>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+          <div style={{display:'flex',alignItems:'center',gap:8}}>
+            <div style={{width:8,height:8,borderRadius:'50%',background:msAuthed?C.success:'#e5e7eb',transition:'background .3s'}}/>
+            <span style={{fontSize:13,color:msAuthed?C.success:C.muted,fontWeight:500}}>
+              {msAuthed ? 'Signed in to Microsoft 365' : 'Not signed in — required for live migration'}
+            </span>
+          </div>
+          {msAuthed && (
+            <button onClick={logoutMs} style={{fontSize:11,color:C.muted,background:'none',border:`1px solid ${C.border}`,
+              borderRadius:5,padding:'4px 8px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,
+              display:'inline-flex',alignItems:'center',gap:4}}>
+              <IcoLogout s={11}/> Sign Out
+            </button>
+          )}
         </div>
         {!msAuthed ? (
           <button onClick={signInMs} style={{display:'inline-flex',alignItems:'center',gap:10,
@@ -635,14 +869,16 @@ const Step2 = ({uploadData, config, setConfig, msAuthed, setMsAuthed, onNext, on
 /* ══════════════════════════════ */
 /* ═══   STEP 3: MAP USERS    ═══ */
 /* ══════════════════════════════ */
-const Step3 = ({uploadData, mappings, setMappings, onNext, onBack}) => {
+const Step3 = ({uploadData, mappings, setMappings, selectedUsers, setSelectedUsers, onNext, onBack}) => {
   const csvRef = useRef(null);
+  const [search, setSearch] = useState('');
 
   useEffect(() => {
     if (uploadData?.users) {
       const m = {};
       uploadData.users.forEach(u => { m[u.email] = u.email; });
       setMappings(m);
+      setSelectedUsers(new Set(uploadData.users.map(u => u.email)));
     }
   }, [uploadData]);
 
@@ -656,65 +892,117 @@ const Step3 = ({uploadData, mappings, setMappings, onNext, onBack}) => {
   const uploadMappingCsv = (file) => {
     const reader = new FileReader();
     reader.onload = e => {
-      const lines = e.target.result.split('\n').slice(1); // skip header
+      const lines = e.target.result.split(/\r?\n/).slice(1); // skip header
       const m = {...mappings};
       for (const line of lines) {
-        const cols = line.match(/"([^"]*)","([^"]*)"/);
-        if (cols) m[cols[1]] = cols[2];
+        if (!line.trim()) continue;
+        const cols = parseCsvLine(line);
+        if (cols.length >= 2 && cols[0]) m[cols[0]] = cols[1];
       }
       setMappings(m);
+      // After CSV upload: reset selection to all loaded users
+      setSelectedUsers(new Set(Object.keys(m)));
     };
     reader.readAsText(file);
   };
 
+  const users = uploadData?.users || [];
+  const filtered = users.filter(u => {
+    const q = search.toLowerCase();
+    return u.email.toLowerCase().includes(q) || (mappings[u.email]||'').toLowerCase().includes(q);
+  });
+
+  const toggleUser = (email) => {
+    setSelectedUsers(prev => {
+      const n = new Set(prev);
+      n.has(email) ? n.delete(email) : n.add(email);
+      return n;
+    });
+  };
+  const toggleAll = () => {
+    if (selectedUsers.size === users.length) setSelectedUsers(new Set());
+    else setSelectedUsers(new Set(users.map(u=>u.email)));
+  };
+
   return (
-    <div className="fade-up">
-      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:20}}>
-        <div>
-          <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>User Mappings</div>
-          <div style={{fontSize:13,color:C.muted}}>Map each Google account to the Microsoft 365 email.</div>
+    <div style={{display:'flex',flexDirection:'column',height:'100%'}} className="fade-up">
+      {/* Header row — static */}
+      <div style={{flexShrink:0,marginBottom:12}}>
+        <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:8}}>
+          <div>
+            <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:2}}>User Mappings</div>
+            <div style={{fontSize:13,color:C.muted}}>Map each Google account to its Microsoft 365 email.</div>
+          </div>
+          <div style={{display:'flex',gap:6,flexShrink:0}}>
+            <input ref={csvRef} type="file" accept=".csv" style={{display:'none'}}
+              onChange={e=>{ if(e.target.files[0]) uploadMappingCsv(e.target.files[0]); e.target.value=''; }}/>
+            <button onClick={()=>csvRef.current.click()} style={{fontSize:12,color:C.muted,background:'white',
+              border:`1px solid ${C.border}`,borderRadius:5,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,
+              display:'inline-flex',alignItems:'center',gap:4}}>
+              <IcoUpload s={11}/> Upload CSV
+            </button>
+            <button onClick={downloadMappingCsv} style={{fontSize:12,color:C.primary,background:'white',
+              border:`1px solid ${C.primary}`,borderRadius:5,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,
+              display:'inline-flex',alignItems:'center',gap:4}}>
+              <IcoDownload s={11} c={C.primary}/> Download CSV
+            </button>
+          </div>
         </div>
-        <div style={{display:'flex',gap:6,flexShrink:0}}>
-          <input ref={csvRef} type="file" accept=".csv" style={{display:'none'}}
-            onChange={e=>{ if(e.target.files[0]) uploadMappingCsv(e.target.files[0]); e.target.value=''; }}/>
-          <button onClick={()=>csvRef.current.click()} style={{fontSize:12,color:C.muted,background:'white',
-            border:`1px solid ${C.border}`,borderRadius:5,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',fontWeight:500}}>
-            ⬆ Upload CSV
-          </button>
-          <button onClick={downloadMappingCsv} style={{fontSize:12,color:C.primary,background:'white',
-            border:`1px solid ${C.primary}`,borderRadius:5,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',fontWeight:500}}>
-            ⬇ Download CSV
-          </button>
+
+        {/* Selection toolbar */}
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+          <div style={{fontSize:12,color:C.muted}}>
+            <span style={{fontWeight:600,color:C.primary}}>{selectedUsers.size}</span> of {users.length} selected for migration
+          </div>
+          <TextBtn onClick={toggleAll}>
+            {selectedUsers.size === users.length ? 'Deselect All' : 'Select All'}
+          </TextBtn>
         </div>
+
+        <SearchBar value={search} onChange={setSearch} placeholder="Search by email..."/>
       </div>
 
-      <div style={{background:'white',border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden',marginBottom:20}}>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 80px',padding:'10px 16px',
+      {/* Table — scrollable */}
+      <div style={{flex:1,overflowY:'auto',minHeight:0,
+        background:'white',border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden'}}>
+        <div style={{display:'grid',gridTemplateColumns:'32px 1fr 1fr 60px',padding:'9px 14px',
           background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:11,fontWeight:600,
-          color:C.muted,textTransform:'uppercase',letterSpacing:.4}}>
+          color:C.muted,textTransform:'uppercase',letterSpacing:.4,position:'sticky',top:0,zIndex:1}}>
+          <div></div>
           <div>Google Email</div>
           <div>M365 Email</div>
           <div style={{textAlign:'right'}}>Chats</div>
         </div>
-        {(uploadData?.users||[]).map((u, i) => (
-          <div key={u.email} className="slide-r" style={{animationDelay:`${i*50}ms`,
-            display:'grid',gridTemplateColumns:'1fr 1fr 80px',alignItems:'center',
-            padding:'10px 16px',borderBottom:i<uploadData.users.length-1?`1px solid ${C.bg}`:'none'}}>
-            <div style={{display:'flex',alignItems:'center',gap:8}}>
-              <Avatar name={u.email} email={u.email} size={28}/>
-              <span style={{fontSize:12,color:C.muted,fontFamily:'monospace'}}>{u.email}</span>
+        {filtered.map((u, i) => (
+          <div key={u.email} style={{
+            display:'grid',gridTemplateColumns:'32px 1fr 1fr 60px',alignItems:'center',
+            padding:'9px 14px',borderBottom:i<filtered.length-1?`1px solid ${C.bg}`:'none',
+            background:selectedUsers.has(u.email)?C.tint:'white',transition:'background .15s',
+            cursor:'pointer'}}
+            onClick={()=>toggleUser(u.email)}>
+            <input type="checkbox" checked={selectedUsers.has(u.email)} onChange={()=>toggleUser(u.email)}
+              style={{accentColor:C.primary,width:15,height:15}}
+              onClick={e=>e.stopPropagation()}/>
+            <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}>
+              <Avatar name={u.email} email={u.email} size={26}/>
+              <span style={{fontSize:12,color:C.muted,fontFamily:'monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{u.email}</span>
             </div>
-            <input value={mappings[u.email]||''} onChange={e=>setMappings(p=>({...p,[u.email]:e.target.value}))}
-              style={{border:`1px solid ${C.border}`,borderRadius:5,padding:'6px 10px',fontSize:12,
-                fontFamily:'inherit',outline:'none',marginRight:8}}
-              onFocus={e=>e.target.style.borderColor=C.primary}
-              onBlur={e=>e.target.style.borderColor=C.border}/>
+            <input value={mappings[u.email]||''} onChange={e=>{e.stopPropagation();setMappings(p=>({...p,[u.email]:e.target.value}))}}
+              style={{border:`1px solid ${C.border}`,borderRadius:5,padding:'5px 9px',fontSize:12,
+                fontFamily:'inherit',outline:'none',marginRight:8,width:'100%'}}
+              onFocus={e=>{e.stopPropagation();e.target.style.borderColor=C.primary}}
+              onBlur={e=>e.target.style.borderColor=C.border}
+              onClick={e=>e.stopPropagation()}/>
             <div style={{textAlign:'right',fontSize:12,color:C.muted,fontWeight:500}}>{u.conversation_count}</div>
           </div>
         ))}
+        {filtered.length === 0 && (
+          <div style={{textAlign:'center',padding:'24px',fontSize:13,color:C.muted}}>No users match "{search}"</div>
+        )}
       </div>
 
-      <div style={{display:'flex',gap:10}}>
+      {/* Buttons — static */}
+      <div style={{flexShrink:0,display:'flex',gap:10,paddingTop:12}}>
         <Btn variant="ghost" onClick={onBack}>← Back</Btn>
         <Btn onClick={onNext} style={{flex:1,justifyContent:'center'}}>Continue →</Btn>
       </div>
@@ -748,7 +1036,7 @@ const Step4 = ({options, setOptions, msAuthed, onRun, onBack}) => {
       </Card>
 
       <Card style={{marginBottom:20}}>
-        <div style={{fontSize:13,fontWeight:600,marginBottom:12,color:C.dark}}>Date Range (optional)</div>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:12,color:C.dark}}>Date Range</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
           <Field label="From Date"><Input type="date" value={options.fromDate} onChange={e=>setOptions(p=>({...p,fromDate:e.target.value}))}/></Field>
           <Field label="To Date"><Input type="date" value={options.toDate} onChange={e=>setOptions(p=>({...p,toDate:e.target.value}))}/></Field>
@@ -756,15 +1044,17 @@ const Step4 = ({options, setOptions, msAuthed, onRun, onBack}) => {
       </Card>
 
       {!options.dryRun && !msAuthed && (
-        <div style={{padding:'12px 16px',background:'#FFF7ED',border:'1px solid #FED7AA',borderRadius:8,fontSize:13,color:'#9A3412',marginBottom:16}}>
-          ⚠️ Live migration requires Microsoft sign-in (Step 2).
+        <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 16px',
+          background:C.tint,border:`1px solid ${C.primary}30`,borderRadius:8,fontSize:13,color:C.primary,marginBottom:16}}>
+          <IcoWarn s={15}/>
+          Live migration requires Microsoft sign-in (Step 2).
         </div>
       )}
 
       <div style={{display:'flex',gap:10}}>
         <Btn variant="ghost" onClick={onBack}>← Back</Btn>
         <Btn onClick={onRun} disabled={!options.dryRun && !msAuthed} style={{flex:1,justifyContent:'center'}}>
-          {options.dryRun ? '🔍 Start Dry Run' : '🚀 Start Migration'}
+          {options.dryRun ? <><IcoSearch s={14}/> Start Dry Run</> : <><IcoRocket s={14}/> Start Migration</>}
         </Btn>
       </div>
     </div>
@@ -775,10 +1065,10 @@ const Step4 = ({options, setOptions, msAuthed, onRun, onBack}) => {
 /* ═══    STEP 5: RUNNING     ═══ */
 /* ══════════════════════════════ */
 const MIG_ENTITIES = [
-  {label:'Users',     icon:'👤', color:C.primary},
-  {label:'Pages',     icon:'📄', color:C.success},
-  {label:'Errors',    icon:'⚠️',  color:C.error},
-  {label:'Flagged',   icon:'🖼️', color:C.warn},
+  {label:'Users',   icon: <IcoUser s={18}/>,  color:C.primary},
+  {label:'Pages',   icon: <IcoPage s={18}/>,  color:C.success},
+  {label:'Errors',  icon: <IcoError s={18}/>, color:C.error},
+  {label:'Flagged', icon: <IcoFlag s={18}/>,  color:C.primaryL},
 ];
 
 const Step5 = ({stats, done}) => {
@@ -793,7 +1083,13 @@ const Step5 = ({stats, done}) => {
   }, [done]);
 
   const vals = [stats.users, stats.pages, stats.errors, stats.flagged];
-  const maxVal = Math.max(...vals, 1);
+
+  const downloadReport = (type) => {
+    const a = document.createElement('a');
+    a.href = `/api/reports/${type}`;
+    a.download = type === 'migration' ? 'migration_report.json' : 'visual_assets_report.json';
+    a.click();
+  };
 
   return (
   <div className="fade-up">
@@ -803,7 +1099,6 @@ const Step5 = ({stats, done}) => {
           <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Migration in Progress</div>
           <div style={{fontSize:13,color:C.muted}}>Creating OneNote pages... watch the log for live updates.</div>
         </div>
-        {/* Master ring */}
         <div style={{display:'flex',justifyContent:'center',padding:'28px 0 20px'}}>
           <div style={{position:'relative',display:'inline-flex',alignItems:'center',justifyContent:'center'}}>
             <Ring pct={ring} size={120} stroke={8} color={C.primary}/>
@@ -813,14 +1108,13 @@ const Step5 = ({stats, done}) => {
             </div>
           </div>
         </div>
-        {/* Entity stat cards */}
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:16}}>
           {MIG_ENTITIES.map((e,i) => (
             <div key={i} className="slide-r" style={{animationDelay:`${i*60}ms`,
               background:'white',borderRadius:10,padding:'12px 14px',
               border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.color}`,
               display:'flex',alignItems:'center',gap:10}}>
-              <div style={{fontSize:22,animation:'float 3s ease-in-out infinite',animationDelay:`${i*.4}s`}}>{e.icon}</div>
+              <div style={{color:e.color,animation:'float 3s ease-in-out infinite',animationDelay:`${i*.4}s`}}>{e.icon}</div>
               <div>
                 <div style={{fontSize:18,fontWeight:700,color:e.color}}>{vals[i]}</div>
                 <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
@@ -835,27 +1129,48 @@ const Step5 = ({stats, done}) => {
     ) : (
       <>
         <div style={{marginBottom:20,textAlign:'center'}}>
-          <div style={{fontSize:40,marginBottom:8}}>🎉</div>
+          <div style={{display:'flex',justifyContent:'center',marginBottom:8,color:C.success}}>
+            <IcoDone s={48}/>
+          </div>
           <div style={{fontSize:20,fontWeight:600,color:C.success,marginBottom:4}}>Migration Complete!</div>
           <div style={{fontSize:13,color:C.muted}}>All conversations migrated. Copilot Agent deployed.</div>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:20}}>
           {[
-            {label:'Users', val:stats.users, icon:'👤', color:C.primary},
-            {label:'Pages Created', val:stats.pages, icon:'📄', color:C.success},
-            {label:'Errors', val:stats.errors, icon:'⚠️', color:stats.errors>0?C.error:C.muted},
-            {label:'Flagged Assets', val:stats.flagged, icon:'🖼️', color:C.warn},
+            {label:'Users',          val:stats.users,   icon:<IcoUser s={22}/>,  color:C.primary},
+            {label:'Pages Created',  val:stats.pages,   icon:<IcoPage s={22}/>,  color:C.success},
+            {label:'Errors',         val:stats.errors,  icon:<IcoError s={22}/>, color:stats.errors>0?C.error:C.muted},
+            {label:'Flagged Assets', val:stats.flagged, icon:<IcoFlag s={22}/>,  color:C.primaryL},
           ].map((s,i) => (
             <Card key={i} className="scale-in" style={{animationDelay:`${i*80}ms`,textAlign:'center',padding:16}}>
-              <div style={{fontSize:24,marginBottom:6}}>{s.icon}</div>
+              <div style={{display:'flex',justifyContent:'center',marginBottom:6,color:s.color}}>{s.icon}</div>
               <div style={{fontSize:28,fontWeight:700,color:s.color}}>{s.val}</div>
               <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.4,marginTop:2}}>{s.label}</div>
             </Card>
           ))}
         </div>
-        <Card style={{background:C.tint,border:`1px solid ${C.primary}30`,marginBottom:20,padding:'14px 16px',fontSize:13}}>
+        <Card style={{background:C.tint,border:`1px solid ${C.primary}30`,marginBottom:16,padding:'14px 16px',fontSize:13}}>
           <b>What's next:</b> Users can open <b>Microsoft Copilot</b> or <b>Teams</b> — the agent is pinned in their sidebar with all migrated conversations.
         </Card>
+        {/* Download report buttons */}
+        <div style={{display:'flex',gap:8,marginBottom:16}}>
+          <button onClick={()=>downloadReport('migration')} style={{
+            flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:8,
+            padding:'10px 16px',borderRadius:6,border:`1px solid ${C.primary}`,background:'white',
+            fontSize:13,fontWeight:500,cursor:'pointer',color:C.primary,fontFamily:'inherit',transition:'all .15s'}}
+            onMouseEnter={e=>e.currentTarget.style.background=C.tint}
+            onMouseLeave={e=>e.currentTarget.style.background='white'}>
+            <IcoDownload s={13} c={C.primary}/> Migration Report
+          </button>
+          <button onClick={()=>downloadReport('visual-assets')} style={{
+            flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:8,
+            padding:'10px 16px',borderRadius:6,border:`1px solid ${C.border}`,background:'white',
+            fontSize:13,fontWeight:500,cursor:'pointer',color:C.muted,fontFamily:'inherit',transition:'all .15s'}}
+            onMouseEnter={e=>e.currentTarget.style.background=C.bg}
+            onMouseLeave={e=>e.currentTarget.style.background='white'}>
+            <IcoDownload s={13} c={C.muted}/> Visual Assets Report
+          </button>
+        </div>
         <Btn onClick={()=>location.reload()} style={{width:'100%',justifyContent:'center'}}>Start New Migration</Btn>
       </>
     )}
@@ -867,12 +1182,12 @@ const Step5 = ({stats, done}) => {
 /* ═══      LOG FEED          ═══ */
 /* ══════════════════════════════ */
 const LOG_STYLES = {
-  info:    {bg:'white',        border:`1px solid ${C.border}`, color:C.dark,    icon:'ℹ️'},
-  success: {bg:'#F0FDF4',      border:'1px solid #86EFAC',     color:'#166534',  icon:'✅'},
-  error:   {bg:'#FEF2F2',      border:'1px solid #FCA5A5',     color:'#991B1B',  icon:'❌'},
-  warn:    {bg:'#FFFBEB',      border:'1px solid #FCD34D',     color:'#92400E',  icon:'⚠️'},
-  done:    {bg:C.primary,      border:'none',                   color:'white',    icon:'🏁'},
-  user:    {bg:C.tint,         border:`1px solid ${C.primary}40`,color:C.primary,icon:'👤'},
+  info:    {bg:'white',           border:`1px solid ${C.border}`,          color:C.dark,    borderL:`3px solid ${C.primary}`,   ico:<IcoInfo s={13}/>},
+  success: {bg:C.tint,           border:`1px solid ${C.primaryL}`,         color:C.primary,  borderL:`3px solid ${C.primary}`,   ico:<Check s={13} c={C.primary}/>},
+  error:   {bg:'#FEF2F2',        border:'1px solid #FCA5A5',               color:'#991B1B',  borderL:'3px solid #FF1F1F',        ico:<IcoError s={13}/>},
+  warn:    {bg:C.tint,           border:`1px solid ${C.primaryL}`,         color:C.primary,  borderL:`3px solid ${C.primaryL}`,  ico:<IcoWarn s={13}/>},
+  done:    {bg:C.primary,        border:'none',                             color:'white',    borderL:'none',                     ico:<IcoDone s={13}/>},
+  user:    {bg:C.tint,           border:`1px solid ${C.primary}40`,        color:C.primary,  borderL:`3px solid ${C.primary}`,   ico:<IcoUser s={13}/>},
 };
 
 const LogFeed = ({logs, live}) => {
@@ -895,7 +1210,9 @@ const LogFeed = ({logs, live}) => {
       {logs.length === 0 && !live && (
         <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
           color:C.muted,textAlign:'center',padding:'40px 20px'}}>
-          <div style={{fontSize:48,marginBottom:12,opacity:.3,animation:'float 3s ease-in-out infinite'}}>📋</div>
+          <div style={{display:'flex',justifyContent:'center',marginBottom:12,opacity:.25,color:C.primary,animation:'float 3s ease-in-out infinite'}}>
+            <IcoPage s={48}/>
+          </div>
           <div style={{fontSize:14,fontWeight:500}}>Migration log</div>
           <div style={{fontSize:12,marginTop:4}}>Activity will appear here when you start</div>
         </div>
@@ -905,10 +1222,14 @@ const LogFeed = ({logs, live}) => {
         return (
           <div key={i} className="fade-up" style={{display:'flex',alignItems:'flex-start',gap:8}}>
             <BotAv/>
-            <div style={{background:s.bg,border:s.border,borderRadius:'10px 10px 10px 3px',
-              padding:'9px 13px',flex:1,lineHeight:1.5,fontSize:13,color:s.color}}>
-              <span style={{fontSize:10,color:s.color==='white'?'rgba(255,255,255,.6)':C.muted,marginRight:8}}>{log.ts}</span>
-              {log.message}
+            <div style={{background:s.bg,border:s.border,borderLeft:s.borderL||s.border,
+              borderRadius:'10px 10px 10px 3px',padding:'9px 13px',flex:1,lineHeight:1.5,fontSize:13,color:s.color,
+              display:'flex',alignItems:'flex-start',gap:8}}>
+              <span style={{flexShrink:0,marginTop:1,opacity:.7}}>{s.ico}</span>
+              <div style={{flex:1}}>
+                <span style={{fontSize:10,color:s.color==='white'?'rgba(255,255,255,.6)':C.muted,marginRight:6}}>{log.ts}</span>
+                {log.message}
+              </div>
             </div>
           </div>
         );
@@ -923,19 +1244,57 @@ const LogFeed = ({logs, live}) => {
 /* ═══            MAIN APP            ═══ */
 /* ══════════════════════════════════════ */
 function App() {
-  const [step, setStep] = useState(0);
-  const [uploadData, setUploadData] = useState(null);
-  const [config, setConfig] = useState({customerName:'', tenantId:'807d6772-847c-40e2-9bec-e2c930b3a42e'});
-  const [mappings, setMappings] = useState({});
+  // Hydrate state from localStorage on mount
+  const [step, setStep] = useState(() => lsGet(LS_KEYS.step, 0));
+  const [uploadData, setUploadData] = useState(() => lsGet(LS_KEYS.uploadData, null));
+  const [config, setConfig] = useState(() => lsGet(LS_KEYS.config, {customerName:'', tenantId:'807d6772-847c-40e2-9bec-e2c930b3a42e'}));
+  const [mappings, setMappings] = useState(() => lsGet(LS_KEYS.mappings, {}));
+  const [selectedUsers, setSelectedUsers] = useState(() => {
+    const saved = lsGet('gem_selected_users', null);
+    return saved ? new Set(saved) : new Set();
+  });
   const [options, setOptions] = useState({dryRun:false, skipFollowups:false, fromDate:'', toDate:''});
-  const [msAuthed, setMsAuthed] = useState(false);
-  const [logs, setLogs] = useState([]);
+  const [googleAuthed, setGoogleAuthed] = useState(() => lsGet(LS_KEYS.authGoogle, {signedIn:false}).signedIn || false);
+  const [msAuthed, setMsAuthed] = useState(() => lsGet(LS_KEYS.authMs, {signedIn:false}).signedIn || false);
+  const [logs, setLogs] = useState(() => lsGet(LS_KEYS.logs, []));
   const [live, setLive] = useState(false);
   const [migDone, setMigDone] = useState(false);
   const [stats, setStats] = useState({users:0, pages:0, errors:0, flagged:0});
   const sseRef = useRef(null);
 
-  // No auto-check on mount — MS auth state resets on every page load/refresh
+  // Re-verify auth on mount — check both Google and MS tokens.
+  // If ANY stored auth is expired OR if there are stale logs but no active migration, clean up.
+  useEffect(() => {
+    Promise.all([
+      fetch('/auth/google/status').then(r=>r.json()).then(d=> d.authenticated).catch(()=>false),
+      fetch('/auth/status').then(r=>r.json()).then(d=> d.authenticated).catch(()=>false),
+    ]).then(([gOk, mOk]) => {
+      // If stored auth doesn't match server, clear everything
+      const stale = (googleAuthed && !gOk) || (msAuthed && !mOk);
+      // Also clear if we have logs/data but neither auth is valid on server
+      const orphanedData = !gOk && !mOk && (logs.length > 0 || uploadData);
+      if (stale || orphanedData) {
+        lsClear();
+        setGoogleAuthed(false); setMsAuthed(false);
+        setStep(0); setUploadData(null); setMappings({});
+        setSelectedUsers(new Set()); setLogs([]);
+      } else {
+        // Sync auth state with server
+        if (!gOk && googleAuthed) setGoogleAuthed(false);
+        if (!mOk && msAuthed) setMsAuthed(false);
+      }
+    });
+  }, []);
+
+  // Persist state to localStorage on change
+  useEffect(() => { lsSet(LS_KEYS.step, step); }, [step]);
+  useEffect(() => { lsSet(LS_KEYS.uploadData, uploadData); }, [uploadData]);
+  useEffect(() => { lsSet(LS_KEYS.config, config); }, [config]);
+  useEffect(() => { lsSet(LS_KEYS.mappings, mappings); }, [mappings]);
+  useEffect(() => { lsSet(LS_KEYS.logs, logs.slice(-500)); }, [logs]);
+  useEffect(() => { lsSet(LS_KEYS.authGoogle, {signedIn: googleAuthed}); }, [googleAuthed]);
+  useEffect(() => { lsSet(LS_KEYS.authMs, {signedIn: msAuthed}); }, [msAuthed]);
+  useEffect(() => { lsSet('gem_selected_users', [...selectedUsers]); }, [selectedUsers]);
 
   const addLog = (type, message) => {
     const ts = new Date().toTimeString().slice(0,8);
@@ -980,11 +1339,16 @@ function App() {
     };
     sseRef.current.onerror = () => { if(sseRef.current){sseRef.current.close();setLive(false);} };
 
+    // Filter mappings to only selected users
+    const filteredMappings = {};
+    const keysToMigrate = selectedUsers.size > 0 ? [...selectedUsers] : Object.keys(mappings);
+    keysToMigrate.forEach(k => { if (mappings[k] !== undefined) filteredMappings[k] = mappings[k]; });
+
     const payload = {
       extract_path: uploadData.extract_path,
       tenant_id: config.tenantId,
       customer_name: config.customerName || 'Gemini',
-      user_mappings: mappings,
+      user_mappings: filteredMappings,
       dry_run: isDry,
       skip_followups: options.skipFollowups,
       from_date: options.fromDate || null,
@@ -997,14 +1361,22 @@ function App() {
     } catch(err) { addLog('error',err.message); setLive(false); }
   };
 
+  const resetSession = () => {
+    if (confirm('Reset all session data? This will clear auth, mappings, and logs.')) {
+      lsClear();
+      location.reload();
+    }
+  };
+
   const leftContent = [
-    <Step1 onComplete={handleImportComplete}/>,
+    <Step1 onComplete={handleImportComplete} googleAuthed={googleAuthed} setGoogleAuthed={setGoogleAuthed}/>,
     <Step2 uploadData={uploadData} config={config} setConfig={setConfig}
       msAuthed={msAuthed} setMsAuthed={setMsAuthed}
-      onNext={()=>{addLog('info','Configuring user mappings...');setStep(2)}}
+      onNext={()=>{addLog('info',`M365 configured — customer: ${config.customerName}`);setStep(2)}}
       onBack={()=>setStep(0)}/>,
     <Step3 uploadData={uploadData} mappings={mappings} setMappings={setMappings}
-      onNext={()=>{addLog('info','Options configured.');setStep(3)}}
+      selectedUsers={selectedUsers} setSelectedUsers={setSelectedUsers}
+      onNext={()=>{addLog('info',`User mappings ready — ${selectedUsers.size || Object.keys(mappings).length} users selected`);setStep(3)}}
       onBack={()=>setStep(1)}/>,
     <Step4 options={options} setOptions={setOptions} msAuthed={msAuthed}
       onRun={runMigration} onBack={()=>setStep(2)}/>,
@@ -1017,16 +1389,26 @@ function App() {
       {/* Header */}
       <div style={{background:C.primary,height:52,display:'flex',alignItems:'center',
         padding:'0 24px',gap:12,flexShrink:0,boxShadow:'0 2px 8px rgba(1,41,172,.2)'}}>
-        <img src="/assets/logo.png" alt="CloudFuze" style={{height:32,objectFit:'contain',borderRadius:4}}/>
+        <img src="/cloudfuze-logo.png" alt="CloudFuze" style={{height:32,objectFit:'contain',borderRadius:4}}/>
         <div style={{width:1,height:24,background:'rgba(255,255,255,.25)',margin:'0 4px'}}/>
         <div>
           <div style={{color:'white',fontSize:14,fontWeight:600,lineHeight:1.2}}>Gemini → Copilot Migration</div>
           <div style={{color:'rgba(255,255,255,.6)',fontSize:11}}>powered by CloudFuze</div>
         </div>
-        <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:6}}>
-          <div className={live?'pulse-dot':''} style={{width:8,height:8,borderRadius:'50%',
-            background:live?C.success:'rgba(255,255,255,.3)',transition:'background .3s'}}/>
-          <span style={{color:'rgba(255,255,255,.7)',fontSize:12}}>{live?'Live':'Idle'}</span>
+        <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:12}}>
+          <div style={{display:'flex',alignItems:'center',gap:6}}>
+            <div className={live?'pulse-dot':''} style={{width:8,height:8,borderRadius:'50%',
+              background:live?C.success:'rgba(255,255,255,.3)',transition:'background .3s'}}/>
+            <span style={{color:'rgba(255,255,255,.7)',fontSize:12}}>{live?'Live':'Idle'}</span>
+          </div>
+          <button onClick={resetSession} title="Reset Session"
+            style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:'rgba(255,255,255,.6)',
+              background:'transparent',border:'1px solid rgba(255,255,255,.2)',borderRadius:5,
+              padding:'4px 9px',cursor:'pointer',fontFamily:'inherit',transition:'all .15s'}}
+            onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.1)'}
+            onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+            <IcoReset s={11}/> Reset
+          </button>
         </div>
       </div>
 
@@ -1037,12 +1419,17 @@ function App() {
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',flex:1,overflow:'hidden'}}>
         {/* Left */}
         <div style={{display:'flex',flexDirection:'column',borderRight:`1px solid ${C.border}`,overflow:'hidden',background:'white'}}>
-          <div style={{padding:'16px 24px',borderBottom:`1px solid ${C.bg}`,background:'white'}}>
+          <div style={{padding:'12px 24px',borderBottom:`1px solid ${C.bg}`,background:'white',flexShrink:0}}>
             <span style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.5}}>
               Step {Math.min(step+1,6)} of 6
             </span>
           </div>
-          <div style={{flex:1,overflowY:'auto',padding:'20px 24px'}}>
+          {/* Step3 manages its own internal scroll; others scroll via this container */}
+          <div style={{flex:1,
+            overflowY: step === 2 ? 'hidden' : 'auto',
+            padding:'20px 24px',
+            display: step === 2 ? 'flex' : 'block',
+            flexDirection: step === 2 ? 'column' : undefined}}>
             {leftContent[Math.min(step, 5)]}
           </div>
         </div>
