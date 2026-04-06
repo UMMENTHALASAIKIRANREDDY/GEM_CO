@@ -7,8 +7,11 @@ import { fileURLToPath } from 'url';
 import AdmZip from 'adm-zip';
 import { EventEmitter } from 'events';
 
-import { getAuthUrl, acquireTokenByCode, isAuthenticated } from './src/auth/microsoft.js';
+import { getAuthUrl, acquireTokenByCode, isAuthenticated, getDelegatedToken } from './src/auth/microsoft.js';
+import { getGoogleAuthUrl, acquireGoogleTokenByCode, isGoogleAuthenticated, getGoogleOAuth2Client } from './src/auth/googleOAuth.js';
+import { google } from 'googleapis';
 import { VaultReader } from './src/modules/vaultReader.js';
+import { VaultExporter } from './src/modules/vaultExporter.js';
 import { AssetScanner } from './src/modules/assetScanner.js';
 import { ResponseGenerator } from './src/modules/responseGenerator.js';
 import { PagesCreator } from './src/modules/pagesCreator.js';
@@ -21,6 +24,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 const migrationEvents = new EventEmitter();
+const logBuffer = []; // replay buffer for late SSE clients
 
 // Store tenant ID for auth flow
 let currentTenantId = null;
@@ -83,6 +87,210 @@ app.get('/auth/status', (_req, res) => {
   res.json({ authenticated: isAuthenticated() });
 });
 
+// ─── OAuth: Sign in with Google ──────────────────────────────────────────────
+
+app.get('/auth/google/login', (_req, res) => {
+  try {
+    const authUrl = getGoogleAuthUrl();
+    res.redirect(authUrl);
+  } catch (err) {
+    res.status(500).send(`Google auth error: ${err.message}`);
+  }
+});
+
+app.get('/auth/google/callback', async (req, res) => {
+  try {
+    const { code, error } = req.query;
+    if (error) {
+      return res.send(`<html><body><h2>Auth failed</h2><p>${error}</p><script>window.close();</script></body></html>`);
+    }
+    if (!code) return res.status(400).send('No authorization code received');
+
+    await acquireGoogleTokenByCode(code);
+
+    res.send(`
+      <html><body>
+        <h2 style="font-family:Segoe UI,sans-serif;color:#107c10">✓ Google signed in!</h2>
+        <p style="font-family:Segoe UI,sans-serif;color:#605e5c">You can close this window.</p>
+        <script>
+          if (window.opener) { window.opener.postMessage({ type: 'google-auth-success' }, '*'); }
+          setTimeout(() => window.close(), 1500);
+        </script>
+      </body></html>
+    `);
+  } catch (err) {
+    res.send(`<html><body><h2>Auth error</h2><p>${err.message}</p><script>window.close();</script></body></html>`);
+  }
+});
+
+app.get('/auth/google/status', (_req, res) => {
+  res.json({ authenticated: isGoogleAuthenticated() });
+});
+
+// ─── Google Users (Admin SDK) ────────────────────────────────────────────────
+
+app.get('/api/google/users', async (_req, res) => {
+  try {
+    const auth = getGoogleOAuth2Client();
+    const admin = google.admin({ version: 'directory_v1', auth });
+    const users = [];
+    let pageToken = undefined;
+
+    do {
+      const resp = await admin.users.list({
+        customer: 'my_customer',
+        maxResults: 200,
+        orderBy: 'email',
+        pageToken,
+      });
+      if (resp.data.users) {
+        users.push(...resp.data.users.map(u => ({
+          email: u.primaryEmail,
+          name: u.name?.fullName || u.primaryEmail,
+        })));
+      }
+      pageToken = resp.data.nextPageToken;
+    } while (pageToken);
+
+    res.json({ total: users.length, users });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Google Vault Export ─────────────────────────────────────────────────────
+
+// Active export tracking
+let activeExport = null;
+
+app.post('/api/google/vault-export', async (req, res) => {
+  try {
+    const { user_emails } = req.body;
+    if (!user_emails || user_emails.length === 0) {
+      return res.status(400).json({ error: 'user_emails array required' });
+    }
+
+    const auth = getGoogleOAuth2Client();
+    const exporter = new VaultExporter(auth);
+
+    const matter = await exporter.createMatter(`GEM_CO Export ${new Date().toISOString()}`);
+    const exportData = await exporter.createExport(matter.matterId, user_emails);
+
+    activeExport = {
+      matterId: matter.matterId,
+      exportId: exportData.id,
+      status: 'IN_PROGRESS',
+      userEmails: user_emails,
+      exporter,
+    };
+
+    res.json({ matter_id: matter.matterId, export_id: exportData.id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/google/vault-export/status', async (_req, res) => {
+  try {
+    if (!activeExport) {
+      return res.status(404).json({ error: 'No active export' });
+    }
+
+    const { exporter, matterId, exportId } = activeExport;
+    
+    console.log(`[${new Date().toISOString()}] UI polling export status for ${exportId}...`);
+    
+    const exportRes = await exporter.vault.matters.exports.get({ matterId, exportId });
+    const status = exportRes.data.status;
+    const stats = exportRes.data.stats || {};
+    
+    console.log(`[${new Date().toISOString()}] Export status: ${status}, exported=${stats.exportedArtifactCount || 0}, total=${stats.totalArtifactCount || 0}`);
+    
+    activeExport.status = status;
+
+    if (status === 'COMPLETED') {
+      console.log(`[${new Date().toISOString()}] Export completed! Starting download...`);
+      
+      // Download and extract
+      const destDir = path.join(__dirname, 'uploads', `vault_export_${Date.now()}`);
+      await exporter.downloadExport(matterId, exportId, destDir);
+      await exporter.closeMatter(matterId);
+
+      console.log(`[${new Date().toISOString()}] Download complete, extracting zips and parsing XML files...`);
+
+      // Extract any zip files from the Vault export
+      const zipFiles = fs.readdirSync(destDir).filter(f => f.toLowerCase().endsWith('.zip'));
+      for (const zf of zipFiles) {
+        const zipPath = path.join(destDir, zf);
+        try {
+          new AdmZip(zipPath).extractAllTo(destDir, true);
+          console.log(`[${new Date().toISOString()}] Extracted: ${zf}`);
+        } catch (e) {
+          console.log(`[${new Date().toISOString()}] Could not extract ${zf}: ${e.message}`);
+        }
+      }
+
+      // Parse with VaultReader — same as /api/upload
+      const xmlFiles = fs.readdirSync(destDir).filter(f => f.toLowerCase().endsWith('.xml'));
+      if (xmlFiles.length === 0) {
+        console.log(`[${new Date().toISOString()}] ERROR: No XML files found in export`);
+        return res.json({ status, error: 'Export completed but no XML files found.' });
+      }
+
+      const reader = new VaultReader(destDir);
+      const users = await reader.discoverUsers();
+
+      console.log(`[${new Date().toISOString()}] Parsed ${users.length} users from export`);
+
+      activeExport = null;
+
+      return res.json({
+        status,
+        upload_id: path.basename(destDir),
+        extract_path: destDir,
+        total_users: users.length,
+        total_conversations: users.reduce((s, u) => s + u.conversationCount, 0),
+        users: users.map(u => ({
+          email: u.email,
+          display_name: u.displayName,
+          conversation_count: u.conversationCount,
+        })),
+      });
+    }
+
+    if (status === 'FAILED') {
+      console.log(`[${new Date().toISOString()}] Export FAILED`);
+      activeExport = null;
+      return res.json({ status, error: 'Vault export failed' });
+    }
+
+    res.json({ status });
+  } catch (err) {
+    console.error(`[${new Date().toISOString()}] Error checking export status:`, err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── MS Users list (for CSV download) ────────────────────────────────────────
+app.get('/api/ms/users', async (req, res) => {
+  try {
+    if (!isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
+    const token = getDelegatedToken();
+    let users = [];
+    let url = 'https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName&$top=999';
+    while (url) {
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const data = await r.json();
+      if (!r.ok) return res.status(500).json({ error: data.error?.message || 'Graph API error' });
+      users = users.concat(data.value || []);
+      url = data['@odata.nextLink'] || null;
+    }
+    res.json({ users });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Upload ZIP ───────────────────────────────────────────────────────────────
 app.post('/api/upload', upload.single('vault_zip'), async (req, res) => {
   try {
@@ -131,13 +339,20 @@ app.get('/api/migration-log', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
+  // Replay all buffered logs to late-joining clients
+  for (const entry of logBuffer) {
+    res.write(`data: ${JSON.stringify(entry)}\n\n`);
+  }
+
   const onLog = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
   migrationEvents.on('log', onLog);
   req.on('close', () => migrationEvents.off('log', onLog));
 });
 
 function emit(type, message, extra = {}) {
-  migrationEvents.emit('log', { type, message, ts: new Date().toISOString(), ...extra });
+  const entry = { type, message, ts: new Date().toISOString(), ...extra };
+  logBuffer.push(entry);
+  migrationEvents.emit('log', entry);
 }
 
 // ─── Start Migration ──────────────────────────────────────────────────────────
@@ -166,7 +381,8 @@ app.post('/api/migrate', async (req, res) => {
 });
 
 async function runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, from_date, to_date }) {
-  await new Promise(r => setTimeout(r, 500));
+  logBuffer.length = 0; // clear previous run's logs
+  await new Promise(r => setTimeout(r, 200));
   emit('info', '━━━ Migration started ━━━');
 
   try {

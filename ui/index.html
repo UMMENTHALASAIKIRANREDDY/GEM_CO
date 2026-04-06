@@ -4,601 +4,1070 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Gemini → Copilot Migration | CloudFuze</title>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet" />
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    :root {
-      --primary: #0129AC;
-      --primary-l: #e8edf8;
-      --primary-d: #011d7a;
-      --green: #107c10;
-      --red: #d13438;
-      --gray: #f5f6f8;
-      --gray-dk: #e2e3e8;
-      --text: #1a1a2e;
-      --muted: #6b6b80;
-      --white: #ffffff;
-      --border: #d4d4dc;
-      --radius: 8px;
-    }
-
-    body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--gray); color: var(--text); height: 100vh; overflow: hidden; }
-
-    /* ── Header ── */
-    .header {
-      background: var(--primary);
-      color: var(--white);
-      height: 50px;
-      display: flex;
-      align-items: center;
-      padding: 0 24px;
-      gap: 10px;
-    }
-    .header h1 { font-size: 15px; font-weight: 600; }
-    .header span { font-size: 12px; opacity: .6; }
-
-    /* ── Split Layout ── */
-    .split {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      height: calc(100vh - 50px);
-    }
-
-    /* ── Left Panel: Operations ── */
-    .left-panel {
-      background: var(--white);
-      border-right: 1px solid var(--border);
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-    }
-
-    .left-header {
-      padding: 16px 24px;
-      border-bottom: 1px solid var(--gray-dk);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-    .left-header h2 { font-size: 14px; font-weight: 700; color: var(--text); }
-
-    .steps-bar {
-      display: flex;
-      padding: 12px 24px;
-      gap: 4px;
-      border-bottom: 1px solid var(--gray-dk);
-      background: var(--gray);
-    }
-    .step-pill {
-      flex: 1;
-      height: 4px;
-      border-radius: 2px;
-      background: var(--gray-dk);
-      transition: background .3s;
-    }
-    .step-pill.done { background: var(--green); }
-    .step-pill.active { background: var(--primary); }
-
-    .left-content {
-      flex: 1;
-      overflow-y: auto;
-      padding: 24px;
-    }
-
-    /* ── Step containers ── */
-    .step-section { display: none; }
-    .step-section.visible { display: block; }
-
-    .step-title {
-      font-size: 18px;
-      font-weight: 700;
-      color: var(--primary);
-      margin-bottom: 4px;
-    }
-    .step-subtitle {
-      font-size: 13px;
-      color: var(--muted);
-      margin-bottom: 20px;
-    }
-
-    /* ── Upload ── */
-    .upload-zone {
-      border: 2px dashed var(--border);
-      border-radius: var(--radius);
-      padding: 48px 20px;
-      text-align: center;
-      cursor: pointer;
-      transition: all .2s;
-      position: relative;
-    }
-    .upload-zone:hover { border-color: var(--primary); background: var(--primary-l); }
-    .upload-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
-    .upload-zone .icon { font-size: 40px; margin-bottom: 8px; }
-    .upload-zone p { font-size: 13px; color: var(--muted); margin-top: 4px; }
-    .upload-zone strong { color: var(--primary); }
-    .upload-zone.success { border-color: var(--green); background: #eef8ee; pointer-events: none; }
-
-    /* ── Fields ── */
-    .field { margin-bottom: 16px; }
-    .field label { display: block; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 5px; }
-    .field input, .field select {
-      width: 100%;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 9px 12px;
-      font-size: 13px;
-      font-family: inherit;
-      outline: none;
-      transition: border-color .2s;
-    }
-    .field input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(1,41,172,.1); }
-
-    /* ── Mapping table ── */
-    .map-table { width: 100%; border-collapse: collapse; }
-    .map-table th {
-      text-align: left; padding: 8px 10px; font-size: 10px; text-transform: uppercase;
-      color: var(--muted); background: var(--gray); border-bottom: 1px solid var(--border); letter-spacing: .3px;
-    }
-    .map-table td { padding: 6px 6px; border-bottom: 1px solid var(--gray); vertical-align: middle; }
-    .map-table .src { font-family: 'Consolas', monospace; font-size: 12px; color: var(--muted); }
-    .map-table input {
-      width: 100%; border: 1px solid var(--border); border-radius: 4px;
-      padding: 5px 8px; font-size: 12px; font-family: inherit;
-    }
-    .map-table input:focus { outline: none; border-color: var(--primary); }
-    .map-table .count { text-align: right; font-size: 11px; color: var(--muted); }
-
-    /* ── Options ── */
-    .opts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
-    .chk { display: flex; align-items: center; gap: 7px; font-size: 13px; cursor: pointer; }
-    .chk input { accent-color: var(--primary); width: 16px; height: 16px; }
-
-    /* ── Buttons ── */
-    .btn {
-      padding: 10px 24px; border-radius: 6px; border: none; font-size: 14px;
-      font-weight: 600; font-family: inherit; cursor: pointer;
-      display: inline-flex; align-items: center; gap: 7px; transition: background .15s;
-    }
-    .btn:disabled { opacity: .45; cursor: not-allowed; }
-    .btn-primary { background: var(--primary); color: var(--white); }
-    .btn-primary:hover:not(:disabled) { background: var(--primary-d); }
-    .btn-outline { background: var(--white); color: var(--text); border: 1px solid var(--border); }
-    .btn-outline:hover:not(:disabled) { background: var(--gray); }
-    .btn-ms { background: var(--white); color: var(--text); border: 1px solid #999; font-size: 13px; }
-    .btn-ms:hover { background: #f5f5f5; }
-
-    .btn-row { display: flex; gap: 10px; margin-top: 20px; }
-
-    /* ── Right Panel: Results ── */
-    .right-panel {
-      display: flex;
-      flex-direction: column;
-      background: #f8f9fb;
-    }
-
-    .right-header {
-      padding: 16px 24px;
-      border-bottom: 1px solid var(--gray-dk);
-      background: var(--white);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-    .right-header h2 { font-size: 14px; font-weight: 700; }
-    .live-dot { width: 8px; height: 8px; border-radius: 50%; background: #ccc; }
-    .live-dot.active { background: var(--green); animation: pulse .8s infinite; }
+    @keyframes spin { from{transform:rotate(0)} to{transform:rotate(360deg)} }
+    @keyframes fadeInUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+    @keyframes scaleIn { from{transform:scale(.94);opacity:0} to{transform:scale(1);opacity:1} }
+    @keyframes slideRight { from{opacity:0;transform:translateX(-16px)} to{opacity:1;transform:translateX(0)} }
+    @keyframes checkPop { 0%{transform:scale(0)} 60%{transform:scale(1.3)} 100%{transform:scale(1)} }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    @keyframes indeterminate { 0%{left:-40%;width:40%} 100%{left:100%;width:40%} }
+    @keyframes shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
+    @keyframes glow { 0%,100%{box-shadow:0 0 8px rgba(1,41,172,.2)} 50%{box-shadow:0 0 20px rgba(1,41,172,.5)} }
+    @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-4px)} }
+    @keyframes typing { 0%{opacity:.2} 20%{opacity:1} 100%{opacity:.2} }
+    @keyframes connectorPulse { 0%,100%{opacity:.4} 50%{opacity:1} }
+    .td{animation:typing 1.4s infinite both;width:5px;height:5px;border-radius:50%;background:#94a3b8;display:inline-block}
+    .td:nth-child(2){animation-delay:.2s}
+    .td:nth-child(3){animation-delay:.4s}
 
-    .right-content {
-      flex: 1;
-      overflow-y: auto;
-      padding: 20px 24px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Poppins',system-ui,sans-serif;background:#F6F6F6;color:#2e2e2e;height:100vh;overflow:hidden}
+    button{font-family:inherit;cursor:pointer}
+    input,select{font-family:inherit}
+    ::-webkit-scrollbar{width:5px}
+    ::-webkit-scrollbar-track{background:transparent}
+    ::-webkit-scrollbar-thumb{background:#d1d5db;border-radius:99px}
+    ::-webkit-scrollbar-thumb:hover{background:#9ca3af}
 
-    /* ── Result messages ── */
-    .res-msg {
-      padding: 10px 14px;
-      border-radius: 8px;
-      font-size: 13px;
-      line-height: 1.5;
-      animation: fadeUp .2s ease;
-    }
-    @keyframes fadeUp { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
-
-    .res-msg.info { background: var(--white); border: 1px solid var(--border); color: var(--text); }
-    .res-msg.success { background: #eef8ee; border: 1px solid #b7dfb7; color: #0a4a0a; }
-    .res-msg.error { background: #fdf0f0; border: 1px solid #f0b8b8; color: #6b0000; }
-    .res-msg.warn { background: #fff8e6; border: 1px solid #f0dfa0; color: #5a4800; }
-    .res-msg.done { background: var(--primary-l); border: 1px solid var(--primary); color: var(--primary-d); font-weight: 600; }
-    .res-msg.user-action { background: var(--primary); color: var(--white); border: none; align-self: flex-end; max-width: 80%; }
-
-    .res-msg .ts { font-size: 10px; color: var(--muted); margin-right: 8px; }
-    .res-msg.user-action .ts { color: rgba(255,255,255,.6); }
-
-    /* ── Summary cards ── */
-    .summary-row {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 12px;
-      margin-top: 8px;
-    }
-    .sum-card {
-      background: var(--white);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 14px;
-      text-align: center;
-    }
-    .sum-card .val { font-size: 26px; font-weight: 700; color: var(--primary); }
-    .sum-card .lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; margin-top: 2px; }
-
-    /* ── Placeholder ── */
-    .placeholder {
-      text-align: center;
-      padding: 60px 20px;
-      color: var(--muted);
-    }
-    .placeholder .icon { font-size: 48px; margin-bottom: 12px; opacity: .4; }
-    .placeholder p { font-size: 14px; }
-
-    @media (max-width: 800px) {
-      .split { grid-template-columns: 1fr; }
-      .right-panel { display: none; }
-    }
+    .fade-up{animation:fadeInUp .4s ease both}
+    .scale-in{animation:scaleIn .35s ease both}
+    .slide-r{animation:slideRight .35s ease both}
+    .check-pop{animation:checkPop .3s ease both}
+    .spinner{animation:spin 1s linear infinite}
+    .pulse-dot{animation:pulse .9s ease-in-out infinite}
   </style>
 </head>
 <body>
+<div id="root"></div>
 
-<div class="header">
-  <h1>Gemini → Copilot Migration</h1>
-  <span>powered by CloudFuze</span>
-</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
 
-<div class="split">
+<script type="text/babel">
+const {useState, useEffect, useRef, useCallback} = React;
 
-  <!-- ══ LEFT: User Operations ══ -->
-  <div class="left-panel">
-    <div class="left-header">
-      <h2 id="left-title">Migration Setup</h2>
-      <span id="step-label" style="font-size:12px;color:var(--muted)">Step 1 of 5</span>
+/* ─── Brand Colors ─── */
+const C = {
+  primary: '#0129AC',
+  primaryH: '#0C18D4',
+  primaryL: '#809EFC',
+  tint: '#E1ECFF',
+  bg: '#F6F6F6',
+  white: '#FFFFFF',
+  dark: '#2e2e2e',
+  muted: '#707070',
+  border: '#EBEBEB',
+  success: '#20CC83',
+  error: '#FF1F1F',
+  warn: '#F59E0B',
+};
+
+/* ─── Tiny SVG Icons ─── */
+const Spinner = ({s=16}) => (
+  <svg width={s} height={s} viewBox="0 0 24 24" className="spinner">
+    <circle cx="12" cy="12" r="10" stroke={C.primary} strokeWidth="3" fill="none" strokeDasharray="31.4 31.4" strokeLinecap="round"/>
+  </svg>
+);
+
+const Check = ({s=16, c=C.success}) => (
+  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="20 6 9 17 4 12"/>
+  </svg>
+);
+
+const GoogleIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 48 48">
+    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+  </svg>
+);
+
+const MsIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 21 21">
+    <rect x="1" y="1" width="9" height="9" fill="#F25022"/>
+    <rect x="11" y="1" width="9" height="9" fill="#7FBA00"/>
+    <rect x="1" y="11" width="9" height="9" fill="#00A4EF"/>
+    <rect x="11" y="11" width="9" height="9" fill="#FFB900"/>
+  </svg>
+);
+
+/* ─── Progress Ring ─── */
+const Ring = ({pct, size=80, stroke=6, color=C.primary, children}) => {
+  const r = (size - stroke) / 2;
+  const circ = 2 * Math.PI * r;
+  const off = circ - (pct / 100) * circ;
+  return (
+    <svg width={size} height={size} style={{transform:'rotate(-90deg)'}}>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#e5e7eb" strokeWidth={stroke}/>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={stroke}
+        strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={off}
+        style={{transition:'stroke-dashoffset .6s ease'}}/>
+      {children}
+    </svg>
+  );
+};
+
+/* ─── Typing Dots ─── */
+const TypingDots = () => (
+  <div style={{display:'flex',alignItems:'flex-start',gap:8,padding:'4px 0'}}>
+    <div style={{width:28,height:28,borderRadius:'50%',
+      background:`linear-gradient(135deg,${C.primary},${C.primaryL})`,
+      display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round">
+        <path d="M12 2a4 4 0 014 4v2H8V6a4 4 0 014-4z"/><rect x="4" y="8" width="16" height="12" rx="2"/>
+        <circle cx="9" cy="14" r="1.5" fill="white"/><circle cx="15" cy="14" r="1.5" fill="white"/>
+      </svg>
     </div>
-    <div class="steps-bar">
-      <div class="step-pill active" id="pill-1"></div>
-      <div class="step-pill" id="pill-2"></div>
-      <div class="step-pill" id="pill-3"></div>
-      <div class="step-pill" id="pill-4"></div>
-      <div class="step-pill" id="pill-5"></div>
+    <div style={{background:'#f1f5f9',borderRadius:'10px 10px 10px 3px',padding:'12px 16px',display:'flex',gap:4,alignItems:'center'}}>
+      <span className="td"/><span className="td"/><span className="td"/>
     </div>
-    <div class="left-content">
+  </div>
+);
 
-      <!-- Step 1: Upload -->
-      <div class="step-section visible" id="sec-1">
-        <div class="step-title">Upload Vault Export</div>
-        <div class="step-subtitle">Upload the Google Vault export ZIP containing Gemini conversations.</div>
-        <div class="upload-zone" id="upload-zone">
-          <input type="file" id="file-input" accept=".zip" />
-          <div class="icon">📦</div>
-          <p><strong>Click to browse</strong> or drag & drop</p>
-          <p>Google Vault .zip file</p>
-        </div>
-      </div>
+/* ─── Avatar with initials ─── */
+function avatarColor(email) {
+  const colors = ['#0129AC','#8b5cf6','#06b6d4','#f59e0b','#20CC83','#ec4899','#ef4444'];
+  let h = 0;
+  for (let i = 0; i < email.length; i++) h = (h * 31 + email.charCodeAt(i)) % colors.length;
+  return colors[h];
+}
 
-      <!-- Step 2: Config -->
-      <div class="step-section" id="sec-2">
-        <div class="step-title">Customer Configuration</div>
-        <div class="step-subtitle">Enter the destination Microsoft 365 details and authenticate.</div>
-        <div class="field">
-          <label>Customer Name</label>
-          <input type="text" id="customer-name" placeholder="e.g. Acme Corp" />
-        </div>
-        <div class="field">
-          <label>Microsoft 365 Tenant ID</label>
-          <input type="text" id="tenant-id" value="807d6772-847c-40e2-9bec-e2c930b3a42e" />
-        </div>
-        <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--gray-dk)">
-          <div id="auth-row" style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-            <div id="auth-dot" style="width:10px;height:10px;border-radius:50%;background:var(--red)"></div>
-            <span id="auth-text" style="font-size:12px;color:var(--muted)">Not signed in — required for live migration</span>
+const Avatar = ({name, email, size=36}) => {
+  const initials = (name || email).split(/[\s@]/)[0].slice(0,2).toUpperCase();
+  return (
+    <div style={{width:size,height:size,borderRadius:'50%',background:avatarColor(email),
+      display:'flex',alignItems:'center',justifyContent:'center',
+      color:'white',fontSize:size*0.35,fontWeight:600,flexShrink:0}}>
+      {initials}
+    </div>
+  );
+};
+
+/* ─── Btn ─── */
+const Btn = ({children, onClick, disabled, variant='primary', style={}}) => {
+  const base = {padding:'10px 20px',borderRadius:4,border:'none',fontSize:14,fontWeight:600,
+    display:'inline-flex',alignItems:'center',gap:8,transition:'all .15s',cursor:disabled?'not-allowed':'pointer',
+    opacity:disabled?.5:1,...style};
+  const styles = {
+    primary: {background:C.primary,color:'white'},
+    outline: {background:'white',color:C.primary,border:`1.5px solid ${C.primary}`},
+    ghost: {background:'transparent',color:C.muted,border:`1px solid ${C.border}`},
+  };
+  const [hov, setHov] = useState(false);
+  const s = {...base,...styles[variant]};
+  if (hov && !disabled) {
+    if (variant==='primary') s.background = C.primaryH;
+    if (variant==='outline') s.background = C.tint;
+    if (variant==='ghost') s.background = C.bg;
+  }
+  return (
+    <button style={s} onClick={disabled ? undefined : onClick}
+      onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}>
+      {children}
+    </button>
+  );
+};
+
+/* ─── Card ─── */
+const Card = ({children, style={}, className=''}) => (
+  <div className={className} style={{background:'white',borderRadius:10,border:`1px solid ${C.border}`,
+    padding:20,...style}}>
+    {children}
+  </div>
+);
+
+/* ─── Field ─── */
+const Field = ({label, children}) => (
+  <div style={{marginBottom:16}}>
+    <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.5,marginBottom:5}}>{label}</div>
+    {children}
+  </div>
+);
+
+const Input = ({value, onChange, placeholder, type='text'}) => (
+  <input type={type} value={value} onChange={onChange} placeholder={placeholder}
+    style={{width:'100%',border:`1px solid ${C.border}`,borderRadius:6,padding:'9px 12px',
+      fontSize:13,outline:'none',transition:'border .2s'}}
+    onFocus={e=>e.target.style.borderColor=C.primary}
+    onBlur={e=>e.target.style.borderColor=C.border}
+  />
+);
+
+/* ══════════════════════════════ */
+/* ═══       STEP TRACKER     ═══ */
+/* ══════════════════════════════ */
+const STEPS = [
+  {label:'Import Data', icon:'📥'},
+  {label:'Configure',   icon:'⚙️'},
+  {label:'Map Users',   icon:'🔗'},
+  {label:'Options',     icon:'🎛️'},
+  {label:'Migrate',     icon:'🚀'},
+  {label:'Complete',    icon:'✅'},
+];
+
+const StepTracker = ({active}) => (
+  <div style={{display:'flex',alignItems:'center',padding:'14px 24px',borderBottom:`1px solid ${C.border}`,background:'white'}}>
+    {STEPS.map((s, i) => {
+      const done = i < active, act = i === active;
+      return (
+        <React.Fragment key={i}>
+          <div style={{display:'flex',alignItems:'center',gap:8,opacity:done||act?1:.4,transition:'all .3s'}}>
+            <div style={{width:32,height:32,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',
+              fontSize:15,background:done?C.success:act?C.primary:'#e5e7eb',color:'white',
+              transition:'all .3s',boxShadow:act?`0 0 0 4px ${C.tint}`:'none',flexShrink:0,
+              animation:act?'glow 2s ease-in-out infinite':undefined}}>
+              {done ? <span className="check-pop" style={{display:'flex'}}><Check s={15} c="white"/></span> : s.icon}
+            </div>
+            <span style={{fontSize:11,fontWeight:act?600:400,color:done?C.success:act?C.primary:C.muted,whiteSpace:'nowrap'}}>{s.label}</span>
           </div>
-          <button class="btn btn-ms" id="btn-auth" onclick="signInMs()">
-            <img src="https://learn.microsoft.com/en-us/entra/identity-platform/media/howto-add-branding-in-apps/ms-symbollockup_mssymbol_19.svg" width="16" height="16" alt="">
-            Sign in with Microsoft
+          {i < STEPS.length-1 && (
+            <div style={{flex:1,height:2,margin:'0 8px',minWidth:12,
+              background:done?C.success:act?C.primaryL:C.border,transition:'background .5s',
+              animation:act?'connectorPulse 1.6s ease-in-out infinite':undefined}}/>
+          )}
+        </React.Fragment>
+      );
+    })}
+  </div>
+);
+
+/* ─── Search Input ─── */
+const SearchBar = ({value, onChange, placeholder='Search...'}) => (
+  <div style={{position:'relative',marginBottom:10}}>
+    <input value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder}
+      style={{width:'100%',border:`1px solid ${C.border}`,borderRadius:6,padding:'8px 12px 8px 34px',
+        fontSize:13,outline:'none',fontFamily:'inherit',background:'white'}}
+      onFocus={e=>e.target.style.borderColor=C.primary}
+      onBlur={e=>e.target.style.borderColor=C.border}/>
+    <span style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',fontSize:13,color:C.muted}}>🔍</span>
+  </div>
+);
+
+/* ─── Google User Select Panel ─── */
+const UserSelectPanel = ({users, selected, toggleUser, toggleAll, startExport}) => {
+  const [search, setSearch] = useState('');
+  const filtered = users.filter(u =>
+    u.name.toLowerCase().includes(search.toLowerCase()) ||
+    u.email.toLowerCase().includes(search.toLowerCase())
+  );
+  const downloadCsv = () => {
+    const csv = 'Name,Email\n' + users.map(u=>`"${u.name}","${u.email}"`).join('\n');
+    const a = document.createElement('a'); a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+    a.download = 'google-users.csv'; a.click();
+  };
+  return (
+    <div className="fade-up">
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+        <span style={{display:'inline-flex',alignItems:'center',gap:6,fontSize:13,fontWeight:600}}>
+          <span style={{width:8,height:8,borderRadius:'50%',background:C.success,display:'inline-block'}}/>
+          Signed in · {users.length} users
+        </span>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          <button onClick={downloadCsv} style={{fontSize:12,color:C.primary,background:'none',border:`1px solid ${C.primary}`,
+            borderRadius:5,padding:'4px 9px',cursor:'pointer',fontFamily:'inherit',fontWeight:500}}>⬇ CSV</button>
+          <button onClick={toggleAll} style={{fontSize:12,color:C.primary,background:'none',border:'none',cursor:'pointer',fontWeight:500,fontFamily:'inherit'}}>
+            {selected.size === users.length ? 'Deselect All' : 'Select All'}
           </button>
         </div>
-        <div class="btn-row">
-          <button class="btn btn-primary" onclick="goStep(3)">Continue →</button>
-        </div>
       </div>
-
-      <!-- Step 3: Mappings -->
-      <div class="step-section" id="sec-3">
-        <div class="step-title">User Mappings</div>
-        <div class="step-subtitle">Map each Google user to their Microsoft 365 email address.</div>
-        <table class="map-table">
-          <thead><tr><th>Google Email (source)</th><th>M365 Email (destination)</th><th style="text-align:right">Chats</th></tr></thead>
-          <tbody id="map-tbody"></tbody>
-        </table>
-        <div class="btn-row">
-          <button class="btn btn-outline" onclick="goStep(2)">← Back</button>
-          <button class="btn btn-primary" onclick="goStep(4)">Continue →</button>
-        </div>
+      <SearchBar value={search} onChange={setSearch} placeholder="Search users..."/>
+      <div style={{maxHeight:260,overflowY:'auto',display:'flex',flexDirection:'column',gap:6,marginBottom:16}}>
+        {filtered.map((u,i) => (
+          <div key={u.email} className="slide-r" style={{animationDelay:`${i*30}ms`,
+            display:'flex',alignItems:'center',gap:12,padding:'10px 14px',
+            border:`1.5px solid ${selected.has(u.email)?C.primary:C.border}`,
+            borderRadius:8,cursor:'pointer',transition:'all .2s',
+            background:selected.has(u.email)?C.tint:'white'}}
+            onClick={()=>toggleUser(u.email)}>
+            <input type="checkbox" checked={selected.has(u.email)} onChange={()=>toggleUser(u.email)}
+              style={{accentColor:C.primary,width:16,height:16,flexShrink:0}} onClick={e=>e.stopPropagation()}/>
+            <Avatar name={u.name} email={u.email} size={34}/>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{u.name}</div>
+              <div style={{fontSize:11,color:C.muted,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{u.email}</div>
+            </div>
+            {selected.has(u.email) && <Check s={16} c={C.primary}/>}
+          </div>
+        ))}
+        {filtered.length === 0 && <div style={{textAlign:'center',padding:'20px',fontSize:13,color:C.muted}}>No users match "{search}"</div>}
       </div>
-
-      <!-- Step 4: Options -->
-      <div class="step-section" id="sec-4">
-        <div class="step-title">Migration Options</div>
-        <div class="step-subtitle">Configure settings and start the migration.</div>
-        <div class="opts-grid">
-          <label class="chk"><input type="checkbox" id="opt-dryrun" /> Dry run (preview only)</label>
-          <label class="chk"><input type="checkbox" id="opt-skipfollowups" /> Skip follow-ups</label>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">
-          <div class="field" style="margin:0"><label>From Date</label><input type="date" id="opt-fromdate" /></div>
-          <div class="field" style="margin:0"><label>To Date</label><input type="date" id="opt-todate" /></div>
-        </div>
-        <div class="btn-row">
-          <button class="btn btn-outline" onclick="goStep(3)">← Back</button>
-          <button class="btn btn-primary" id="btn-run" onclick="runMigration()">Start Migration</button>
-        </div>
-      </div>
-
-      <!-- Step 5: Running -->
-      <div class="step-section" id="sec-5">
-        <div class="step-title" id="run-title">Migration in Progress</div>
-        <div class="step-subtitle" id="run-subtitle">Processing conversations and creating OneNote pages...</div>
-        <div id="run-summary"></div>
-        <div class="btn-row" id="run-actions" style="display:none">
-          <button class="btn btn-primary" onclick="location.reload()">New Migration</button>
-        </div>
-      </div>
-
+      <Btn onClick={startExport} disabled={selected.size===0} style={{width:'100%',justifyContent:'center'}}>
+        Export {selected.size > 0 ? `${selected.size} User${selected.size>1?'s':''}` : 'Selected Users'}
+      </Btn>
     </div>
-  </div>
+  );
+};
 
-  <!-- ══ RIGHT: Results Feed ══ -->
-  <div class="right-panel">
-    <div class="right-header">
-      <h2>Migration Log</h2>
-      <div style="display:flex;align-items:center;gap:6px">
-        <div class="live-dot" id="live-dot"></div>
-        <span id="live-text" style="font-size:12px;color:var(--muted)">Waiting</span>
+/* ─── MS User List Panel (shown after MS sign-in in Step 2) ─── */
+const MsUserPanel = () => {
+  const [msUsers, setMsUsers] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    setLoading(true);
+    fetch('/api/ms/users').then(r=>r.json()).then(d => {
+      if (d.users) setMsUsers(d.users);
+      else setError(d.error || 'Failed to load users');
+    }).catch(e => setError(e.message)).finally(() => setLoading(false));
+  }, []);
+
+  const downloadCsv = () => {
+    const csv = 'Name,Email\n' + msUsers.map(u=>`"${u.displayName}","${u.mail||u.userPrincipalName}"`).join('\n');
+    const a = document.createElement('a'); a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+    a.download = 'ms365-users.csv'; a.click();
+  };
+
+  const filtered = msUsers.filter(u => {
+    const q = search.toLowerCase();
+    return (u.displayName||'').toLowerCase().includes(q) || (u.mail||u.userPrincipalName||'').toLowerCase().includes(q);
+  });
+
+  if (loading) return <div style={{display:'flex',alignItems:'center',gap:8,padding:'12px 0',fontSize:13,color:C.muted}}><Spinner s={16}/> Loading M365 users...</div>;
+  if (error) return <div style={{fontSize:12,color:C.error,padding:'8px 0'}}>⚠ {error}</div>;
+  if (msUsers.length === 0) return null;
+
+  return (
+    <div className="scale-in" style={{marginTop:16}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+        <span style={{fontSize:13,fontWeight:600,color:C.dark}}>{msUsers.length} M365 Users Found</span>
+        <button onClick={downloadCsv} style={{fontSize:12,color:C.primary,background:'none',border:`1px solid ${C.primary}`,
+          borderRadius:5,padding:'4px 9px',cursor:'pointer',fontFamily:'inherit',fontWeight:500}}>⬇ Download CSV</button>
+      </div>
+      <SearchBar value={search} onChange={setSearch} placeholder="Search M365 users..."/>
+      <div style={{maxHeight:200,overflowY:'auto',display:'flex',flexDirection:'column',gap:4}}>
+        {filtered.map((u,i) => (
+          <div key={i} className="slide-r" style={{animationDelay:`${i*20}ms`,
+            display:'flex',alignItems:'center',gap:10,padding:'8px 12px',
+            background:'white',borderRadius:7,border:`1px solid ${C.border}`}}>
+            <Avatar name={u.displayName||'?'} email={u.mail||u.userPrincipalName||'?'} size={28}/>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{u.displayName}</div>
+              <div style={{fontSize:11,color:C.muted,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{u.mail||u.userPrincipalName}</div>
+            </div>
+          </div>
+        ))}
+        {filtered.length === 0 && <div style={{textAlign:'center',padding:'16px',fontSize:13,color:C.muted}}>No users match "{search}"</div>}
       </div>
     </div>
-    <div class="right-content" id="feed">
-      <div class="placeholder" id="feed-placeholder">
-        <div class="icon">📋</div>
-        <p>Migration results will appear here</p>
-      </div>
-    </div>
-  </div>
+  );
+};
 
-</div>
+/* ══════════════════════════════ */
+/* ═══   STEP 1: IMPORT DATA  ═══ */
+/* ══════════════════════════════ */
+const Step1 = ({onComplete}) => {
+  const [tab, setTab] = useState('vault');
+  const [googleAuthed, setGoogleAuthed] = useState(false);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [users, setUsers] = useState([]);
+  const [selected, setSelected] = useState(new Set());
+  const [exporting, setExporting] = useState(false);
+  const [exportStatus, setExportStatus] = useState('');
+  const [elapsed, setElapsed] = useState(0);
+  const elapsedRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
 
-<script>
-  let uploadData = null;
-  let sseSource = null;
-  let isAuthed = false;
-  let stats = { users: 0, pages: 0, errors: 0, flagged: 0 };
+  // No auto-check on mount — auth state resets on every page load/refresh
 
-  fetch('/auth/status').then(r=>r.json()).then(d=>{ if(d.authenticated) markAuthed(); }).catch(()=>{});
+  const loadUsers = async () => {
+    setLoadingUsers(true);
+    try {
+      const res = await fetch('/api/google/users');
+      const data = await res.json();
+      if (res.ok) {
+        setUsers(data.users);
+        setSelected(new Set(data.users.map(u=>u.email)));
+      }
+    } catch(e){}
+    setLoadingUsers(false);
+  };
 
-  // ── Navigation ──
-  function goStep(n) {
-    if (n === 3 && !validate2()) return;
-    for (let i = 1; i <= 5; i++) {
-      document.getElementById('sec-'+i).classList.toggle('visible', i===n);
-      const p = document.getElementById('pill-'+i);
-      p.classList.remove('active','done');
-      if (i < n) p.classList.add('done');
-      else if (i === n) p.classList.add('active');
+  const signInGoogle = () => {
+    window.open('/auth/google/login', 'googleauth', 'width=500,height=700,left=300,top=100');
+    window.addEventListener('message', function h(e) {
+      if (e.data?.type === 'google-auth-success') {
+        window.removeEventListener('message', h);
+        setGoogleAuthed(true);
+        loadUsers();
+      }
+    });
+  };
+
+  const toggleUser = (email) => {
+    setSelected(prev => {
+      const n = new Set(prev);
+      n.has(email) ? n.delete(email) : n.add(email);
+      return n;
+    });
+  };
+
+  const toggleAll = () => {
+    if (selected.size === users.length) setSelected(new Set());
+    else setSelected(new Set(users.map(u=>u.email)));
+  };
+
+  const startExport = async () => {
+    setExporting(true);
+    setElapsed(0);
+    elapsedRef.current = setInterval(()=>setElapsed(p=>p+1), 1000);
+    setExportStatus('Creating Vault export...');
+    try {
+      const res = await fetch('/api/google/vault-export', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({user_emails: [...selected]}),
+      });
+      const data = await res.json();
+      if (!res.ok) { setExportStatus(`Error: ${data.error}`); clearInterval(elapsedRef.current); setExporting(false); return; }
+      setExportStatus('Export in progress...');
+      poll();
+    } catch(e) {
+      setExportStatus(`Error: ${e.message}`);
+      clearInterval(elapsedRef.current);
+      setExporting(false);
     }
-    document.getElementById('step-label').textContent = `Step ${n} of 5`;
-    if (n === 2) feedMsg('info', 'Configuring customer details...');
-    if (n === 3) feedMsg('info', 'Setting up user mappings...');
-    if (n === 4) feedMsg('info', 'Ready to configure migration options.');
-  }
+  };
 
-  function validate2() {
-    if (!document.getElementById('customer-name').value.trim()) { alert('Enter customer name'); return false; }
-    if (!document.getElementById('tenant-id').value.trim()) { alert('Enter Tenant ID'); return false; }
-    return true;
-  }
+  const poll = async () => {
+    const check = async () => {
+      try {
+        const res = await fetch('/api/google/vault-export/status');
+        const data = await res.json();
+        if (data.status === 'COMPLETED' && data.users) {
+          clearInterval(elapsedRef.current);
+          setExportStatus(`Done — ${data.total_users} users, ${data.total_conversations} conversations`);
+          setExporting(false);
+          setTimeout(() => onComplete(data), 800);
+          return;
+        }
+        if (data.status === 'FAILED') {
+          clearInterval(elapsedRef.current);
+          setExportStatus(`Export failed: ${data.error || 'Unknown error'}`);
+          setExporting(false);
+          return;
+        }
+        setExportStatus(`Export in progress (${data.status})...`);
+        setTimeout(check, 10000);
+      } catch(e) {
+        setTimeout(check, 15000);
+      }
+    };
+    check();
+  };
 
-  // ── Upload ──
-  const uploadZone = document.getElementById('upload-zone');
-  const fileInput = document.getElementById('file-input');
-
-  uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.style.borderColor='var(--primary)'; });
-  uploadZone.addEventListener('dragleave', () => { uploadZone.style.borderColor=''; });
-  uploadZone.addEventListener('drop', e => { e.preventDefault(); uploadZone.style.borderColor=''; if(e.dataTransfer.files[0]) doUpload(e.dataTransfer.files[0]); });
-  fileInput.addEventListener('change', () => { if(fileInput.files[0]) doUpload(fileInput.files[0]); });
-
-  async function doUpload(file) {
-    if (!file.name.endsWith('.zip')) { feedMsg('error','Only .zip files accepted.'); return; }
-
-    feedMsg('user-action', `Uploading ${file.name} (${(file.size/1024/1024).toFixed(1)} MB)`);
-    removePlaceholder();
-    setLive('active','Uploading...');
-
+  const doUpload = async (file) => {
+    if (!file.name.endsWith('.zip')) return;
+    setUploading(true);
     const fd = new FormData();
     fd.append('vault_zip', file);
-
     try {
-      const res = await fetch('/api/upload', { method:'POST', body:fd });
+      const res = await fetch('/api/upload', {method:'POST', body:fd});
       const data = await res.json();
-      if (!res.ok) { feedMsg('error', data.error); setLive('','Error'); return; }
+      if (res.ok) onComplete(data);
+    } catch(e){}
+    setUploading(false);
+  };
 
-      uploadData = data;
-      uploadZone.classList.add('success');
-      uploadZone.innerHTML = `<div class="icon">✅</div><p><strong>${esc(file.name)}</strong> uploaded</p><p>${data.total_users} users · ${data.total_conversations} conversations</p>`;
+  return (
+    <div className="fade-up">
+      <div style={{marginBottom:20}}>
+        <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Import Gemini Data</div>
+        <div style={{fontSize:13,color:C.muted}}>Connect Google Vault to export Gemini conversations, or upload a ZIP manually.</div>
+      </div>
 
-      feedMsg('success', `ZIP extracted — ${data.total_users} users, ${data.total_conversations} conversations found.`);
-      setLive('','Ready');
+      {/* Tabs */}
+      <div style={{display:'flex',gap:4,marginBottom:20,background:C.bg,borderRadius:8,padding:4}}>
+        {[['vault','☁️ Google Vault'],['upload','📦 Upload ZIP']].map(([id,label])=>(
+          <button key={id} onClick={()=>setTab(id)} style={{
+            flex:1,padding:'8px 0',borderRadius:6,border:'none',fontSize:13,fontWeight:tab===id?600:400,
+            background:tab===id?'white':C.bg,color:tab===id?C.primary:C.muted,
+            boxShadow:tab===id?'0 1px 4px rgba(0,0,0,.1)':'none',transition:'all .2s',cursor:'pointer'}}>
+            {label}
+          </button>
+        ))}
+      </div>
 
-      if (data.organization) document.getElementById('customer-name').value = data.organization;
+      {/* Google Vault Panel */}
+      {tab === 'vault' && (
+        <div>
+          {!googleAuthed ? (
+            <Card className="fade-up" style={{textAlign:'center',padding:32}}>
+              <div style={{fontSize:40,marginBottom:12}}>☁️</div>
+              <div style={{fontSize:15,fontWeight:600,marginBottom:6}}>Connect Google Workspace</div>
+              <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Sign in with a Google Workspace admin account to access Vault.</div>
+              <button onClick={signInGoogle} style={{display:'inline-flex',alignItems:'center',gap:10,
+                padding:'11px 20px',borderRadius:6,border:`1px solid ${C.border}`,background:'white',
+                fontSize:14,fontWeight:500,cursor:'pointer',transition:'all .15s',boxShadow:'0 1px 3px rgba(0,0,0,.08)'}}
+                onMouseEnter={e=>e.currentTarget.style.background=C.bg}
+                onMouseLeave={e=>e.currentTarget.style.background='white'}>
+                <GoogleIcon/> Sign in with Google
+              </button>
+            </Card>
+          ) : loadingUsers ? (
+            <Card className="fade-up" style={{textAlign:'center',padding:40}}>
+              <Spinner s={28}/>
+              <div style={{marginTop:12,fontSize:13,color:C.muted}}>Loading domain users...</div>
+            </Card>
+          ) : exporting ? (
+            <Card className="scale-in" style={{textAlign:'center',padding:28}}>
+              <div style={{display:'flex',justifyContent:'center',marginBottom:16}}>
+                <div style={{position:'relative',display:'inline-flex',alignItems:'center',justifyContent:'center'}}>
+                  <Ring pct={Math.min(elapsed * 1.5, 90)} size={88} stroke={6} color={C.primary}/>
+                  <div style={{position:'absolute',textAlign:'center',transform:'rotate(0deg)'}}>
+                    <div style={{fontSize:18}}>☁️</div>
+                    <div style={{fontSize:10,color:C.muted,fontWeight:600}}>{elapsed}s</div>
+                  </div>
+                </div>
+              </div>
+              <div style={{fontWeight:600,fontSize:14,marginBottom:4}}>Exporting Gemini Data</div>
+              <div style={{fontSize:12,color:C.muted}}>{exportStatus}</div>
+            </Card>
+          ) : (
+            <UserSelectPanel users={users} selected={selected} toggleUser={toggleUser} toggleAll={toggleAll} startExport={startExport}/>
+          )}
+        </div>
+      )}
 
-      // Populate mapping table
-      const tbody = document.getElementById('map-tbody');
-      tbody.innerHTML = '';
-      data.users.forEach(u => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td class="src">${u.email}</td><td><input type="email" class="m365-email" data-google="${u.email}" value="${u.email}" /></td><td class="count">${u.conversation_count}</td>`;
-        tbody.appendChild(tr);
-      });
+      {/* Upload ZIP Panel */}
+      {tab === 'upload' && (
+        <div className="fade-up"
+          onDragOver={e=>{e.preventDefault();setDragOver(true)}}
+          onDragLeave={()=>setDragOver(false)}
+          onDrop={e=>{e.preventDefault();setDragOver(false);if(e.dataTransfer.files[0]) doUpload(e.dataTransfer.files[0])}}>
+          <div onClick={()=>!uploading&&fileInputRef.current.click()} style={{
+            border:`2px dashed ${dragOver?C.primary:C.border}`,borderRadius:10,padding:'48px 20px',
+            textAlign:'center',cursor:uploading?'wait':'pointer',transition:'all .2s',
+            background:dragOver?C.tint:'white'}}>
+            <input ref={fileInputRef} type="file" accept=".zip" style={{display:'none'}}
+              onChange={e=>{if(e.target.files[0]) doUpload(e.target.files[0])}}/>
+            {uploading ? (
+              <div><Spinner s={32}/><div style={{marginTop:12,fontSize:13,color:C.muted}}>Uploading...</div></div>
+            ) : (
+              <>
+                <div style={{fontSize:40,marginBottom:10}}>📦</div>
+                <div style={{fontSize:14,fontWeight:500,marginBottom:4}}><span style={{color:C.primary,fontWeight:600}}>Click to browse</span> or drag & drop</div>
+                <div style={{fontSize:12,color:C.muted}}>Google Vault .zip export file</div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
-      setTimeout(() => goStep(2), 600);
-    } catch(err) {
-      feedMsg('error', 'Upload failed: ' + err.message);
-      setLive('','Error');
-    }
-  }
-
-  // ── Auth ──
-  function signInMs() {
-    const tid = document.getElementById('tenant-id').value.trim();
-    if (!tid) { alert('Enter Tenant ID first'); return; }
-    window.open(`/auth/login?tenant_id=${tid}`, 'msauth', 'width=500,height=700,left=300,top=100');
+/* ══════════════════════════════ */
+/* ═══     STEP 2: CONFIG     ═══ */
+/* ══════════════════════════════ */
+const Step2 = ({uploadData, config, setConfig, msAuthed, setMsAuthed, onNext, onBack}) => {
+  const signInMs = () => {
+    window.open(`/auth/login?tenant_id=${config.tenantId}`, 'msauth', 'width=500,height=700,left=300,top=100');
     window.addEventListener('message', function h(e) {
-      if (e.data?.type === 'auth-success') { window.removeEventListener('message',h); markAuthed(); feedMsg('success','Microsoft admin signed in successfully.'); }
+      if (e.data?.type === 'auth-success') {
+        window.removeEventListener('message', h);
+        setMsAuthed(true);
+      }
     });
-  }
+  };
 
-  function markAuthed() {
-    isAuthed = true;
-    document.getElementById('auth-dot').style.background = 'var(--green)';
-    document.getElementById('auth-text').textContent = 'Signed in — ready for live migration';
-    document.getElementById('auth-text').style.color = 'var(--green)';
-    const b = document.getElementById('btn-auth');
-    b.innerHTML = '<span style="color:var(--green)">✓</span> Signed in';
-    b.disabled = true;
-  }
+  return (
+    <div className="fade-up">
+      <div style={{marginBottom:20}}>
+        <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Customer Configuration</div>
+        <div style={{fontSize:13,color:C.muted}}>Enter Microsoft 365 details and authenticate as admin.</div>
+      </div>
 
-  // ── Migration ──
-  async function runMigration() {
-    const isDry = document.getElementById('opt-dryrun').checked;
-    if (!isDry && !isAuthed) { feedMsg('error','Sign in with Microsoft first.'); return; }
+      {uploadData && (
+        <Card className="scale-in" style={{marginBottom:20,background:C.tint,border:`1px solid ${C.primary}30`,padding:'14px 16px'}}>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <div style={{fontSize:22}}>✅</div>
+            <div>
+              <div style={{fontSize:13,fontWeight:600,color:C.primary}}>Gemini data imported</div>
+              <div style={{fontSize:12,color:C.muted}}>{uploadData.total_users} users · {uploadData.total_conversations} conversations</div>
+            </div>
+          </div>
+        </Card>
+      )}
 
-    const mappings = {};
-    document.querySelectorAll('.m365-email').forEach(inp => {
-      mappings[inp.dataset.google] = inp.value.trim() || inp.dataset.google;
-    });
+      <Field label="Customer Name">
+        <Input value={config.customerName} onChange={e=>setConfig(p=>({...p,customerName:e.target.value}))} placeholder="e.g. Acme Corp"/>
+      </Field>
 
-    const payload = {
-      extract_path: uploadData.extract_path,
-      tenant_id: document.getElementById('tenant-id').value.trim(),
-      customer_name: document.getElementById('customer-name').value.trim() || 'Gemini',
-      user_mappings: mappings,
-      dry_run: isDry,
-      skip_followups: document.getElementById('opt-skipfollowups').checked,
-      from_date: document.getElementById('opt-fromdate').value || null,
-      to_date: document.getElementById('opt-todate').value || null
+      <Card style={{marginBottom:20,padding:'14px 16px'}}>
+        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12}}>
+          <div style={{width:8,height:8,borderRadius:'50%',background:msAuthed?C.success:'#e5e7eb',transition:'background .3s'}}/>
+          <span style={{fontSize:13,color:msAuthed?C.success:C.muted,fontWeight:500}}>
+            {msAuthed ? 'Signed in to Microsoft 365' : 'Not signed in — required for live migration'}
+          </span>
+        </div>
+        {!msAuthed ? (
+          <button onClick={signInMs} style={{display:'inline-flex',alignItems:'center',gap:10,
+            padding:'10px 16px',borderRadius:6,border:`1px solid ${C.border}`,background:'white',
+            fontSize:13,fontWeight:500,cursor:'pointer',transition:'all .15s'}}
+            onMouseEnter={e=>e.currentTarget.style.background=C.bg}
+            onMouseLeave={e=>e.currentTarget.style.background='white'}>
+            <MsIcon/> Sign in with Microsoft
+          </button>
+        ) : (
+          <div style={{display:'inline-flex',alignItems:'center',gap:8,fontSize:13,color:C.success,fontWeight:500}}>
+            <span className="check-pop" style={{display:'flex'}}><Check s={16} c={C.success}/></span> Authenticated
+          </div>
+        )}
+        {msAuthed && <MsUserPanel/>}
+      </Card>
+
+      <div style={{display:'flex',gap:10}}>
+        <Btn variant="ghost" onClick={onBack}>← Back</Btn>
+        <Btn onClick={onNext} disabled={!config.customerName} style={{flex:1,justifyContent:'center'}}>Continue →</Btn>
+      </div>
+    </div>
+  );
+};
+
+/* ══════════════════════════════ */
+/* ═══   STEP 3: MAP USERS    ═══ */
+/* ══════════════════════════════ */
+const Step3 = ({uploadData, mappings, setMappings, onNext, onBack}) => {
+  const csvRef = useRef(null);
+
+  useEffect(() => {
+    if (uploadData?.users) {
+      const m = {};
+      uploadData.users.forEach(u => { m[u.email] = u.email; });
+      setMappings(m);
+    }
+  }, [uploadData]);
+
+  const downloadMappingCsv = () => {
+    const rows = (uploadData?.users||[]).map(u => `"${u.email}","${mappings[u.email]||u.email}"`);
+    const csv = 'Google Email,M365 Email\n' + rows.join('\n');
+    const a = document.createElement('a'); a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+    a.download = 'user-mappings.csv'; a.click();
+  };
+
+  const uploadMappingCsv = (file) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const lines = e.target.result.split('\n').slice(1); // skip header
+      const m = {...mappings};
+      for (const line of lines) {
+        const cols = line.match(/"([^"]*)","([^"]*)"/);
+        if (cols) m[cols[1]] = cols[2];
+      }
+      setMappings(m);
     };
+    reader.readAsText(file);
+  };
 
-    goStep(5);
-    feedMsg('user-action', isDry ? 'Started dry run' : 'Started live migration');
-    setLive('active','Running');
-    stats = { users:0, pages:0, errors:0, flagged:0 };
+  return (
+    <div className="fade-up">
+      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:20}}>
+        <div>
+          <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>User Mappings</div>
+          <div style={{fontSize:13,color:C.muted}}>Map each Google account to the Microsoft 365 email.</div>
+        </div>
+        <div style={{display:'flex',gap:6,flexShrink:0}}>
+          <input ref={csvRef} type="file" accept=".csv" style={{display:'none'}}
+            onChange={e=>{ if(e.target.files[0]) uploadMappingCsv(e.target.files[0]); e.target.value=''; }}/>
+          <button onClick={()=>csvRef.current.click()} style={{fontSize:12,color:C.muted,background:'white',
+            border:`1px solid ${C.border}`,borderRadius:5,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',fontWeight:500}}>
+            ⬆ Upload CSV
+          </button>
+          <button onClick={downloadMappingCsv} style={{fontSize:12,color:C.primary,background:'white',
+            border:`1px solid ${C.primary}`,borderRadius:5,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',fontWeight:500}}>
+            ⬇ Download CSV
+          </button>
+        </div>
+      </div>
+
+      <div style={{background:'white',border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden',marginBottom:20}}>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 80px',padding:'10px 16px',
+          background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:11,fontWeight:600,
+          color:C.muted,textTransform:'uppercase',letterSpacing:.4}}>
+          <div>Google Email</div>
+          <div>M365 Email</div>
+          <div style={{textAlign:'right'}}>Chats</div>
+        </div>
+        {(uploadData?.users||[]).map((u, i) => (
+          <div key={u.email} className="slide-r" style={{animationDelay:`${i*50}ms`,
+            display:'grid',gridTemplateColumns:'1fr 1fr 80px',alignItems:'center',
+            padding:'10px 16px',borderBottom:i<uploadData.users.length-1?`1px solid ${C.bg}`:'none'}}>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <Avatar name={u.email} email={u.email} size={28}/>
+              <span style={{fontSize:12,color:C.muted,fontFamily:'monospace'}}>{u.email}</span>
+            </div>
+            <input value={mappings[u.email]||''} onChange={e=>setMappings(p=>({...p,[u.email]:e.target.value}))}
+              style={{border:`1px solid ${C.border}`,borderRadius:5,padding:'6px 10px',fontSize:12,
+                fontFamily:'inherit',outline:'none',marginRight:8}}
+              onFocus={e=>e.target.style.borderColor=C.primary}
+              onBlur={e=>e.target.style.borderColor=C.border}/>
+            <div style={{textAlign:'right',fontSize:12,color:C.muted,fontWeight:500}}>{u.conversation_count}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{display:'flex',gap:10}}>
+        <Btn variant="ghost" onClick={onBack}>← Back</Btn>
+        <Btn onClick={onNext} style={{flex:1,justifyContent:'center'}}>Continue →</Btn>
+      </div>
+    </div>
+  );
+};
+
+/* ══════════════════════════════ */
+/* ═══    STEP 4: OPTIONS     ═══ */
+/* ══════════════════════════════ */
+const Step4 = ({options, setOptions, msAuthed, onRun, onBack}) => {
+  const Chk = ({label, checked, onChange}) => (
+    <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer',padding:'8px 0'}}>
+      <input type="checkbox" checked={checked} onChange={onChange}
+        style={{accentColor:C.primary,width:16,height:16}}/>
+      <span>{label}</span>
+    </label>
+  );
+
+  return (
+    <div className="fade-up">
+      <div style={{marginBottom:20}}>
+        <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Migration Options</div>
+        <div style={{fontSize:13,color:C.muted}}>Configure and start the migration.</div>
+      </div>
+
+      <Card style={{marginBottom:16}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:12,color:C.dark}}>Behavior</div>
+        <Chk label="Dry run (preview only — no pages created)" checked={options.dryRun} onChange={e=>setOptions(p=>({...p,dryRun:e.target.checked}))}/>
+        <Chk label="Skip follow-up messages" checked={options.skipFollowups} onChange={e=>setOptions(p=>({...p,skipFollowups:e.target.checked}))}/>
+      </Card>
+
+      <Card style={{marginBottom:20}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:12,color:C.dark}}>Date Range (optional)</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+          <Field label="From Date"><Input type="date" value={options.fromDate} onChange={e=>setOptions(p=>({...p,fromDate:e.target.value}))}/></Field>
+          <Field label="To Date"><Input type="date" value={options.toDate} onChange={e=>setOptions(p=>({...p,toDate:e.target.value}))}/></Field>
+        </div>
+      </Card>
+
+      {!options.dryRun && !msAuthed && (
+        <div style={{padding:'12px 16px',background:'#FFF7ED',border:'1px solid #FED7AA',borderRadius:8,fontSize:13,color:'#9A3412',marginBottom:16}}>
+          ⚠️ Live migration requires Microsoft sign-in (Step 2).
+        </div>
+      )}
+
+      <div style={{display:'flex',gap:10}}>
+        <Btn variant="ghost" onClick={onBack}>← Back</Btn>
+        <Btn onClick={onRun} disabled={!options.dryRun && !msAuthed} style={{flex:1,justifyContent:'center'}}>
+          {options.dryRun ? '🔍 Start Dry Run' : '🚀 Start Migration'}
+        </Btn>
+      </div>
+    </div>
+  );
+};
+
+/* ══════════════════════════════ */
+/* ═══    STEP 5: RUNNING     ═══ */
+/* ══════════════════════════════ */
+const MIG_ENTITIES = [
+  {label:'Users',     icon:'👤', color:C.primary},
+  {label:'Pages',     icon:'📄', color:C.success},
+  {label:'Errors',    icon:'⚠️',  color:C.error},
+  {label:'Flagged',   icon:'🖼️', color:C.warn},
+];
+
+const Step5 = ({stats, done}) => {
+  const [ring, setRing] = React.useState(0);
+  React.useEffect(() => {
+    if (!done) {
+      const t = setInterval(() => setRing(r => Math.min(r + 2, 95)), 800);
+      return () => clearInterval(t);
+    } else {
+      setRing(100);
+    }
+  }, [done]);
+
+  const vals = [stats.users, stats.pages, stats.errors, stats.flagged];
+  const maxVal = Math.max(...vals, 1);
+
+  return (
+  <div className="fade-up">
+    {!done ? (
+      <>
+        <div style={{marginBottom:20}}>
+          <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Migration in Progress</div>
+          <div style={{fontSize:13,color:C.muted}}>Creating OneNote pages... watch the log for live updates.</div>
+        </div>
+        {/* Master ring */}
+        <div style={{display:'flex',justifyContent:'center',padding:'28px 0 20px'}}>
+          <div style={{position:'relative',display:'inline-flex',alignItems:'center',justifyContent:'center'}}>
+            <Ring pct={ring} size={120} stroke={8} color={C.primary}/>
+            <div style={{position:'absolute',textAlign:'center',transform:'rotate(0deg)'}}>
+              <div style={{fontSize:22,fontWeight:700,color:C.primary}}>{ring}%</div>
+              <div style={{fontSize:10,color:C.muted}}>Progress</div>
+            </div>
+          </div>
+        </div>
+        {/* Entity stat cards */}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:16}}>
+          {MIG_ENTITIES.map((e,i) => (
+            <div key={i} className="slide-r" style={{animationDelay:`${i*60}ms`,
+              background:'white',borderRadius:10,padding:'12px 14px',
+              border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.color}`,
+              display:'flex',alignItems:'center',gap:10}}>
+              <div style={{fontSize:22,animation:'float 3s ease-in-out infinite',animationDelay:`${i*.4}s`}}>{e.icon}</div>
+              <div>
+                <div style={{fontSize:18,fontWeight:700,color:e.color}}>{vals[i]}</div>
+                <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{background:C.tint,borderRadius:8,padding:'10px 14px',fontSize:12,color:C.primary,textAlign:'center'}}>
+          Processing conversations... watch the log →
+        </div>
+      </>
+    ) : (
+      <>
+        <div style={{marginBottom:20,textAlign:'center'}}>
+          <div style={{fontSize:40,marginBottom:8}}>🎉</div>
+          <div style={{fontSize:20,fontWeight:600,color:C.success,marginBottom:4}}>Migration Complete!</div>
+          <div style={{fontSize:13,color:C.muted}}>All conversations migrated. Copilot Agent deployed.</div>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:20}}>
+          {[
+            {label:'Users', val:stats.users, icon:'👤', color:C.primary},
+            {label:'Pages Created', val:stats.pages, icon:'📄', color:C.success},
+            {label:'Errors', val:stats.errors, icon:'⚠️', color:stats.errors>0?C.error:C.muted},
+            {label:'Flagged Assets', val:stats.flagged, icon:'🖼️', color:C.warn},
+          ].map((s,i) => (
+            <Card key={i} className="scale-in" style={{animationDelay:`${i*80}ms`,textAlign:'center',padding:16}}>
+              <div style={{fontSize:24,marginBottom:6}}>{s.icon}</div>
+              <div style={{fontSize:28,fontWeight:700,color:s.color}}>{s.val}</div>
+              <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.4,marginTop:2}}>{s.label}</div>
+            </Card>
+          ))}
+        </div>
+        <Card style={{background:C.tint,border:`1px solid ${C.primary}30`,marginBottom:20,padding:'14px 16px',fontSize:13}}>
+          <b>What's next:</b> Users can open <b>Microsoft Copilot</b> or <b>Teams</b> — the agent is pinned in their sidebar with all migrated conversations.
+        </Card>
+        <Btn onClick={()=>location.reload()} style={{width:'100%',justifyContent:'center'}}>Start New Migration</Btn>
+      </>
+    )}
+  </div>
+  );
+};
+
+/* ══════════════════════════════ */
+/* ═══      LOG FEED          ═══ */
+/* ══════════════════════════════ */
+const LOG_STYLES = {
+  info:    {bg:'white',        border:`1px solid ${C.border}`, color:C.dark,    icon:'ℹ️'},
+  success: {bg:'#F0FDF4',      border:'1px solid #86EFAC',     color:'#166534',  icon:'✅'},
+  error:   {bg:'#FEF2F2',      border:'1px solid #FCA5A5',     color:'#991B1B',  icon:'❌'},
+  warn:    {bg:'#FFFBEB',      border:'1px solid #FCD34D',     color:'#92400E',  icon:'⚠️'},
+  done:    {bg:C.primary,      border:'none',                   color:'white',    icon:'🏁'},
+  user:    {bg:C.tint,         border:`1px solid ${C.primary}40`,color:C.primary,icon:'👤'},
+};
+
+const LogFeed = ({logs, live}) => {
+  const endRef = useRef(null);
+  useEffect(()=>{ endRef.current?.scrollIntoView({behavior:'smooth'}) }, [logs, live]);
+
+  const BotAv = () => (
+    <div style={{width:28,height:28,borderRadius:'50%',
+      background:`linear-gradient(135deg,${C.primary},${C.primaryL})`,
+      display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round">
+        <path d="M12 2a4 4 0 014 4v2H8V6a4 4 0 014-4z"/><rect x="4" y="8" width="16" height="12" rx="2"/>
+        <circle cx="9" cy="14" r="1.5" fill="white"/><circle cx="15" cy="14" r="1.5" fill="white"/>
+      </svg>
+    </div>
+  );
+
+  return (
+    <div style={{flex:1,overflowY:'auto',padding:'16px 20px',display:'flex',flexDirection:'column',gap:8}}>
+      {logs.length === 0 && !live && (
+        <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
+          color:C.muted,textAlign:'center',padding:'40px 20px'}}>
+          <div style={{fontSize:48,marginBottom:12,opacity:.3,animation:'float 3s ease-in-out infinite'}}>📋</div>
+          <div style={{fontSize:14,fontWeight:500}}>Migration log</div>
+          <div style={{fontSize:12,marginTop:4}}>Activity will appear here when you start</div>
+        </div>
+      )}
+      {logs.map((log, i) => {
+        const s = LOG_STYLES[log.type] || LOG_STYLES.info;
+        return (
+          <div key={i} className="fade-up" style={{display:'flex',alignItems:'flex-start',gap:8}}>
+            <BotAv/>
+            <div style={{background:s.bg,border:s.border,borderRadius:'10px 10px 10px 3px',
+              padding:'9px 13px',flex:1,lineHeight:1.5,fontSize:13,color:s.color}}>
+              <span style={{fontSize:10,color:s.color==='white'?'rgba(255,255,255,.6)':C.muted,marginRight:8}}>{log.ts}</span>
+              {log.message}
+            </div>
+          </div>
+        );
+      })}
+      {live && <TypingDots/>}
+      <div ref={endRef}/>
+    </div>
+  );
+};
+
+/* ══════════════════════════════════════ */
+/* ═══            MAIN APP            ═══ */
+/* ══════════════════════════════════════ */
+function App() {
+  const [step, setStep] = useState(0);
+  const [uploadData, setUploadData] = useState(null);
+  const [config, setConfig] = useState({customerName:'', tenantId:'807d6772-847c-40e2-9bec-e2c930b3a42e'});
+  const [mappings, setMappings] = useState({});
+  const [options, setOptions] = useState({dryRun:false, skipFollowups:false, fromDate:'', toDate:''});
+  const [msAuthed, setMsAuthed] = useState(false);
+  const [logs, setLogs] = useState([]);
+  const [live, setLive] = useState(false);
+  const [migDone, setMigDone] = useState(false);
+  const [stats, setStats] = useState({users:0, pages:0, errors:0, flagged:0});
+  const sseRef = useRef(null);
+
+  // No auto-check on mount — MS auth state resets on every page load/refresh
+
+  const addLog = (type, message) => {
+    const ts = new Date().toTimeString().slice(0,8);
+    setLogs(p => [...p, {type, message, ts}]);
+  };
+
+  const handleImportComplete = (data) => {
+    setUploadData(data);
+    addLog('success', `Imported — ${data.total_users} users, ${data.total_conversations} conversations`);
+    setTimeout(() => setStep(1), 400);
+  };
+
+  const runMigration = async () => {
+    setStep(4);
+    const isDry = options.dryRun;
+    addLog('info', isDry ? 'Starting dry run...' : 'Starting live migration...');
+    setLive(true);
+    const curStats = {users:0, pages:0, errors:0, flagged:0};
 
     // SSE
-    if (sseSource) sseSource.close();
-    sseSource = new EventSource('/api/migration-log');
-    sseSource.onmessage = e => {
+    if (sseRef.current) sseRef.current.close();
+    sseRef.current = new EventSource('/api/migration-log');
+    sseRef.current.onmessage = e => {
       try {
         const d = JSON.parse(e.data);
-        if (d.type==='success' && d.message.includes('Page created')) stats.pages++;
-        if (d.type==='error') stats.errors++;
-        if (d.type==='warn' && d.message.includes('flagged')) { const m=d.message.match(/(\d+) conversations flagged/); if(m) stats.flagged+=parseInt(m[1]); }
-        if (d.type==='info' && d.message.includes('Processing:')) stats.users++;
-
-        feedMsg(d.type, d.message);
-
+        if (d.type==='success' && d.message.includes('Page created')) curStats.pages++;
+        if (d.type==='error') curStats.errors++;
+        if (d.type==='info' && d.message.includes('Processing:')) curStats.users++;
+        if (d.type==='warn' && d.message.includes('flagged')) {
+          const m = d.message.match(/(\d+) conversations flagged/);
+          if (m) curStats.flagged += parseInt(m[1]);
+        }
+        setStats({...curStats});
+        addLog(d.type, d.message);
         if (d.type === 'done') {
-          sseSource.close();
-          sseSource = null;
-          setLive('', 'Complete');
-          showDone();
-          // Add completion banner on right feed
-          feedMsg('done', '━━━ MIGRATION COMPLETE ━━━');
-          const banner = document.createElement('div');
-          banner.className = 'res-msg done';
-          banner.style.textAlign = 'center';
-          banner.style.padding = '20px';
-          banner.style.fontSize = '15px';
-          banner.innerHTML = `
-            <div style="font-size:32px;margin-bottom:8px">✅</div>
-            <b>Migration Successful</b><br>
-            <span style="font-weight:400;font-size:13px">${stats.users} users · ${stats.pages} pages · ${stats.errors} errors</span><br>
-            <span style="font-weight:400;font-size:12px;margin-top:6px;display:inline-block">Agent deployed and pinned for all users</span>
-          `;
-          document.getElementById('feed').appendChild(banner);
-          document.getElementById('feed').scrollTop = document.getElementById('feed').scrollHeight;
+          sseRef.current.close();
+          setLive(false);
+          setMigDone(true);
+          setStep(5);
         }
       } catch(ex){}
     };
-    sseSource.onerror = () => {
-      // SSE disconnected — stop reconnecting
-      if (sseSource) { sseSource.close(); sseSource = null; }
+    sseRef.current.onerror = () => { if(sseRef.current){sseRef.current.close();setLive(false);} };
+
+    const payload = {
+      extract_path: uploadData.extract_path,
+      tenant_id: config.tenantId,
+      customer_name: config.customerName || 'Gemini',
+      user_mappings: mappings,
+      dry_run: isDry,
+      skip_followups: options.skipFollowups,
+      from_date: options.fromDate || null,
+      to_date: options.toDate || null,
     };
 
-    setTimeout(async () => {
-      try {
-        const res = await fetch('/api/migrate', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
-        if (!res.ok) { const d=await res.json(); feedMsg('error',d.error); setLive('','Error'); }
-      } catch(err) { feedMsg('error',err.message); }
-    }, 300);
-  }
+    try {
+      const res = await fetch('/api/migrate', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      if (!res.ok) { const d=await res.json(); addLog('error',d.error); setLive(false); }
+    } catch(err) { addLog('error',err.message); setLive(false); }
+  };
 
-  function showDone() {
-    document.getElementById('run-title').innerHTML = '<span style="color:var(--green)">✅ Migration Complete</span>';
-    document.getElementById('run-subtitle').textContent = 'All conversations migrated. Copilot Agent deployed and pinned for all users.';
-    document.getElementById('run-summary').innerHTML = `
-      <div class="summary-row" style="margin-top:16px">
-        <div class="sum-card"><div class="val">${stats.users}</div><div class="lbl">Users</div></div>
-        <div class="sum-card"><div class="val">${stats.pages}</div><div class="lbl">Pages Created</div></div>
-        <div class="sum-card"><div class="val">${stats.errors}</div><div class="lbl">Errors</div></div>
-        <div class="sum-card"><div class="val">${stats.flagged}</div><div class="lbl">Flagged Assets</div></div>
+  const leftContent = [
+    <Step1 onComplete={handleImportComplete}/>,
+    <Step2 uploadData={uploadData} config={config} setConfig={setConfig}
+      msAuthed={msAuthed} setMsAuthed={setMsAuthed}
+      onNext={()=>{addLog('info','Configuring user mappings...');setStep(2)}}
+      onBack={()=>setStep(0)}/>,
+    <Step3 uploadData={uploadData} mappings={mappings} setMappings={setMappings}
+      onNext={()=>{addLog('info','Options configured.');setStep(3)}}
+      onBack={()=>setStep(1)}/>,
+    <Step4 options={options} setOptions={setOptions} msAuthed={msAuthed}
+      onRun={runMigration} onBack={()=>setStep(2)}/>,
+    <Step5 stats={stats} done={false}/>,
+    <Step5 stats={stats} done={true}/>,
+  ];
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',height:'100vh',fontFamily:'Poppins,system-ui,sans-serif'}}>
+      {/* Header */}
+      <div style={{background:C.primary,height:52,display:'flex',alignItems:'center',
+        padding:'0 24px',gap:12,flexShrink:0,boxShadow:'0 2px 8px rgba(1,41,172,.2)'}}>
+        <img src="/assets/logo.png" alt="CloudFuze" style={{height:32,objectFit:'contain',borderRadius:4}}/>
+        <div style={{width:1,height:24,background:'rgba(255,255,255,.25)',margin:'0 4px'}}/>
+        <div>
+          <div style={{color:'white',fontSize:14,fontWeight:600,lineHeight:1.2}}>Gemini → Copilot Migration</div>
+          <div style={{color:'rgba(255,255,255,.6)',fontSize:11}}>powered by CloudFuze</div>
+        </div>
+        <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:6}}>
+          <div className={live?'pulse-dot':''} style={{width:8,height:8,borderRadius:'50%',
+            background:live?C.success:'rgba(255,255,255,.3)',transition:'background .3s'}}/>
+          <span style={{color:'rgba(255,255,255,.7)',fontSize:12}}>{live?'Live':'Idle'}</span>
+        </div>
       </div>
-      <div style="margin-top:16px;padding:14px;background:var(--primary-l);border-radius:var(--radius);border:1px solid var(--primary);font-size:13px;color:var(--primary-d)">
-        <b>What's next:</b> Users can now open <b>Microsoft Copilot</b> or <b>Teams</b> and find the agent pinned in their sidebar. They can ask questions about their migrated Gemini conversations.
-      </div>`;
-    document.getElementById('run-actions').style.display = 'flex';
 
-    // Update step bar to show all done
-    for (let i = 1; i <= 5; i++) {
-      document.getElementById('pill-' + i).classList.add('done');
-      document.getElementById('pill-' + i).classList.remove('active');
-    }
-    document.getElementById('step-label').textContent = 'Complete';
-    document.getElementById('left-title').textContent = 'Migration Complete';
-  }
+      {/* Step Tracker */}
+      <StepTracker active={Math.min(step,5)}/>
 
-  // ── Feed helpers ──
-  function feedMsg(type, msg) {
-    removePlaceholder();
-    const d = document.createElement('div');
-    d.className = 'res-msg ' + type;
-    const ts = new Date().toTimeString().slice(0,8);
-    d.innerHTML = `<span class="ts">${ts}</span>${esc(msg)}`;
-    document.getElementById('feed').appendChild(d);
-    const feed = document.getElementById('feed');
-    feed.scrollTop = feed.scrollHeight;
-  }
+      {/* Split Panel */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',flex:1,overflow:'hidden'}}>
+        {/* Left */}
+        <div style={{display:'flex',flexDirection:'column',borderRight:`1px solid ${C.border}`,overflow:'hidden',background:'white'}}>
+          <div style={{padding:'16px 24px',borderBottom:`1px solid ${C.bg}`,background:'white'}}>
+            <span style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.5}}>
+              Step {Math.min(step+1,6)} of 6
+            </span>
+          </div>
+          <div style={{flex:1,overflowY:'auto',padding:'20px 24px'}}>
+            {leftContent[Math.min(step, 5)]}
+          </div>
+        </div>
 
-  function removePlaceholder() {
-    const p = document.getElementById('feed-placeholder');
-    if (p) p.remove();
-  }
+        {/* Right */}
+        <div style={{display:'flex',flexDirection:'column',background:C.bg,overflow:'hidden'}}>
+          <div style={{padding:'14px 20px',borderBottom:`1px solid ${C.border}`,background:'white',
+            display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <span style={{fontSize:14,fontWeight:600}}>Migration Log</span>
+            <div style={{display:'flex',alignItems:'center',gap:6}}>
+              <div className={live?'pulse-dot':''} style={{width:8,height:8,borderRadius:'50%',
+                background:live?C.success:'#d1d5db',transition:'background .3s'}}/>
+              <span style={{fontSize:12,color:live?C.success:C.muted,fontWeight:500}}>
+                {live?'Running':'Waiting'}
+              </span>
+            </div>
+          </div>
+          <LogFeed logs={logs} live={live}/>
+        </div>
+      </div>
+    </div>
+  );
+}
 
-  function setLive(state, text) {
-    const dot = document.getElementById('live-dot');
-    dot.classList.toggle('active', state==='active');
-    document.getElementById('live-text').textContent = text;
-  }
-
-  function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
 </script>
 </body>
 </html>

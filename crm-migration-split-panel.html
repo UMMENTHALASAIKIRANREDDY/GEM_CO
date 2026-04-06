@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CloudFuze CRM Migration Agent — Split Panel</title>
+<style>
+  @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+  @keyframes fadeInUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+  @keyframes scaleIn{from{transform:scale(.93);opacity:0}to{transform:scale(1);opacity:1}}
+  @keyframes checkPop{0%{transform:scale(0)}60%{transform:scale(1.25)}100%{transform:scale(1)}}
+  @keyframes typing{0%{opacity:.2}20%{opacity:1}100%{opacity:.2}}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+  @keyframes slideRight{from{opacity:0;transform:translateX(-20px)}to{opacity:1;transform:translateX(0)}}
+  @keyframes drawLine{from{stroke-dashoffset:200}to{stroke-dashoffset:0}}
+  @keyframes ringFill{from{stroke-dashoffset:251}to{stroke-dashoffset:var(--target)}}
+  @keyframes glow{0%,100%{box-shadow:0 0 8px rgba(99,102,241,.2)}50%{box-shadow:0 0 20px rgba(99,102,241,.5)}}
+  @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+  @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+  @keyframes connectorPulse{0%,100%{opacity:.3}50%{opacity:1}}
+
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',sans-serif;background:#0f172a;overflow:hidden;height:100vh;color:#1e293b}
+  button{font-family:inherit;cursor:pointer}
+  ::-webkit-scrollbar{width:5px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:#334155;border-radius:99px}
+
+  .td{animation:typing 1.4s infinite both;width:5px;height:5px;border-radius:50%;background:#94a3b8;display:inline-block}
+  .td:nth-child(2){animation-delay:.2s}
+  .td:nth-child(3){animation-delay:.4s}
+  .spinner{animation:spin 1s linear infinite}
+  .fade-up{animation:fadeInUp .45s ease both}
+  .scale-in{animation:scaleIn .4s ease both}
+  .check-pop{animation:checkPop .35s ease both}
+  .slide-r{animation:slideRight .4s ease both}
+
+  .glow-border{animation:glow 2s ease-in-out infinite}
+
+  /* Highlighted row in left panel */
+  .highlight-row{background:#eef2ff !important;border-left:3px solid #6366f1 !important;transition:all .3s}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script type="text/babel">
+const {useState,useEffect,useRef,useCallback,Fragment} = React;
+
+/* ══════════ DATA ══════════ */
+const CRMS=[
+  {id:'hubspot',name:'HubSpot',color:'#FF7A59',icon:<svg width="20" height="20" viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="#FF7A59"/><path d="M16.5 10.2V8.4c.5-.3.9-.8.9-1.4 0-1-.8-1.7-1.7-1.7S14 6 14 7c0 .6.3 1.1.9 1.4v1.8c-.7.2-1.4.5-1.9 1l-5.1-4c.1-.2.1-.4.1-.6 0-.9-.7-1.6-1.6-1.6S5 5.7 5 6.6s.7 1.6 1.6 1.6c.3 0 .5-.1.7-.2l5 3.9c-.4.6-.6 1.3-.6 2.1 0 2.1 1.7 3.8 3.8 3.8S19.3 16.1 19.3 14c0-1.8-1.2-3.3-2.8-3.8zm-1 5.6c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z" fill="white"/></svg>},
+  {id:'pipedrive',name:'Pipedrive',color:'#017737',icon:<svg width="20" height="20" viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="#017737"/><path d="M8 7h2.5c2.5 0 4 1.5 4 3.5S13 14 10.5 14H10v3H8V7zm2 5.5h.5c1.2 0 2-.6 2-2s-.8-2-2-2H10v4z" fill="white"/></svg>},
+  {id:'salesforce',name:'Salesforce',color:'#00A1E0',icon:<svg width="20" height="20" viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="#00A1E0"/><path d="M7 10.5c0-1.5 1.2-2.7 2.7-2.7.8 0 1.5.3 2 .9.4-.4 1-.6 1.6-.6 1.3 0 2.4 1.1 2.4 2.4v.4c.8.3 1.4 1.1 1.4 2 0 1.2-1 2.1-2.1 2.1H8.5C7.1 15 6 13.9 6 12.5c0-1 .6-1.8 1.5-2z" fill="white"/></svg>},
+  {id:'zoho',name:'Zoho CRM',color:'#E42527',icon:<svg width="20" height="20" viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="#E42527"/><text x="12" y="16" textAnchor="middle" fill="white" fontSize="10" fontWeight="bold">Z</text></svg>},
+];
+
+const FIELDS=[
+  {src:'First Name',tgt:'first_name',type:'Text',st:'mapped'},
+  {src:'Last Name',tgt:'last_name',type:'Text',st:'mapped'},
+  {src:'Email',tgt:'email',type:'Email',st:'mapped'},
+  {src:'Phone Number',tgt:'phone',type:'Phone',st:'mapped'},
+  {src:'Company Name',tgt:'org_name',type:'Text',st:'mapped'},
+  {src:'Deal Stage',tgt:'stage_id',type:'Enum',st:'mapped'},
+  {src:'Deal Value',tgt:'value',type:'Currency',st:'mapped'},
+  {src:'Close Date',tgt:'expected_close_date',type:'Date',st:'mapped'},
+  {src:'Lead Source',tgt:'—',type:'Enum',st:'review'},
+  {src:'Custom Score',tgt:'—',type:'Number',st:'new'},
+  {src:'Notes',tgt:'notes',type:'Long Text',st:'mapped'},
+  {src:'Owner',tgt:'owner_id',type:'User',st:'mapped'},
+];
+
+const PIPELINE=[
+  {src:'Appointment Scheduled',tgt:'Qualified'},
+  {src:'Qualified to Buy',tgt:'Contact Made'},
+  {src:'Presentation Scheduled',tgt:'Proposal Made'},
+  {src:'Decision Maker Bought-In',tgt:'Negotiations Started'},
+  {src:'Contract Sent',tgt:'Negotiations Started'},
+  {src:'Closed Won',tgt:'Won'},
+  {src:'Closed Lost',tgt:'Lost'},
+];
+
+const ENTITIES=[
+  {label:'Contacts',count:12847,icon:'👤',color:'#6366f1'},
+  {label:'Companies',count:3291,icon:'🏢',color:'#8b5cf6'},
+  {label:'Deals',count:5618,icon:'💰',color:'#06b6d4'},
+  {label:'Activities',count:28473,icon:'📋',color:'#f59e0b'},
+  {label:'Notes',count:15920,icon:'📝',color:'#10b981'},
+  {label:'Relationships',count:41205,icon:'🔗',color:'#ec4899'},
+];
+
+const STEPS=[
+  {id:'connect',label:'Connect',icon:'🔌'},
+  {id:'scan',label:'Scan Data',icon:'🔍'},
+  {id:'map',label:'Map Fields',icon:'🔗'},
+  {id:'pipeline',label:'Pipelines',icon:'📊'},
+  {id:'migrate',label:'Migrate',icon:'🚀'},
+  {id:'done',label:'Complete',icon:'✅'},
+];
+
+/* ══════════ TINY COMPONENTS ══════════ */
+const Spinner=({s=16})=><svg width={s} height={s} viewBox="0 0 24 24" className="spinner"><circle cx="12" cy="12" r="10" stroke="#6366f1" strokeWidth="3" fill="none" strokeDasharray="31.4 31.4" strokeLinecap="round"/></svg>;
+const Check=({s=16,c='#22c55e'})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>;
+const Arrow=()=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>;
+
+const BotAv=()=><div style={{width:30,height:30,borderRadius:'50%',background:'linear-gradient(135deg,#6366f1,#8b5cf6)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><path d="M12 2a4 4 0 014 4v2H8V6a4 4 0 014-4z"/><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5" fill="white"/><circle cx="15" cy="14" r="1.5" fill="white"/></svg></div>;
+
+const BotMsg=({children})=><div className="fade-up" style={{display:'flex',alignItems:'flex-start',gap:8}}><BotAv/><div style={{background:'#f1f5f9',borderRadius:'12px 12px 12px 4px',padding:'10px 14px',maxWidth:'88%',lineHeight:1.55,fontSize:13,color:'#1e293b'}}>{children}</div></div>;
+const UserMsg=({children})=><div className="fade-up" style={{display:'flex',justifyContent:'flex-end'}}><div style={{background:'linear-gradient(135deg,#6366f1,#8b5cf6)',borderRadius:'12px 12px 4px 12px',padding:'10px 14px',maxWidth:'78%',color:'white',fontSize:13,lineHeight:1.5}}>{children}</div></div>;
+const Typing=()=><div className="fade-up" style={{display:'flex',alignItems:'flex-start',gap:8}}><BotAv/><div style={{background:'#f1f5f9',borderRadius:'12px 12px 12px 4px',padding:'12px 16px',display:'flex',gap:4}}><span className="td"/><span className="td"/><span className="td"/></div></div>;
+
+const QR=({opts,onPick})=><div className="fade-up" style={{display:'flex',flexWrap:'wrap',gap:6,justifyContent:'flex-end'}}>{opts.map((o,i)=><button key={i} onClick={()=>onPick(o)} style={{background:'white',border:'1.5px solid #c7d2fe',borderRadius:99,padding:'7px 14px',fontSize:12,color:'#4338ca',fontWeight:500,transition:'all .15s'}} onMouseEnter={e=>{e.target.style.background='#eef2ff';e.target.style.borderColor='#818cf8'}} onMouseLeave={e=>{e.target.style.background='white';e.target.style.borderColor='#c7d2fe'}}>{o}</button>)}</div>;
+
+/* ══════ PROGRESS RING ══════ */
+const Ring=({pct,size=80,stroke=6,color='#6366f1',children})=>{
+  const r=(size-stroke)/2, circ=2*Math.PI*r, off=circ-(pct/100)*circ;
+  return <svg width={size} height={size} style={{transform:'rotate(-90deg)'}}><circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#e2e8f0" strokeWidth={stroke}/><circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={off} style={{transition:'stroke-dashoffset .6s ease'}}/>{children}</svg>;
+};
+
+/* ══════════════════════════════════ */
+/* ═══        MAIN APP            ═══ */
+/* ══════════════════════════════════ */
+function App(){
+  // Shared state
+  const [screen,setScreen]=useState('landing'); // landing | main
+  const [src,setSrc]=useState(null);
+  const [tgt,setTgt]=useState(null);
+  const [activeStep,setActiveStep]=useState(0); // index in STEPS
+  const [phase,setPhase]=useState(0);
+  const phaseRef=useRef(0);
+
+  // Chat state
+  const [msgs,setMsgs]=useState([]);
+  const [typing,setTp]=useState(false);
+  const [qr,setQr]=useState([]);
+  const [input,setInput]=useState('');
+  const endRef=useRef(null);
+
+  // Left panel state
+  const [connStatus,setConnStatus]=useState({src:0,tgt:0}); // 0=idle,1=connecting,2=done
+  const [scanData,setScanData]=useState(null);
+  const [showFields,setShowFields]=useState(false);
+  const [highlightField,setHighlightField]=useState(null);
+  const [showPipeline,setShowPipeline]=useState(false);
+  const [migPct,setMigPct]=useState(0);
+  const [migStep,setMigStep]=useState(-1);
+  const [migDone,setMigDone]=useState(false);
+  const [entityPcts,setEntityPcts]=useState(ENTITIES.map(()=>0));
+
+  const srcCRM=CRMS.find(c=>c.id===src)||CRMS[0];
+  const tgtCRM=CRMS.find(c=>c.id===tgt)||CRMS[1];
+
+  useEffect(()=>{endRef.current?.scrollIntoView({behavior:'smooth'})},[msgs,typing]);
+  useEffect(()=>{phaseRef.current=phase},[phase]);
+
+  const wait=ms=>new Promise(r=>setTimeout(r,ms));
+  const botSay=useCallback((c,d=900)=>new Promise(r=>{setTp(true);setTimeout(()=>{setTp(false);setMsgs(p=>[...p,{t:'bot',c}]);r()},d)}),[]);
+  const userSay=useCallback(t=>{setMsgs(p=>[...p,{t:'user',c:t}])},[]);
+
+  /* ─── Left panel click → ask agent ─── */
+  const askAbout=(topic)=>{
+    userSay(`Tell me more about ${topic}`);
+    setHighlightField(topic);
+    setTimeout(async()=>{
+      if(topic==='Lead Source'){
+        await botSay(<span>The <strong>Lead Source</strong> field has 8 unique values in your {srcCRM.name}: Organic, Referral, Paid Ads, Cold Outbound, Event, Partner, Content, Other. I recommend creating it as a custom enum field in {tgtCRM.name}.</span>,900);
+      } else if(topic==='Custom Score'){
+        await botSay(<span><strong>Custom Score</strong> is a numeric field with values from 0-100 across 8,420 records. I'll create a matching number field in {tgtCRM.name}.</span>,900);
+      } else {
+        await botSay(<span>The <strong>{topic}</strong> field was auto-mapped successfully. All values will transfer 1:1 with no transformation needed.</span>,800);
+      }
+    },100);
+  };
+
+  /* ─── AGENT FLOW ─── */
+  const startFlow=async()=>{
+    // Phase 1: Connection
+    setActiveStep(0);
+    setPhase(1);
+    await botSay(<span>Welcome! 👋 I'm your CRM migration agent. I'll move everything from <strong>{srcCRM.name}</strong> to <strong>{tgtCRM.name}</strong>.</span>,1200);
+    await botSay(<span>First, let me connect to both accounts securely...</span>,800);
+
+    setConnStatus({src:1,tgt:0});
+    await wait(1800);
+    setConnStatus({src:2,tgt:0});
+    await botSay(<span>✅ Connected to <strong>{srcCRM.name}</strong> — read access granted.</span>,500);
+
+    setConnStatus({src:2,tgt:1});
+    await wait(1800);
+    setConnStatus({src:2,tgt:2});
+    await botSay(<span>✅ Connected to <strong>{tgtCRM.name}</strong> — read & write access granted.</span>,500);
+
+    // Phase 2: Scan
+    setActiveStep(1);
+    setPhase(2);
+    await botSay(<span>Both accounts connected! Now scanning your {srcCRM.name} data structure...</span>,1000);
+
+    await wait(1500);
+    const data={contacts:12847,companies:3291,deals:5618,activities:28473,customFields:23,pipelineStages:7};
+    setScanData(data);
+    await botSay(
+      <div>
+        <strong>📊 Scan Complete!</strong> Here's your {srcCRM.name} data overview. You can see the full breakdown on the left panel.
+      </div>
+    ,1400);
+
+    // Phase 3: Field mapping
+    setActiveStep(2);
+    setPhase(3);
+    await botSay(<span>I've auto-mapped <strong>10 of 12</strong> fields. 2 fields need your input. Check the field mapping on the left — click any field to learn more.</span>,1200);
+    setShowFields(true);
+    setQr(['Approve all field mappings','Let me review each field']);
+  };
+
+  /* ─── QUICK REPLY HANDLER ─── */
+  const onQR=async(r)=>{
+    setQr([]);
+    userSay(r);
+    const p=phaseRef.current;
+
+    if(p===3){
+      if(r.includes('Approve')){
+        await botSay(<span>Great! I'll auto-create "Lead Source" as an enum and "Custom Score" as a number field in {tgtCRM.name}. Fields approved! ✅</span>,1000);
+        setHighlightField(null);
+        goToPipeline();
+      } else {
+        await botSay(<span>Sure! Click on any field in the left panel to ask me about it. The ⚠️ and + marked fields need your decision. When ready, just say "approve fields".</span>,1000);
+        setPhase(3.5);
+        setQr(['Approve fields','Skip Lead Source','Create both as custom fields']);
+      }
+    } else if(p===3.5){
+      if(r.includes('Approve')||r.includes('Create both')){
+        await botSay(<span>Done! Both fields will be created in {tgtCRM.name}. Field mapping complete ✅</span>,800);
+        goToPipeline();
+      } else if(r.includes('Skip')){
+        await botSay(<span>Noted — I'll skip Lead Source and create Custom Score as numeric. Field mapping updated ✅</span>,800);
+        goToPipeline();
+      }
+    } else if(p===5){
+      if(r.includes('Approve')||r.includes('Looks good')){
+        await botSay(<span>Pipeline mapping approved ✅ Everything is configured. Let me show you the full migration plan.</span>,900);
+        setPhase(6);
+        setActiveStep(4);
+        await botSay(
+          <div>
+            <strong>🗂 Migration Plan:</strong>
+            <div style={{marginTop:6,fontSize:12,lineHeight:1.8}}>
+              1. Create 2 custom fields in {tgtCRM.name}<br/>
+              2. Migrate 12,847 contacts<br/>
+              3. Migrate 3,291 companies<br/>
+              4. Migrate 5,618 deals with pipeline mapping<br/>
+              5. Migrate 28,473 activities<br/>
+              6. Migrate 15,920 notes<br/>
+              7. Wire 41,205 cross-record relationships<br/>
+              <strong style={{color:'#6366f1'}}>Est. time: ~45 min</strong>
+            </div>
+          </div>
+        ,1200);
+        setQr(['🚀 Start Migration Now','Let me review again']);
+      }
+    } else if(p===6){
+      if(r.includes('Start')){
+        await runMigration();
+      } else {
+        await botSay(<span>Take your time! The left panel shows all your configured mappings. Click anything to ask me about it. Say "start" when ready.</span>,800);
+        setQr(['🚀 Start Migration Now']);
+      }
+    } else if(p===20){
+      if(r.includes('Dashboard')){
+        await botSay(<span>Opening your {tgtCRM.name} dashboard... All data is live and ready. Welcome to your new CRM! 🎉</span>,800);
+      } else if(r.includes('report')){
+        await botSay(<div><strong>📋 Migration Report</strong><div style={{fontSize:12,lineHeight:1.8,marginTop:4}}>• 12,847 contacts — all fields intact<br/>• 3,291 companies — hierarchy preserved<br/>• 5,618 deals — stages mapped perfectly<br/>• 28,473 activities linked<br/>• 15,920 notes attached<br/>• 41,205 relationships wired<br/>• <strong>0 errors</strong> · <strong>47 min total</strong></div></div>,1000);
+      } else {
+        await botSay(<span>The migration preserved all data integrity. 47 duplicate contacts were auto-merged using email matching. Full details in the report.</span>,1000);
+      }
+    }
+  };
+
+  const goToPipeline=async()=>{
+    setActiveStep(3);
+    setPhase(4);
+    setShowPipeline(true);
+    await botSay(<span>Next up: pipeline stages! I've mapped your 7 {srcCRM.name} stages to {tgtCRM.name}. Review the mapping on the left panel.</span>,1000);
+    setPhase(5);
+    setQr(['Looks good, approve stages','Adjust some stages']);
+  };
+
+  /* ─── MIGRATION ─── */
+  const runMigration=async()=>{
+    setQr([]);
+    setPhase(10);
+    setShowFields(false);
+    setShowPipeline(false);
+    setMigStep(0);
+    await botSay(<span>🚀 <strong>Migration started!</strong> Watch the live progress on the left panel.</span>,800);
+
+    for(let i=0;i<ENTITIES.length;i++){
+      setMigStep(i);
+      const frames=15;
+      for(let f=0;f<=frames;f++){
+        await wait(150);
+        const overall=((i/ENTITIES.length)+(1/ENTITIES.length)*(f/frames))*100;
+        setMigPct(overall);
+        setEntityPcts(prev=>{const n=[...prev];n[i]=Math.round((f/frames)*100);return n;});
+      }
+      setEntityPcts(prev=>{const n=[...prev];n[i]=100;return n;});
+      await botSay(<span>✅ <strong>{ENTITIES[i].label}</strong> — {ENTITIES[i].count.toLocaleString()} migrated</span>,250);
+    }
+
+    setMigStep(ENTITIES.length);
+    setMigPct(100);
+    setMigDone(true);
+    setActiveStep(5);
+    await wait(400);
+    await botSay(<span>🎉 <strong>Migration complete!</strong> All <strong>107,354</strong> records transferred with <strong>zero errors</strong> in <strong>47 minutes</strong>. Your {tgtCRM.name} is ready!</span>,1200);
+    setPhase(20);
+    setQr(['Open '+tgtCRM.name+' Dashboard','Download migration report','Check data integrity']);
+  };
+
+  /* ─── Free-form ─── */
+  const onInput=async()=>{
+    const t=input.trim();if(!t)return;
+    setInput('');userSay(t);
+    const lo=t.toLowerCase();
+    if(phaseRef.current===3.5&&(lo.includes('approve')||lo.includes('looks good'))){
+      setQr([]);
+      await botSay(<span>Fields approved ✅ Moving to pipeline mapping!</span>,800);
+      goToPipeline();
+    } else if(lo.includes('start')&&phaseRef.current===6){
+      setQr([]);await runMigration();
+    } else if(lo.includes('rollback')){
+      await botSay(<span>I can rollback the migration — this removes all migrated data from {tgtCRM.name}. Shall I proceed?</span>,1000);
+      setQr(['Yes, rollback','No, keep it']);
+    } else if(lo.includes('duplicate')){
+      await botSay(<span>I merged <strong>47 duplicate contacts</strong> and <strong>12 duplicate companies</strong> during migration using email/domain matching. All merges are logged.</span>,1000);
+    } else {
+      await botSay(<span>I'm here to help! Ask me about any specific records, fields, or migration details.</span>,800);
+    }
+  };
+
+  /* ══════════════════════════════ */
+  /* ═══    LEFT PANEL VIEWS    ═══ */
+  /* ══════════════════════════════ */
+
+  /* Step Tracker */
+  const StepTracker=()=>(
+    <div style={{display:'flex',alignItems:'center',gap:0,padding:'16px 20px',borderBottom:'1px solid #1e293b',background:'#0f172a'}}>
+      {STEPS.map((s,i)=>{
+        const done=i<activeStep,active=i===activeStep;
+        return <Fragment key={i}>
+          <div style={{display:'flex',alignItems:'center',gap:6,opacity:done||active?1:.35,transition:'all .3s'}}>
+            <div style={{width:28,height:28,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,
+              background:done?'#22c55e':active?'#6366f1':'#334155',color:'white',transition:'all .3s',
+              boxShadow:active?'0 0 12px rgba(99,102,241,.5)':'none'}}>
+              {done?<Check s={13} c="white"/>:s.icon}
+            </div>
+            <span style={{fontSize:11,fontWeight:active?600:400,color:done?'#22c55e':active?'#a5b4fc':'#64748b',whiteSpace:'nowrap'}}>{s.label}</span>
+          </div>
+          {i<STEPS.length-1&&<div style={{flex:1,height:2,background:done?'#22c55e':'#334155',margin:'0 6px',transition:'background .5s',minWidth:12}}/>}
+        </Fragment>;
+      })}
+    </div>
+  );
+
+  /* Connection Status */
+  const ConnView=()=>(
+    <div className="fade-up" style={{padding:20}}>
+      <h3 style={{color:'#e2e8f0',fontSize:14,fontWeight:600,marginBottom:16}}>🔌 CRM Connections</h3>
+      <div style={{display:'flex',flexDirection:'column',gap:12}}>
+        {[{crm:srcCRM,label:'Source',st:connStatus.src},{crm:tgtCRM,label:'Target',st:connStatus.tgt}].map((c,i)=>(
+          <div key={i} style={{background:'#1e293b',borderRadius:12,padding:16,display:'flex',alignItems:'center',gap:12,border:`1px solid ${c.st===2?'#22c55e33':c.st===1?'#6366f133':'#334155'}`,transition:'all .3s'}}>
+            <div style={{width:40,height:40,borderRadius:10,background:`${c.crm.color}20`,display:'flex',alignItems:'center',justifyContent:'center'}}>{c.crm.icon}</div>
+            <div style={{flex:1}}>
+              <div style={{color:'#e2e8f0',fontWeight:600,fontSize:13}}>{c.crm.name}</div>
+              <div style={{color:'#64748b',fontSize:11}}>{c.label} — {c.st===0?'Waiting':c.st===1?'Connecting...':'Connected'}</div>
+            </div>
+            {c.st===0&&<div style={{width:8,height:8,borderRadius:'50%',background:'#475569'}}/>}
+            {c.st===1&&<Spinner s={18}/>}
+            {c.st===2&&<div className="check-pop"><Check/></div>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  /* Scan Results */
+  const ScanView=()=>(
+    <div className="scale-in" style={{padding:20}}>
+      <h3 style={{color:'#e2e8f0',fontSize:14,fontWeight:600,marginBottom:16}}>🔍 Data Scan Results</h3>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+        {scanData&&[
+          {l:'Contacts',v:scanData.contacts.toLocaleString(),icon:'👤',clr:'#6366f1'},
+          {l:'Companies',v:scanData.companies.toLocaleString(),icon:'🏢',clr:'#8b5cf6'},
+          {l:'Deals',v:scanData.deals.toLocaleString(),icon:'💰',clr:'#06b6d4'},
+          {l:'Activities',v:scanData.activities.toLocaleString(),icon:'📋',clr:'#f59e0b'},
+          {l:'Custom Fields',v:scanData.customFields,icon:'⚙️',clr:'#10b981'},
+          {l:'Pipeline Stages',v:scanData.pipelineStages,icon:'📊',clr:'#ec4899'},
+        ].map((s,i)=>(
+          <div key={i} className="slide-r" style={{animationDelay:`${i*80}ms`,background:'#1e293b',borderRadius:10,padding:14,borderLeft:`3px solid ${s.clr}`}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+              <span style={{fontSize:16}}>{s.icon}</span>
+              <span style={{color:'#94a3b8',fontSize:11,fontWeight:500}}>{s.l}</span>
+            </div>
+            <div style={{color:'#e2e8f0',fontSize:20,fontWeight:700}}>{s.v}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  /* Field Mapping Visual */
+  const FieldView=()=>(
+    <div className="scale-in" style={{padding:20}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+        <h3 style={{color:'#e2e8f0',fontSize:14,fontWeight:600}}>🔗 Field Mapping</h3>
+        <div style={{display:'flex',gap:6,fontSize:10}}>
+          <span style={{background:'#22c55e20',color:'#4ade80',padding:'2px 8px',borderRadius:99}}>10 mapped</span>
+          <span style={{background:'#f59e0b20',color:'#fbbf24',padding:'2px 8px',borderRadius:99}}>1 review</span>
+          <span style={{background:'#8b5cf620',color:'#a78bfa',padding:'2px 8px',borderRadius:99}}>1 new</span>
+        </div>
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:4,maxHeight:300,overflowY:'auto'}}>
+        {FIELDS.map((f,i)=>{
+          const hl=highlightField===f.src;
+          return <div key={i} onClick={()=>askAbout(f.src)} style={{
+            display:'grid',gridTemplateColumns:'1fr 24px 1fr 56px',alignItems:'center',gap:4,
+            padding:'8px 10px',borderRadius:8,cursor:'pointer',transition:'all .2s',
+            background:hl?'#312e81':f.st==='review'?'#78350f22':f.st==='new'?'#581c8722':'#1e293b',
+            border:hl?'1px solid #6366f1':'1px solid transparent',
+          }}
+            onMouseEnter={e=>!hl&&(e.currentTarget.style.background='#334155')}
+            onMouseLeave={e=>!hl&&(e.currentTarget.style.background=f.st==='review'?'#78350f22':f.st==='new'?'#581c8722':'#1e293b')}
+          >
+            <div style={{fontSize:12,color:'#e2e8f0',fontWeight:hl?600:400}}>{f.src}</div>
+            <div style={{textAlign:'center',color:'#64748b',fontSize:11}}>→</div>
+            <div style={{fontSize:12,color:f.tgt==='—'?'#64748b':'#a5b4fc',fontStyle:f.tgt==='—'?'italic':'normal'}}>{f.tgt==='—'?'+ Create new':f.tgt}</div>
+            <div style={{textAlign:'right'}}>
+              {f.st==='mapped'&&<span style={{fontSize:10,color:'#4ade80'}}>✓</span>}
+              {f.st==='review'&&<span style={{fontSize:10,color:'#fbbf24'}}>⚠️</span>}
+              {f.st==='new'&&<span style={{fontSize:10,color:'#a78bfa'}}>+</span>}
+            </div>
+          </div>;
+        })}
+      </div>
+      <div style={{marginTop:8,padding:8,background:'#1e293b',borderRadius:8,fontSize:11,color:'#64748b',textAlign:'center'}}>
+        💡 Click any field to ask the agent about it
+      </div>
+    </div>
+  );
+
+  /* Pipeline Visual */
+  const PipeView=()=>(
+    <div className="scale-in" style={{padding:20}}>
+      <h3 style={{color:'#e2e8f0',fontSize:14,fontWeight:600,marginBottom:14}}>📊 Pipeline Stage Mapping</h3>
+      <div style={{display:'flex',flexDirection:'column',gap:6}}>
+        {PIPELINE.map((p,i)=>(
+          <div key={i} className="slide-r" style={{animationDelay:`${i*60}ms`,display:'grid',gridTemplateColumns:'1fr 28px 1fr',alignItems:'center',gap:4}}>
+            <div style={{background:`${srcCRM.color}20`,border:`1px solid ${srcCRM.color}44`,borderRadius:8,padding:'7px 10px',fontSize:12,color:'#e2e8f0',textAlign:'center'}}>{p.src}</div>
+            <div style={{textAlign:'center'}}><svg width="20" height="12" viewBox="0 0 20 12"><path d="M0 6h16M12 1l5 5-5 5" stroke="#6366f1" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg></div>
+            <div style={{background:`${tgtCRM.color}20`,border:`1px solid ${tgtCRM.color}44`,borderRadius:8,padding:'7px 10px',fontSize:12,color:'#e2e8f0',textAlign:'center'}}>{p.tgt}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{display:'flex',justifyContent:'space-between',marginTop:10,padding:'6px 10px',background:'#1e293b',borderRadius:8,fontSize:11}}>
+        <span style={{color:srcCRM.color}}>{srcCRM.name}</span>
+        <span style={{color:tgtCRM.color}}>{tgtCRM.name}</span>
+      </div>
+    </div>
+  );
+
+  /* Migration Live Dashboard */
+  const MigLive=()=>(
+    <div className="scale-in" style={{padding:20}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+        <h3 style={{color:'#e2e8f0',fontSize:14,fontWeight:600}}>🚀 Live Migration</h3>
+        <span style={{color:'#a5b4fc',fontSize:13,fontWeight:700}}>{Math.round(migPct)}%</span>
+      </div>
+      {/* Overall progress bar */}
+      <div style={{height:8,background:'#1e293b',borderRadius:99,overflow:'hidden',marginBottom:20,border:'1px solid #334155'}}>
+        <div style={{height:'100%',background:'linear-gradient(90deg,#6366f1,#8b5cf6,#a78bfa)',borderRadius:99,width:`${migPct}%`,transition:'width .4s ease',boxShadow:'0 0 10px rgba(99,102,241,.4)'}}/>
+      </div>
+      {/* Entity rings */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+        {ENTITIES.map((e,i)=>{
+          const done=entityPcts[i]===100,active=i===migStep;
+          return <div key={i} style={{textAlign:'center',padding:10,background:done?'#052e1622':active?'#312e8133':'#1e293b',borderRadius:12,border:`1px solid ${done?'#22c55e33':active?'#6366f133':'#334155'}`,transition:'all .3s'}}>
+            <div style={{position:'relative',display:'inline-block',marginBottom:6}}>
+              <Ring pct={entityPcts[i]} size={56} stroke={4} color={done?'#22c55e':e.color}/>
+              <div style={{position:'absolute',top:'50%',left:'50%',transform:'translate(-50%,-50%) rotate(0deg)',fontSize:18}}>{done?'✅':e.icon}</div>
+            </div>
+            <div style={{fontSize:11,fontWeight:600,color:done?'#4ade80':active?'#a5b4fc':'#94a3b8'}}>{e.label}</div>
+            <div style={{fontSize:10,color:done?'#22c55e':active?'#6366f1':'#64748b'}}>{done?e.count.toLocaleString():active?'In progress...':'Pending'}</div>
+          </div>;
+        })}
+      </div>
+      {migDone&&(
+        <div className="scale-in" style={{marginTop:16,padding:14,background:'linear-gradient(135deg,#052e16,#14532d)',borderRadius:12,border:'1px solid #22c55e44',textAlign:'center'}}>
+          <div style={{fontSize:22,fontWeight:800,color:'#4ade80'}}>107,354</div>
+          <div style={{fontSize:11,color:'#86efac'}}>Total Records Migrated</div>
+          <div style={{display:'flex',justifyContent:'center',gap:16,marginTop:8,fontSize:11,color:'#4ade80'}}>
+            <span>⏱ 47 min</span><span>⚠️ 0 errors</span><span>📊 100%</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  /* Left Panel Renderer */
+  const LeftPanel=()=>(
+    <div style={{width:'50%',background:'#0f172a',borderRight:'1px solid #1e293b',display:'flex',flexDirection:'column',height:'100vh',overflow:'hidden'}}>
+      <StepTracker/>
+      <div style={{flex:1,overflowY:'auto'}}>
+        {/* Always show connection */}
+        <ConnView/>
+        {/* Show scan data after phase 2 */}
+        {scanData&&phase>=2&&<ScanView/>}
+        {/* Show fields after phase 3 */}
+        {showFields&&phase>=3&&phase<10&&<FieldView/>}
+        {/* Show pipeline after phase 4 */}
+        {showPipeline&&phase>=4&&phase<10&&<PipeView/>}
+        {/* Migration progress */}
+        {phase>=10&&<MigLive/>}
+      </div>
+      {/* Footer */}
+      <div style={{padding:'10px 20px',borderTop:'1px solid #1e293b',display:'flex',alignItems:'center',gap:8,background:'#0f172a'}}>
+        <div style={{width:8,height:8,borderRadius:'50%',background:phase>=20?'#22c55e':phase>=10?'#6366f1':'#64748b',boxShadow:phase>=10&&phase<20?'0 0 8px rgba(99,102,241,.5)':'none'}}/>
+        <span style={{fontSize:11,color:'#64748b'}}>{phase>=20?'Migration Complete':phase>=10?'Migration in Progress':phase>=3?'Configuring Migration':'Setting Up'}</span>
+      </div>
+    </div>
+  );
+
+  /* ═══════ RIGHT PANEL (CHAT) ═══════ */
+  const RightPanel=()=>(
+    <div style={{width:'50%',display:'flex',flexDirection:'column',height:'100vh',background:'#ffffff'}}>
+      {/* Header */}
+      <div style={{padding:'12px 18px',borderBottom:'1px solid #e2e8f0',display:'flex',alignItems:'center',gap:10,background:'white',flexShrink:0}}>
+        <div style={{width:32,height:32,borderRadius:'50%',background:'linear-gradient(135deg,#6366f1,#8b5cf6)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5"><path d="M12 2a4 4 0 014 4v2H8V6a4 4 0 014-4z"/><rect x="4" y="8" width="16" height="12" rx="2"/></svg>
+        </div>
+        <div>
+          <div style={{fontWeight:600,fontSize:13,color:'#0f172a'}}>Migration Agent</div>
+          <div style={{fontSize:11,color:'#22c55e',display:'flex',alignItems:'center',gap:4}}><div style={{width:5,height:5,borderRadius:'50%',background:'#22c55e'}}/>Active</div>
+        </div>
+        <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:5,padding:'4px 10px',borderRadius:8,background:'#f1f5f9',fontSize:11,color:'#64748b'}}>
+          {srcCRM.icon}<span style={{margin:'0 2px'}}>→</span>{tgtCRM.icon}
+        </div>
+      </div>
+      {/* Messages */}
+      <div style={{flex:1,overflowY:'auto',padding:'14px 16px',display:'flex',flexDirection:'column',gap:12,background:'#fafbfc'}}>
+        {msgs.map((m,i)=>m.t==='bot'?<BotMsg key={i}>{m.c}</BotMsg>:<UserMsg key={i}>{m.c}</UserMsg>)}
+        {typing&&<Typing/>}
+        {qr.length>0&&!typing&&<QR opts={qr} onPick={onQR}/>}
+        <div ref={endRef}/>
+      </div>
+      {/* Input */}
+      <div style={{padding:'10px 16px',borderTop:'1px solid #e2e8f0',background:'white',flexShrink:0}}>
+        <div style={{display:'flex',gap:8}}>
+          <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&onInput()} placeholder="Ask the agent anything..." style={{flex:1,padding:'10px 14px',borderRadius:10,border:'1.5px solid #e2e8f0',fontSize:13,outline:'none',transition:'border .15s'}} onFocus={e=>e.target.style.borderColor='#6366f1'} onBlur={e=>e.target.style.borderColor='#e2e8f0'}/>
+          <button onClick={onInput} style={{background:'linear-gradient(135deg,#6366f1,#8b5cf6)',color:'white',border:'none',borderRadius:10,width:40,height:40,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  /* ═══════ LANDING ═══════ */
+  const Landing=()=>(
+    <div style={{minHeight:'100vh',background:'linear-gradient(180deg,#0f172a,#1e1b4b 50%,#312e81)',display:'flex',alignItems:'center',justifyContent:'center',padding:20}}>
+      <div style={{textAlign:'center',maxWidth:700}} className="fade-up">
+        <div style={{display:'inline-flex',alignItems:'center',gap:8,background:'rgba(99,102,241,.12)',border:'1px solid rgba(99,102,241,.25)',borderRadius:99,padding:'6px 16px',marginBottom:24}}>
+          <Spinner s={14}/><span style={{color:'#a5b4fc',fontSize:13,fontWeight:500}}>AI-Powered CRM Migration</span>
+        </div>
+        <h1 style={{fontSize:46,fontWeight:800,color:'white',lineHeight:1.12,marginBottom:16}}>
+          Migrate your CRM data<br/><span style={{background:'linear-gradient(135deg,#818cf8,#c084fc)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent'}}>with an AI agent</span>
+        </h1>
+        <p style={{color:'#94a3b8',fontSize:17,lineHeight:1.6,maxWidth:480,margin:'0 auto 36px'}}>
+          Choose source and target CRMs — our agent handles field mapping, pipeline alignment, relationship wiring, and data transfer automatically.
+        </p>
+
+        {/* CRM Selectors */}
+        <div style={{display:'flex',justifyContent:'center',alignItems:'center',gap:16,marginBottom:32}}>
+          <div style={{textAlign:'center'}}>
+            <div style={{fontSize:11,fontWeight:600,color:'#64748b',textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>From</div>
+            <div style={{display:'flex',flexDirection:'column',gap:6}}>
+              {CRMS.map(c=>(
+                <button key={c.id} onClick={()=>setSrc(c.id)} disabled={tgt===c.id} style={{
+                  display:'flex',alignItems:'center',gap:10,padding:'10px 20px',borderRadius:10,
+                  border:src===c.id?`2px solid ${c.color}`:'2px solid #334155',
+                  background:src===c.id?c.color+'18':'#1e293b',color:'#e2e8f0',fontSize:13,fontWeight:src===c.id?600:400,
+                  cursor:tgt===c.id?'not-allowed':'pointer',opacity:tgt===c.id?.3:1,width:180,transition:'all .15s'
+                }}>{c.icon}<span>{c.name}</span>{src===c.id&&<span style={{marginLeft:'auto',color:c.color}}>✓</span>}</button>
+              ))}
+            </div>
+          </div>
+          <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:4}}>
+            <div style={{width:44,height:44,borderRadius:'50%',background:'#1e293b',border:'1px solid #334155',display:'flex',alignItems:'center',justifyContent:'center',color:'#6366f1'}}>
+              <Arrow/>
+            </div>
+          </div>
+          <div style={{textAlign:'center'}}>
+            <div style={{fontSize:11,fontWeight:600,color:'#64748b',textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>To</div>
+            <div style={{display:'flex',flexDirection:'column',gap:6}}>
+              {CRMS.map(c=>(
+                <button key={c.id} onClick={()=>setTgt(c.id)} disabled={src===c.id} style={{
+                  display:'flex',alignItems:'center',gap:10,padding:'10px 20px',borderRadius:10,
+                  border:tgt===c.id?`2px solid ${c.color}`:'2px solid #334155',
+                  background:tgt===c.id?c.color+'18':'#1e293b',color:'#e2e8f0',fontSize:13,fontWeight:tgt===c.id?600:400,
+                  cursor:src===c.id?'not-allowed':'pointer',opacity:src===c.id?.3:1,width:180,transition:'all .15s'
+                }}>{c.icon}<span>{c.name}</span>{tgt===c.id&&<span style={{marginLeft:'auto',color:c.color}}>✓</span>}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {src&&tgt&&(
+          <div className="fade-up">
+            <button onClick={()=>{setScreen('main');setTimeout(startFlow,400)}} style={{background:'linear-gradient(135deg,#6366f1,#8b5cf6)',color:'white',border:'none',borderRadius:12,padding:'15px 36px',fontSize:16,fontWeight:600,display:'inline-flex',alignItems:'center',gap:8,boxShadow:'0 4px 24px rgba(99,102,241,.4)',transition:'transform .15s'}}
+              onMouseEnter={e=>e.target.style.transform='translateY(-2px)'}
+              onMouseLeave={e=>e.target.style.transform='translateY(0)'}
+            >Launch Migration Agent <Arrow/></button>
+          </div>
+        )}
+
+        <div style={{display:'flex',justifyContent:'center',gap:36,marginTop:44}}>
+          {[{n:'107K+',l:'Records/hour'},{n:'50+',l:'Field types'},{n:'0',l:'Data loss'}].map((s,i)=>(
+            <div key={i}><div style={{fontSize:22,fontWeight:700,color:'white'}}>{s.n}</div><div style={{fontSize:12,color:'#64748b'}}>{s.l}</div></div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  /* ═══════ MAIN SPLIT VIEW ═══════ */
+  const Main=()=>(
+    <div style={{display:'flex',height:'100vh'}}>
+      <LeftPanel/>
+      <RightPanel/>
+    </div>
+  );
+
+  return screen==='landing'?<Landing/>:<Main/>;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
