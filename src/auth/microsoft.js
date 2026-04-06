@@ -44,9 +44,10 @@ function getMsalApp(tenantId) {
  */
 export function getAuthUrl(tenantId) {
   const app = getMsalApp(tenantId);
+  const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
   return app.getAuthCodeUrl({
     scopes: DELEGATED_SCOPES,
-    redirectUri: `http://localhost:${process.env.PORT || 3000}/auth/callback`,
+    redirectUri: `${baseUrl}/auth/callback`,
     prompt: 'consent'
   });
 }
@@ -56,9 +57,10 @@ export function getAuthUrl(tenantId) {
  */
 export async function acquireTokenByCode(tenantId, code) {
   const app = getMsalApp(tenantId);
+  const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
   const result = await app.acquireTokenByCode({
     scopes: DELEGATED_SCOPES,
-    redirectUri: `http://localhost:${process.env.PORT || 3000}/auth/callback`,
+    redirectUri: `${baseUrl}/auth/callback`,
     code
   });
 

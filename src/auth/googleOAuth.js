@@ -15,10 +15,11 @@ let _tokenExpiry = 0;
 
 function getOAuth2Client() {
   if (!_oauth2Client) {
+    const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
     _oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_OAUTH_CLIENT_ID,
       process.env.GOOGLE_OAUTH_CLIENT_SECRET,
-      `http://localhost:${process.env.PORT || 3000}/auth/google/callback`
+      `${baseUrl}/auth/google/callback`
     );
     _oauth2Client.on('tokens', (tokens) => {
       if (tokens.refresh_token) {

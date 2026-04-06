@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment and secrets
+.env
+.env.*
+!.env.template
+service_account.json
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Runtime data
+uploads/
+customers/
+
+# Documentation
+*.md
+!README.md
+prd.txt
+cloudfuze-brand-guidelines.md
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Cursor
+.cursor/
+
+# CI/CD (not needed in image)
+.github/
+
+# Misc
+*.log
