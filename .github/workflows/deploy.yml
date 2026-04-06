@@ -22,20 +22,23 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           password: ${{ secrets.SSH_PASSWORD }}
           script: |
+            # Fix ownership so the SSH user can run git commands
+            echo "${{ secrets.SSH_PASSWORD }}" | sudo -S chown -R $USER:$USER /data/migration-combinations
+
             cd /data/migration-combinations
             git config --global --add safe.directory /data/migration-combinations
-            
+
             echo "Pulling latest changes..."
             git pull origin main
-            
+
             echo "Stopping existing containers..."
-            sudo docker compose down
-            
+            echo "${{ secrets.SSH_PASSWORD }}" | sudo -S docker compose down
+
             echo "Building new image..."
-            sudo docker compose build --no-cache
-            
+            echo "${{ secrets.SSH_PASSWORD }}" | sudo -S docker compose build --no-cache
+
             echo "Starting containers..."
-            sudo docker compose up -d
-            
+            echo "${{ secrets.SSH_PASSWORD }}" | sudo -S docker compose up -d
+
             echo "Deployment complete!"
-            sudo docker compose ps
+            echo "${{ secrets.SSH_PASSWORD }}" | sudo -S docker compose ps
