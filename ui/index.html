@@ -1,548 +1,256 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
   <title>Gemini → Copilot Migration | CloudFuze</title>
-  <link rel="icon" type="image/png" href="/cloudfuze-logo.png" />
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="icon" type="image/png" href="/cloudfuze-logo.png"/>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet"/>
   <style>
-    @keyframes spin { from{transform:rotate(0)} to{transform:rotate(360deg)} }
-    @keyframes fadeInUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
-    @keyframes scaleIn { from{transform:scale(.94);opacity:0} to{transform:scale(1);opacity:1} }
-    @keyframes slideRight { from{opacity:0;transform:translateX(-16px)} to{opacity:1;transform:translateX(0)} }
-    @keyframes checkPop { 0%{transform:scale(0)} 60%{transform:scale(1.3)} 100%{transform:scale(1)} }
-    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
-    @keyframes indeterminate { 0%{left:-40%;width:40%} 100%{left:100%;width:40%} }
-    @keyframes shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
-    @keyframes glow { 0%,100%{box-shadow:0 0 8px rgba(1,41,172,.2)} 50%{box-shadow:0 0 20px rgba(1,41,172,.5)} }
-    @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-4px)} }
-    @keyframes typing { 0%{opacity:.2} 20%{opacity:1} 100%{opacity:.2} }
-    @keyframes connectorPulse { 0%,100%{opacity:.4} 50%{opacity:1} }
+    @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+    @keyframes fadeInUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes scaleIn{from{transform:scale(.94);opacity:0}to{transform:scale(1);opacity:1}}
+    @keyframes slideRight{from{opacity:0;transform:translateX(-16px)}to{opacity:1;transform:translateX(0)}}
+    @keyframes checkPop{0%{transform:scale(0)}60%{transform:scale(1.3)}100%{transform:scale(1)}}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+    @keyframes glow{0%,100%{box-shadow:0 0 8px rgba(1,41,172,.2)}50%{box-shadow:0 0 20px rgba(1,41,172,.5)}}
+    @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+    @keyframes typing{0%{opacity:.2}20%{opacity:1}100%{opacity:.2}}
+    @keyframes connectorPulse{0%,100%{opacity:.4}50%{opacity:1}}
+    @keyframes toastIn{from{opacity:0;transform:translate(-50%,16px)}to{opacity:1;transform:translate(-50%,0)}}
     .td{animation:typing 1.4s infinite both;width:5px;height:5px;border-radius:50%;background:#94a3b8;display:inline-block}
-    .td:nth-child(2){animation-delay:.2s}
-    .td:nth-child(3){animation-delay:.4s}
-
+    .td:nth-child(2){animation-delay:.2s}.td:nth-child(3){animation-delay:.4s}
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:'Poppins',system-ui,sans-serif;background:#F6F6F6;color:#2e2e2e;height:100vh;overflow:hidden}
-    button{font-family:inherit;cursor:pointer}
-    input,select{font-family:inherit}
-    ::-webkit-scrollbar{width:5px}
-    ::-webkit-scrollbar-track{background:transparent}
-    ::-webkit-scrollbar-thumb{background:#d1d5db;border-radius:99px}
-    ::-webkit-scrollbar-thumb:hover{background:#9ca3af}
-
-    .fade-up{animation:fadeInUp .4s ease both}
-    .scale-in{animation:scaleIn .35s ease both}
-    .slide-r{animation:slideRight .35s ease both}
-    .check-pop{animation:checkPop .3s ease both}
-    .spinner{animation:spin 1s linear infinite}
-    .pulse-dot{animation:pulse .9s ease-in-out infinite}
+    button{font-family:inherit;cursor:pointer}input,select{font-family:inherit}
+    ::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:transparent}
+    ::-webkit-scrollbar-thumb{background:#d1d5db;border-radius:99px}::-webkit-scrollbar-thumb:hover{background:#9ca3af}
+    .fade-up{animation:fadeInUp .4s ease both}.scale-in{animation:scaleIn .35s ease both}
+    .slide-r{animation:slideRight .35s ease both}.check-pop{animation:checkPop .3s ease both}
+    .spinner{animation:spin 1s linear infinite}.pulse-dot{animation:pulse .9s ease-in-out infinite}
+    .drag-divider{width:6px;background:#EBEBEB;cursor:col-resize;flex-shrink:0;transition:background .15s;position:relative;z-index:10;display:flex;align-items:center;justify-content:center;user-select:none}
+    .drag-divider:hover,.drag-divider.active{background:#809EFC}
+    .drag-divider::after{content:'';position:absolute;width:2px;height:36px;border-radius:99px;background:rgba(1,41,172,.3);pointer-events:none}
   </style>
 </head>
 <body>
 <div id="root"></div>
-
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
-
 <script type="text/babel">
-const {useState, useEffect, useRef, useCallback} = React;
+const {useState,useEffect,useRef,useCallback,useMemo}=React;
 
-/* ─── Brand Colors ─── */
-const C = {
-  primary: '#0129AC',
-  primaryH: '#0C18D4',
-  primaryL: '#809EFC',
-  tint: '#E1ECFF',
-  bg: '#F6F6F6',
-  white: '#FFFFFF',
-  dark: '#2e2e2e',
-  muted: '#707070',
-  border: '#EBEBEB',
-  success: '#0129AC',
-  error: '#FF1F1F',
-  warn: '#809EFC',  // light blue — no yellow/orange in UI
+const C={primary:'#0129AC',primaryH:'#0C18D4',primaryL:'#809EFC',tint:'#E1ECFF',
+  bg:'#F6F6F6',white:'#FFFFFF',dark:'#2e2e2e',muted:'#707070',
+  border:'#EBEBEB',success:'#0129AC',error:'#FF1F1F',warn:'#809EFC'};
+
+/* ── localStorage ── */
+const LS={step:'gem_step',uploadData:'gem_upload_data',config:'gem_config',
+  mappings:'gem_mappings',logs:'gem_logs',authG:'gem_auth_google',authMs:'gem_auth_ms',
+  batches:'gem_batches',selUsers:'gem_selected_users'};
+const lsGet=(k,fb)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb}catch{return fb}};
+const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}};
+const lsClear=()=>{Object.values(LS).forEach(k=>localStorage.removeItem(k))};
+
+function parseCsvLine(line){
+  const f=[];let cur='',inQ=false;
+  for(let i=0;i<line.length;i++){const c=line[i];if(c==='"'){if(inQ&&line[i+1]==='"'){cur+='"';i++}else inQ=!inQ}else if(c===','&&!inQ){f.push(cur.trim());cur=''}else cur+=c}
+  f.push(cur.trim());return f;
+}
+
+/* ── Icons ── */
+const Spinner=({s=16})=><svg width={s} height={s} viewBox="0 0 24 24" className="spinner"><circle cx="12" cy="12" r="10" stroke={C.primary} strokeWidth="3" fill="none" strokeDasharray="31.4 31.4" strokeLinecap="round"/></svg>;
+const Check=({s=16,c=C.success})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>;
+const IcoInfo=({s=14})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>;
+const IcoWarn=({s=14})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>;
+const IcoError=({s=14})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>;
+const IcoDone=({s=14})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>;
+const IcoUser=({s=14})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>;
+const IcoPage=({s=14})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>;
+const IcoFlag=({s=14})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>;
+const IcoCloud=({s=40,c=C.primary})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/></svg>;
+const IcoZip=({s=40,c=C.primary})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>;
+const IcoDownload=({s=13,c=C.primary})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>;
+const IcoUpload=({s=13,c=C.muted})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>;
+const IcoRocket=({s=14})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 00-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 012-3.95A12.88 12.88 0 0122 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 01-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg>;
+const IcoLogout=({s=13})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>;
+const IcoReset=({s=13})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>;
+const IcoSearch=({s=14,c='currentColor'})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>;
+const IcoTrash=({s=13})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>;
+const IcoMenu=({s=16})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>;
+const IcoReport=({s=14})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>;
+const GoogleIcon=()=><svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>;
+const MsIcon=()=><svg width="18" height="18" viewBox="0 0 21 21"><rect x="1" y="1" width="9" height="9" fill="#F25022"/><rect x="11" y="1" width="9" height="9" fill="#7FBA00"/><rect x="1" y="11" width="9" height="9" fill="#00A4EF"/><rect x="11" y="11" width="9" height="9" fill="#FFB900"/></svg>;
+
+/* ── Primitives ── */
+const Ring=({pct,size=80,stroke=6,color=C.primary})=>{const r=(size-stroke)/2,circ=2*Math.PI*r,off=circ-(pct/100)*circ;return<svg width={size} height={size} style={{transform:'rotate(-90deg)'}}><circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#e5e7eb" strokeWidth={stroke}/><circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={off} style={{transition:'stroke-dashoffset .6s ease'}}/></svg>};
+const TypingDots=()=><div style={{display:'flex',alignItems:'flex-start',gap:8,padding:'4px 0'}}><div style={{width:28,height:28,borderRadius:'50%',background:`linear-gradient(135deg,${C.primary},${C.primaryL})`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><path d="M12 2a4 4 0 014 4v2H8V6a4 4 0 014-4z"/><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5" fill="white"/><circle cx="15" cy="14" r="1.5" fill="white"/></svg></div><div style={{background:'#f1f5f9',borderRadius:'10px 10px 10px 3px',padding:'12px 16px',display:'flex',gap:4,alignItems:'center'}}><span className="td"/><span className="td"/><span className="td"/></div></div>;
+function avatarColor(e){const cs=['#0129AC','#0C18D4','#809EFC','#20CC83','#0ea5e9','#6366f1','#14b8a6'];let h=0;for(let i=0;i<e.length;i++)h=(h*31+e.charCodeAt(i))%cs.length;return cs[h]}
+const Avatar=({name,email,size=36})=>{const i=(name||email).split(/[\s@]/)[0].slice(0,2).toUpperCase();return<div style={{width:size,height:size,borderRadius:'50%',background:avatarColor(email),display:'flex',alignItems:'center',justifyContent:'center',color:'white',fontSize:size*0.35,fontWeight:600,flexShrink:0}}>{i}</div>};
+
+const Btn=({children,onClick,disabled,variant='primary',style={}})=>{
+  const base={padding:'10px 20px',borderRadius:4,border:'none',fontSize:14,fontWeight:600,display:'inline-flex',alignItems:'center',gap:8,transition:'all .15s',cursor:disabled?'not-allowed':'pointer',opacity:disabled?.5:1,...style};
+  const vs={primary:{background:C.primary,color:'white'},outline:{background:'white',color:C.primary,border:`1.5px solid ${C.primary}`},ghost:{background:'transparent',color:C.muted,border:`1px solid ${C.border}`},danger:{background:'#FEF2F2',color:C.error,border:`1px solid #FCA5A5`}};
+  const [hov,setHov]=useState(false);const s={...base,...vs[variant]};
+  if(hov&&!disabled){if(variant==='primary')s.background=C.primaryH;if(variant==='outline')s.background=C.tint;if(variant==='ghost')s.background=C.bg;if(variant==='danger')s.background='#FEE2E2'}
+  return<button style={s} onClick={disabled?undefined:onClick} onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}>{children}</button>;
+};
+const Card=({children,style={},className=''})=><div className={className} style={{background:'white',borderRadius:10,border:`1px solid ${C.border}`,padding:20,...style}}>{children}</div>;
+const Field=({label,children,hint})=><div style={{marginBottom:16}}><div style={{display:'flex',alignItems:'center',gap:6,marginBottom:5}}><div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.5}}>{label}</div>{hint&&<span style={{fontSize:11,color:C.primaryL,fontStyle:'italic'}}>{hint}</span>}</div>{children}</div>;
+const Input=({value,onChange,placeholder,type='text'})=><input type={type} value={value} onChange={onChange} placeholder={placeholder} style={{width:'100%',border:`1px solid ${C.border}`,borderRadius:6,padding:'9px 12px',fontSize:13,outline:'none',transition:'border .2s'}} onFocus={e=>e.target.style.borderColor=C.primary} onBlur={e=>e.target.style.borderColor=C.border}/>;
+const TextBtn=({children,onClick,style={}})=>{const [h,sH]=useState(false);return<button onClick={onClick} onMouseEnter={()=>sH(true)} onMouseLeave={()=>sH(false)} style={{fontSize:12,color:C.primary,background:'none',border:'none',cursor:'pointer',fontWeight:500,fontFamily:'inherit',opacity:h?.8:1,...style}}>{children}</button>};
+const SearchBar=({value,onChange,placeholder='Search...'})=><div style={{position:'relative',marginBottom:10}}><input value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={{width:'100%',border:`1px solid ${C.border}`,borderRadius:6,padding:'8px 12px 8px 34px',fontSize:13,outline:'none',fontFamily:'inherit',background:'white'}} onFocus={e=>e.target.style.borderColor=C.primary} onBlur={e=>e.target.style.borderColor=C.border}/><span style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',display:'flex'}}><IcoSearch s={14} c={C.muted}/></span></div>;
+
+/* ── Toast notification ── */
+const Toast=({message,type='success',onHide})=>{
+  useEffect(()=>{const t=setTimeout(onHide,3200);return()=>clearTimeout(t)},[]);
+  const bg=type==='error'?'#991B1B':type==='warn'?C.primary:'#1a1a2e';
+  return<div style={{position:'fixed',bottom:28,left:'50%',transform:'translateX(-50%)',background:bg,color:'white',padding:'12px 22px',borderRadius:10,fontSize:13,fontWeight:500,zIndex:9999,boxShadow:'0 8px 30px rgba(0,0,0,.25)',animation:'toastIn .3s ease',display:'flex',alignItems:'center',gap:8,whiteSpace:'nowrap'}}><Check s={15} c="white"/>{message}</div>;
 };
 
-/* ─── localStorage helpers ─── */
-const LS_KEYS = {
-  step: 'gem_step',
-  uploadData: 'gem_upload_data',
-  config: 'gem_config',
-  mappings: 'gem_mappings',
-  logs: 'gem_logs',
-  authGoogle: 'gem_auth_google',
-  authMs: 'gem_auth_ms',
-};
-
-function lsGet(key, fallback) {
-  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
-}
-function lsSet(key, val) {
-  try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
-}
-function lsClear() {
-  Object.values(LS_KEYS).forEach(k => localStorage.removeItem(k));
-}
-
-/* ─── CSV parser (handles 100+ rows, quoted fields) ─── */
-function parseCsvLine(line) {
-  const fields = [];
-  let current = '';
-  let inQ = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') {
-      if (inQ && line[i+1] === '"') { current += '"'; i++; }
-      else inQ = !inQ;
-    } else if (ch === ',' && !inQ) {
-      fields.push(current.trim()); current = '';
-    } else {
-      current += ch;
-    }
-  }
-  fields.push(current.trim());
-  return fields;
-}
-
-/* ─── SVG Icons ─── */
-const Spinner = ({s=16}) => (
-  <svg width={s} height={s} viewBox="0 0 24 24" className="spinner">
-    <circle cx="12" cy="12" r="10" stroke={C.primary} strokeWidth="3" fill="none" strokeDasharray="31.4 31.4" strokeLinecap="round"/>
-  </svg>
-);
-
-const Check = ({s=16, c=C.success}) => (
-  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-    <polyline points="20 6 9 17 4 12"/>
-  </svg>
-);
-
-const IcoInfo = ({s=14}) => (
-  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
-  </svg>
-);
-
-const IcoWarn = ({s=14}) => (
-  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
-    <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
-  </svg>
-);
-
-const IcoError = ({s=14}) => (
-  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
-  </svg>
-);
-
-const IcoDone = ({s=14}) => (
-  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
-  </svg>
-);
-
-const IcoUser = ({s=14}) => (
-  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
-  </svg>
-);
-
-const IcoPage = ({s=14}) => (
-  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
-  </svg>
-);
-
-const IcoFlag = ({s=14}) => (
-  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>
-  </svg>
-);
-
-const IcoSearch = ({s=14}) => (
-  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-  </svg>
-);
-
-const IcoCloud = ({s=40, c=C.primary}) => (
-  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/>
-  </svg>
-);
-
-const IcoZip = ({s=40, c=C.primary}) => (
-  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-  </svg>
-);
-
-const IcoDownload = ({s=13, c=C.primary}) => (
-  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-  </svg>
-);
-
-const IcoUpload = ({s=13, c=C.muted}) => (
-  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-  </svg>
-);
-
-const IcoRocket = ({s=14}) => (
-  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 00-2.91-.09z"/>
-    <path d="M12 15l-3-3a22 22 0 012-3.95A12.88 12.88 0 0122 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 01-4 2z"/>
-    <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>
-  </svg>
-);
-
-const IcoLogout = ({s=13}) => (
-  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
-  </svg>
-);
-
-const IcoReset = ({s=13}) => (
-  <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/>
-  </svg>
-);
-
-const GoogleIcon = () => (
-  <svg width="18" height="18" viewBox="0 0 48 48">
-    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
-    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
-    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
-    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
-  </svg>
-);
-
-const MsIcon = () => (
-  <svg width="18" height="18" viewBox="0 0 21 21">
-    <rect x="1" y="1" width="9" height="9" fill="#F25022"/>
-    <rect x="11" y="1" width="9" height="9" fill="#7FBA00"/>
-    <rect x="1" y="11" width="9" height="9" fill="#00A4EF"/>
-    <rect x="11" y="11" width="9" height="9" fill="#FFB900"/>
-  </svg>
-);
-
-/* ─── Progress Ring ─── */
-const Ring = ({pct, size=80, stroke=6, color=C.primary, children}) => {
-  const r = (size - stroke) / 2;
-  const circ = 2 * Math.PI * r;
-  const off = circ - (pct / 100) * circ;
-  return (
-    <svg width={size} height={size} style={{transform:'rotate(-90deg)'}}>
-      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#e5e7eb" strokeWidth={stroke}/>
-      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={stroke}
-        strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={off}
-        style={{transition:'stroke-dashoffset .6s ease'}}/>
-      {children}
-    </svg>
-  );
-};
-
-/* ─── Typing Dots ─── */
-const TypingDots = () => (
-  <div style={{display:'flex',alignItems:'flex-start',gap:8,padding:'4px 0'}}>
-    <div style={{width:28,height:28,borderRadius:'50%',
-      background:`linear-gradient(135deg,${C.primary},${C.primaryL})`,
-      display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round">
-        <path d="M12 2a4 4 0 014 4v2H8V6a4 4 0 014-4z"/><rect x="4" y="8" width="16" height="12" rx="2"/>
-        <circle cx="9" cy="14" r="1.5" fill="white"/><circle cx="15" cy="14" r="1.5" fill="white"/>
-      </svg>
+/* ── Google User Select Panel ── */
+const UserSelectPanel=({users,selected,toggleUser,toggleAll,startExport})=>{
+  const [search,setSearch]=useState('');
+  const filtered=users.filter(u=>u.name.toLowerCase().includes(search.toLowerCase())||u.email.toLowerCase().includes(search.toLowerCase()));
+  return(
+    <div className="fade-up">
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+        <span style={{display:'inline-flex',alignItems:'center',gap:6,fontSize:13,fontWeight:600}}><span style={{width:8,height:8,borderRadius:'50%',background:C.success,display:'inline-block'}}/>Signed in · {users.length} users</span>
+        <TextBtn onClick={toggleAll}>{selected.size===users.length?'Deselect All':'Select All'}</TextBtn>
+      </div>
+      <SearchBar value={search} onChange={setSearch} placeholder="Search users..."/>
+      <div style={{maxHeight:240,overflowY:'auto',display:'flex',flexDirection:'column',gap:6,marginBottom:16}}>
+        {filtered.map((u,i)=>(
+          <div key={u.email} className="slide-r" style={{animationDelay:`${i*30}ms`,display:'flex',alignItems:'center',gap:12,padding:'10px 14px',border:`1.5px solid ${selected.has(u.email)?C.primary:C.border}`,borderRadius:8,cursor:'pointer',transition:'all .2s',background:selected.has(u.email)?C.tint:'white'}} onClick={()=>toggleUser(u.email)}>
+            <input type="checkbox" checked={selected.has(u.email)} onChange={()=>toggleUser(u.email)} style={{accentColor:C.primary,width:16,height:16,flexShrink:0}} onClick={e=>e.stopPropagation()}/>
+            <Avatar name={u.name} email={u.email} size={34}/>
+            <div style={{flex:1,minWidth:0}}><div style={{fontSize:13,fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{u.name}</div><div style={{fontSize:11,color:C.muted,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{u.email}</div></div>
+            {selected.has(u.email)&&<Check s={16} c={C.primary}/>}
+          </div>
+        ))}
+        {filtered.length===0&&<div style={{textAlign:'center',padding:'20px',fontSize:13,color:C.muted}}>No users match "{search}"</div>}
+      </div>
+      <Btn onClick={startExport} disabled={selected.size===0} style={{width:'100%',justifyContent:'center'}}>Export {selected.size>0?`${selected.size} User${selected.size>1?'s':''}`: 'Selected Users'}</Btn>
     </div>
-    <div style={{background:'#f1f5f9',borderRadius:'10px 10px 10px 3px',padding:'12px 16px',display:'flex',gap:4,alignItems:'center'}}>
-      <span className="td"/><span className="td"/><span className="td"/>
-    </div>
-  </div>
-);
-
-/* ─── Avatar with initials ─── */
-function avatarColor(email) {
-  const colors = ['#0129AC','#0C18D4','#809EFC','#20CC83','#0ea5e9','#6366f1','#14b8a6'];
-  let h = 0;
-  for (let i = 0; i < email.length; i++) h = (h * 31 + email.charCodeAt(i)) % colors.length;
-  return colors[h];
-}
-
-const Avatar = ({name, email, size=36}) => {
-  const initials = (name || email).split(/[\s@]/)[0].slice(0,2).toUpperCase();
-  return (
-    <div style={{width:size,height:size,borderRadius:'50%',background:avatarColor(email),
-      display:'flex',alignItems:'center',justifyContent:'center',
-      color:'white',fontSize:size*0.35,fontWeight:600,flexShrink:0}}>
-      {initials}
-    </div>
-  );
-};
-
-/* ─── Btn ─── */
-const Btn = ({children, onClick, disabled, variant='primary', style={}}) => {
-  const base = {padding:'10px 20px',borderRadius:4,border:'none',fontSize:14,fontWeight:600,
-    display:'inline-flex',alignItems:'center',gap:8,transition:'all .15s',cursor:disabled?'not-allowed':'pointer',
-    opacity:disabled?.5:1,...style};
-  const styles = {
-    primary: {background:C.primary,color:'white'},
-    outline: {background:'white',color:C.primary,border:`1.5px solid ${C.primary}`},
-    ghost: {background:'transparent',color:C.muted,border:`1px solid ${C.border}`},
-  };
-  const [hov, setHov] = useState(false);
-  const s = {...base,...styles[variant]};
-  if (hov && !disabled) {
-    if (variant==='primary') s.background = C.primaryH;
-    if (variant==='outline') s.background = C.tint;
-    if (variant==='ghost') s.background = C.bg;
-  }
-  return (
-    <button style={s} onClick={disabled ? undefined : onClick}
-      onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}>
-      {children}
-    </button>
-  );
-};
-
-/* ─── Card ─── */
-const Card = ({children, style={}, className=''}) => (
-  <div className={className} style={{background:'white',borderRadius:10,border:`1px solid ${C.border}`,
-    padding:20,...style}}>
-    {children}
-  </div>
-);
-
-/* ─── Field ─── */
-const Field = ({label, children}) => (
-  <div style={{marginBottom:16}}>
-    <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.5,marginBottom:5}}>{label}</div>
-    {children}
-  </div>
-);
-
-const Input = ({value, onChange, placeholder, type='text'}) => (
-  <input type={type} value={value} onChange={onChange} placeholder={placeholder}
-    style={{width:'100%',border:`1px solid ${C.border}`,borderRadius:6,padding:'9px 12px',
-      fontSize:13,outline:'none',transition:'border .2s'}}
-    onFocus={e=>e.target.style.borderColor=C.primary}
-    onBlur={e=>e.target.style.borderColor=C.border}
-  />
-);
-
-/* ─── Small text button ─── */
-const TextBtn = ({children, onClick, style={}}) => {
-  const [hov, setHov] = useState(false);
-  return (
-    <button onClick={onClick}
-      onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
-      style={{fontSize:12,color:C.primary,background:'none',border:'none',cursor:'pointer',
-        fontWeight:500,fontFamily:'inherit',opacity:hov?.8:1,...style}}>
-      {children}
-    </button>
   );
 };
 
 /* ══════════════════════════════ */
-/* ═══       STEP TRACKER     ═══ */
+/* ═══      STEP TRACKER      ═══ */
 /* ══════════════════════════════ */
-const STEP_ICONS = [
-  // Import
+const STEP_ICONS=[
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/></svg>,
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
-  // Configure
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 010 14.14M4.93 4.93a10 10 0 000 14.14"/></svg>,
-  // Map Users
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>,
-  // Options
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="14" y2="12"/><line x1="4" y1="18" x2="18" y2="18"/></svg>,
-  // Migrate
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
-  // Complete
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>,
 ];
-const STEP_LABELS = ['Import Data','Configure','Map Users','Options','Migrate','Complete'];
+const STEP_LABELS=['Add Clouds','Import Data','Map Users','Options','Migrate','Complete'];
 
-const StepTracker = ({active}) => (
+const StepTracker=({active,onStepClick,live})=>(
   <div style={{display:'flex',alignItems:'center',padding:'14px 24px',borderBottom:`1px solid ${C.border}`,background:'white'}}>
-    {STEP_LABELS.map((label, i) => {
-      const done = i < active, act = i === active;
-      return (
+    {STEP_LABELS.map((label,i)=>{
+      const done=i<active,act=i===active;
+      // Clickable only for completed steps AND not when migration is running
+      const clickable=done&&!live&&typeof onStepClick==='function';
+      return(
         <React.Fragment key={i}>
-          <div style={{display:'flex',alignItems:'center',gap:8,opacity:done||act?1:.4,transition:'all .3s'}}>
+          <div onClick={()=>clickable&&onStepClick(i)} title={clickable?`Go back to ${label}`:undefined}
+            style={{display:'flex',alignItems:'center',gap:8,opacity:done||act?1:.4,transition:'all .3s',cursor:clickable?'pointer':'default',userSelect:'none'}}>
             <div style={{width:32,height:32,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',
               background:done?C.primary:act?C.tint:'#e5e7eb',color:done?'white':act?C.primary:C.muted,
               transition:'all .3s',boxShadow:act?`0 0 0 4px ${C.tint}`:'none',flexShrink:0,
-              border:act?`2px solid ${C.primary}`:'none',
-              animation:act?'glow 2s ease-in-out infinite':undefined}}>
-              {done ? <span className="check-pop" style={{display:'flex'}}><Check s={15} c="white"/></span> : STEP_ICONS[i]}
+              border:act?`2px solid ${C.primary}`:'none',animation:act?'glow 2s ease-in-out infinite':undefined}}>
+              {done?<span className="check-pop" style={{display:'flex'}}><Check s={15} c="white"/></span>:STEP_ICONS[i]}
             </div>
-            <span style={{fontSize:11,fontWeight:act?600:400,color:done?C.primary:act?C.primary:C.muted,whiteSpace:'nowrap'}}>{label}</span>
+            <span style={{fontSize:11,fontWeight:act?600:400,color:done?C.primary:act?C.primary:C.muted,whiteSpace:'nowrap',
+              textDecoration:clickable?'underline dotted':'none',textUnderlineOffset:'2px'}}>{label}</span>
           </div>
-          {i < STEP_LABELS.length-1 && (
-            <div style={{flex:1,height:2,margin:'0 8px',minWidth:12,
-              background:done?C.primary:act?C.primaryL:C.border,transition:'background .5s',
-              animation:act?'connectorPulse 1.6s ease-in-out infinite':undefined}}/>
-          )}
+          {i<STEP_LABELS.length-1&&<div style={{flex:1,height:2,margin:'0 8px',minWidth:12,background:done?C.primary:act?C.primaryL:C.border,transition:'background .5s',animation:act?'connectorPulse 1.6s ease-in-out infinite':undefined}}/>}
         </React.Fragment>
       );
     })}
   </div>
 );
 
-/* ─── Search Input ─── */
-const SearchBar = ({value, onChange, placeholder='Search...'}) => (
-  <div style={{position:'relative',marginBottom:10}}>
-    <input value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder}
-      style={{width:'100%',border:`1px solid ${C.border}`,borderRadius:6,padding:'8px 12px 8px 34px',
-        fontSize:13,outline:'none',fontFamily:'inherit',background:'white'}}
-      onFocus={e=>e.target.style.borderColor=C.primary}
-      onBlur={e=>e.target.style.borderColor=C.border}/>
-    <span style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',display:'flex'}}>
-      <IcoSearch s={14}/>
-    </span>
-  </div>
-);
+/* ══════════════════════════════ */
+/* ═══    STEP 0: ADD CLOUDS  ═══ */
+/* ══════════════════════════════ */
+const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setGoogleUsers,msUsers,setMsUsers,tenantId,onComplete})=>{
+  const [lgG,setLgG]=useState(false),[lgM,setLgM]=useState(false);
+  const [errG,setErrG]=useState(''),[errM,setErrM]=useState('');
 
-/* ─── Google User Select Panel ─── */
-const UserSelectPanel = ({users, selected, toggleUser, toggleAll, startExport, onLogout}) => {
-  const [search, setSearch] = useState('');
-  const filtered = users.filter(u =>
-    u.name.toLowerCase().includes(search.toLowerCase()) ||
-    u.email.toLowerCase().includes(search.toLowerCase())
-  );
-  const downloadCsv = () => {
-    const csv = 'Name,Email\n' + users.map(u=>`"${u.name}","${u.email}"`).join('\n');
-    const a = document.createElement('a'); a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
-    a.download = 'google-users.csv'; a.click();
-  };
-  return (
+  const loadGoogleUsers=async()=>{setLgG(true);setErrG('');try{const r=await fetch('/api/google/users');if(r.status===401){setGoogleAuthed(false);setLgG(false);return}const d=await r.json();if(d.users)setGoogleUsers(d.users);else setErrG(d.error||'Failed to load users')}catch(e){setErrG(e.message)}setLgG(false)};
+  const loadMsUsers=async()=>{setLgM(true);setErrM('');try{const r=await fetch('/api/ms/users');if(r.status===401){setMsAuthed(false);setLgM(false);return}const d=await r.json();if(d.users)setMsUsers(d.users);else setErrM(d.error||'Failed to load users')}catch(e){setErrM(e.message)}setLgM(false)};
+
+  useEffect(()=>{if(googleAuthed&&googleUsers.length===0)loadGoogleUsers()},[googleAuthed]);
+  useEffect(()=>{if(msAuthed&&msUsers.length===0)loadMsUsers()},[msAuthed]);
+
+  const signInGoogle=()=>{window.open('/auth/google/login','googleauth','width=500,height=700,left=300,top=100');window.addEventListener('message',function h(e){if(e.data?.type==='google-auth-success'){window.removeEventListener('message',h);setGoogleAuthed(true);loadGoogleUsers()}})};
+  const signInMs=()=>{const url=`/auth/login${tenantId?`?tenant_id=${tenantId}`:''}`;window.open(url,'msauth','width=500,height=700,left=300,top=100');window.addEventListener('message',function h(e){if(e.data?.type==='auth-success'){window.removeEventListener('message',h);setMsAuthed(true);loadMsUsers()}})};
+  const logoutGoogle=async()=>{await fetch('/auth/google/logout',{method:'POST'});setGoogleAuthed(false);setGoogleUsers([])};
+  const logoutMs=async()=>{await fetch('/auth/logout',{method:'POST'});setMsAuthed(false);setMsUsers([])};
+
+  return(
     <div className="fade-up">
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
-        <span style={{display:'inline-flex',alignItems:'center',gap:6,fontSize:13,fontWeight:600}}>
-          <span style={{width:8,height:8,borderRadius:'50%',background:C.success,display:'inline-block'}}/>
-          Signed in · {users.length} users
-        </span>
-        <div style={{display:'flex',alignItems:'center',gap:8}}>
-          <button onClick={downloadCsv} style={{fontSize:12,color:C.primary,background:'none',border:`1px solid ${C.primary}`,
-            borderRadius:5,padding:'4px 9px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,
-            display:'inline-flex',alignItems:'center',gap:4}}>
-            <IcoDownload s={11} c={C.primary}/> CSV
-          </button>
-          <TextBtn onClick={toggleAll}>
-            {selected.size === users.length ? 'Deselect All' : 'Select All'}
-          </TextBtn>
-          {onLogout && (
-            <button onClick={onLogout} style={{fontSize:11,color:C.muted,background:'none',border:`1px solid ${C.border}`,
-              borderRadius:5,padding:'4px 8px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,
-              display:'inline-flex',alignItems:'center',gap:4}}>
-              <IcoLogout s={11}/> Sign Out
-            </button>
-          )}
-        </div>
+      <div style={{marginBottom:20}}>
+        <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Add Clouds</div>
+        <div style={{fontSize:13,color:C.muted}}>Connect source and destination cloud accounts with admin credentials.</div>
       </div>
-      <SearchBar value={search} onChange={setSearch} placeholder="Search users..."/>
-      <div style={{maxHeight:240,overflowY:'auto',display:'flex',flexDirection:'column',gap:6,marginBottom:16}}>
-        {filtered.map((u,i) => (
-          <div key={u.email} className="slide-r" style={{animationDelay:`${i*30}ms`,
-            display:'flex',alignItems:'center',gap:12,padding:'10px 14px',
-            border:`1.5px solid ${selected.has(u.email)?C.primary:C.border}`,
-            borderRadius:8,cursor:'pointer',transition:'all .2s',
-            background:selected.has(u.email)?C.tint:'white'}}
-            onClick={()=>toggleUser(u.email)}>
-            <input type="checkbox" checked={selected.has(u.email)} onChange={()=>toggleUser(u.email)}
-              style={{accentColor:C.primary,width:16,height:16,flexShrink:0}} onClick={e=>e.stopPropagation()}/>
-            <Avatar name={u.name} email={u.email} size={34}/>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:13,fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{u.name}</div>
-              <div style={{fontSize:11,color:C.muted,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{u.email}</div>
-            </div>
-            {selected.has(u.email) && <Check s={16} c={C.primary}/>}
+
+      {/* Google Workspace Card */}
+      <Card style={{marginBottom:16}}>
+        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:14}}>
+          <GoogleIcon/>
+          <div style={{flex:1}}>
+            <div style={{fontSize:14,fontWeight:600}}>Google Workspace</div>
+            <div style={{fontSize:12,color:C.muted}}>Source — Gemini conversations <span style={{fontSize:11,color:C.primaryL}}>(optional — or use ZIP upload)</span></div>
           </div>
-        ))}
-        {filtered.length === 0 && <div style={{textAlign:'center',padding:'20px',fontSize:13,color:C.muted}}>No users match "{search}"</div>}
-      </div>
-      <Btn onClick={startExport} disabled={selected.size===0} style={{width:'100%',justifyContent:'center'}}>
-        Export {selected.size > 0 ? `${selected.size} User${selected.size>1?'s':''}` : 'Selected Users'}
-      </Btn>
-    </div>
-  );
-};
-
-/* ─── MS User List Panel (shown after MS sign-in in Step 2) ─── */
-const MsUserPanel = ({onLogout}) => {
-  const [msUsers, setMsUsers] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [search, setSearch] = useState('');
-
-  useEffect(() => {
-    setLoading(true);
-    fetch('/api/ms/users').then(r => {
-      if (r.status === 401) {
-        // Server token expired (e.g. server restarted) — clear UI auth state
-        if (onLogout) onLogout();
-        return { users: null, _expired: true };
-      }
-      return r.json();
-    }).then(d => {
-      if (d._expired) return;
-      if (d.users) setMsUsers(d.users);
-      else setError(d.error || 'Failed to load users');
-    }).catch(e => setError(e.message)).finally(() => setLoading(false));
-  }, []);
-
-  const downloadCsv = () => {
-    const csv = 'Name,Email\n' + msUsers.map(u=>`"${u.displayName}","${u.mail||u.userPrincipalName}"`).join('\n');
-    const a = document.createElement('a'); a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
-    a.download = 'ms365-users.csv'; a.click();
-  };
-
-  const filtered = msUsers.filter(u => {
-    const q = search.toLowerCase();
-    return (u.displayName||'').toLowerCase().includes(q) || (u.mail||u.userPrincipalName||'').toLowerCase().includes(q);
-  });
-
-  if (loading) return <div style={{display:'flex',alignItems:'center',gap:8,padding:'12px 0',fontSize:13,color:C.muted}}><Spinner s={16}/> Loading M365 users...</div>;
-  if (error) return <div style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:C.error,padding:'8px 0'}}><IcoError s={13}/> {error}</div>;
-  if (msUsers.length === 0) return null;
-
-  return (
-    <div className="scale-in" style={{marginTop:16}}>
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
-        <span style={{fontSize:13,fontWeight:600,color:C.dark}}>{msUsers.length} M365 Users Found</span>
-        <div style={{display:'flex',gap:8,alignItems:'center'}}>
-          <button onClick={downloadCsv} style={{fontSize:12,color:C.primary,background:'none',border:`1px solid ${C.primary}`,
-            borderRadius:5,padding:'4px 9px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,
-            display:'inline-flex',alignItems:'center',gap:4}}>
-            <IcoDownload s={11} c={C.primary}/> Download CSV
-          </button>
-          {onLogout && (
-            <button onClick={onLogout} style={{fontSize:11,color:C.muted,background:'none',border:`1px solid ${C.border}`,
-              borderRadius:5,padding:'4px 8px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,
-              display:'inline-flex',alignItems:'center',gap:4}}>
-              <IcoLogout s={11}/> Sign Out
-            </button>
-          )}
+          {googleAuthed?<span style={{display:'inline-flex',alignItems:'center',gap:5,fontSize:12,padding:'4px 12px',borderRadius:20,background:C.tint,color:C.primary,fontWeight:600,flexShrink:0}}><Check s={12} c={C.primary}/>Connected</span>:<span style={{fontSize:12,padding:'4px 12px',borderRadius:20,background:'#f0f0f0',color:C.muted,flexShrink:0}}>Optional</span>}
         </div>
-      </div>
-      <SearchBar value={search} onChange={setSearch} placeholder="Search M365 users..."/>
-      <div style={{maxHeight:200,overflowY:'auto',display:'flex',flexDirection:'column',gap:4}}>
-        {filtered.map((u,i) => (
-          <div key={i} className="slide-r" style={{animationDelay:`${i*20}ms`,
-            display:'flex',alignItems:'center',gap:10,padding:'8px 12px',
-            background:'white',borderRadius:7,border:`1px solid ${C.border}`}}>
-            <Avatar name={u.displayName||'?'} email={u.mail||u.userPrincipalName||'?'} size={28}/>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:13,fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{u.displayName}</div>
-              <div style={{fontSize:11,color:C.muted,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{u.mail||u.userPrincipalName}</div>
-            </div>
+        {!googleAuthed?(
+          <button onClick={signInGoogle} style={{display:'inline-flex',alignItems:'center',gap:10,padding:'10px 16px',borderRadius:6,border:`1px solid ${C.border}`,background:'white',fontSize:13,fontWeight:500,cursor:'pointer',transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.background=C.bg} onMouseLeave={e=>e.currentTarget.style.background='white'}>Sign in with Google</button>
+        ):lgG?(
+          <div style={{display:'flex',alignItems:'center',gap:8,fontSize:12,color:C.muted}}><Spinner s={13}/> Loading users...</div>
+        ):errG?(
+          <div style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:C.error}}><IcoError s={13}/> {errG}</div>
+        ):(
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <span style={{fontSize:12,color:C.muted,display:'flex',alignItems:'center',gap:4}}><IcoUser s={12}/> {googleUsers.length} users loaded</span>
+            <button onClick={logoutGoogle} style={{fontSize:11,color:C.muted,background:'none',border:`1px solid ${C.border}`,borderRadius:5,padding:'4px 8px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,display:'inline-flex',alignItems:'center',gap:4}}><IcoLogout s={11}/> Sign Out</button>
           </div>
-        ))}
-        {filtered.length === 0 && <div style={{textAlign:'center',padding:'16px',fontSize:13,color:C.muted}}>No users match "{search}"</div>}
-      </div>
+        )}
+      </Card>
+
+      {/* Microsoft Teams Card */}
+      <Card style={{marginBottom:20}}>
+        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:14}}>
+          <MsIcon/>
+          <div style={{flex:1}}>
+            <div style={{fontSize:14,fontWeight:600}}>Microsoft Teams / 365</div>
+            <div style={{fontSize:12,color:C.muted}}>Destination — Copilot / OneNote <span style={{fontSize:11,color:C.error,fontWeight:600}}>(required)</span></div>
+          </div>
+          {msAuthed?<span style={{display:'inline-flex',alignItems:'center',gap:5,fontSize:12,padding:'4px 12px',borderRadius:20,background:C.tint,color:C.primary,fontWeight:600,flexShrink:0}}><Check s={12} c={C.primary}/>Connected</span>:<span style={{fontSize:12,padding:'4px 12px',borderRadius:20,background:'#FEF2F2',color:C.error,fontWeight:500,flexShrink:0}}>Required</span>}
+        </div>
+        {!msAuthed?(
+          <button onClick={signInMs} style={{display:'inline-flex',alignItems:'center',gap:10,padding:'10px 16px',borderRadius:6,border:`1px solid ${C.border}`,background:'white',fontSize:13,fontWeight:500,cursor:'pointer',transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.background=C.bg} onMouseLeave={e=>e.currentTarget.style.background='white'}>Sign in with Microsoft</button>
+        ):lgM?(
+          <div style={{display:'flex',alignItems:'center',gap:8,fontSize:12,color:C.muted}}><Spinner s={13}/> Loading users...</div>
+        ):errM?(
+          <div style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:C.error}}><IcoError s={13}/> {errM}</div>
+        ):(
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <span style={{fontSize:12,color:C.muted,display:'flex',alignItems:'center',gap:4}}><IcoUser s={12}/> {msUsers.length} users loaded</span>
+            <button onClick={logoutMs} style={{fontSize:11,color:C.muted,background:'none',border:`1px solid ${C.border}`,borderRadius:5,padding:'4px 8px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,display:'inline-flex',alignItems:'center',gap:4}}><IcoLogout s={11}/> Sign Out</button>
+          </div>
+        )}
+      </Card>
+
+      {!msAuthed&&<div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:8,fontSize:13,color:'#991B1B',marginBottom:16}}><IcoWarn s={14}/>Microsoft Teams connection is required to proceed.</div>}
+      {msAuthed&&!googleAuthed&&<div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',background:C.tint,border:`1px solid ${C.primary}30`,borderRadius:8,fontSize:13,color:C.primary,marginBottom:16}}><IcoInfo s={14}/>Google not connected — you can import data via ZIP file in the next step.</div>}
+      <Btn onClick={onComplete} disabled={!msAuthed} style={{width:'100%',justifyContent:'center'}}>Continue to Import Data →</Btn>
     </div>
   );
 };
@@ -550,458 +258,264 @@ const MsUserPanel = ({onLogout}) => {
 /* ══════════════════════════════ */
 /* ═══   STEP 1: IMPORT DATA  ═══ */
 /* ══════════════════════════════ */
-const Step1 = ({onComplete, googleAuthed, setGoogleAuthed}) => {
-  const [tab, setTab] = useState('vault');
-  const [loadingUsers, setLoadingUsers] = useState(false);
-  const [users, setUsers] = useState([]);
-  const [selected, setSelected] = useState(new Set());
-  const [exporting, setExporting] = useState(false);
-  const [exportStatus, setExportStatus] = useState('');
-  const [elapsed, setElapsed] = useState(0);
-  const elapsedRef = useRef(null);
-  const fileInputRef = useRef(null);
-  const [uploading, setUploading] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
+const Step1=({googleUsers,onComplete,onBack,showToast})=>{
+  const [tab,setTab]=useState('userwise');
+  const [selected,setSelected]=useState(new Set());
+  const [exporting,setExporting]=useState(false);
+  const [exportStatus,setExportStatus]=useState('');
+  const [elapsed,setElapsed]=useState(0);
+  const elapsedRef=useRef(null);
+  const fileInputRef=useRef(null);
+  const [uploading,setUploading]=useState(false);
+  const [dragOver,setDragOver]=useState(false);
+  // Saved uploads
+  const [savedUploads,setSavedUploads]=useState([]);
+  const [showMenu,setShowMenu]=useState(false);
+  const menuRef=useRef(null);
 
-  const [loadError, setLoadError] = useState('');
+  useEffect(()=>{if(googleUsers.length>0&&selected.size===0)setSelected(new Set(googleUsers.map(u=>u.email)))},[googleUsers]);
 
-  const loadUsers = async () => {
-    setLoadingUsers(true);
-    setLoadError('');
-    try {
-      const res = await fetch('/api/google/users');
-      if (res.status === 401) {
-        setGoogleAuthed(false);
-        setLoadingUsers(false);
-        return;
-      }
-      const data = await res.json();
-      if (res.ok && data.users) {
-        setUsers(data.users);
-        setSelected(new Set(data.users.map(u=>u.email)));
-      } else {
-        setLoadError(data.error || 'Failed to load users');
-      }
-    } catch(e){
-      setLoadError(e.message);
-    }
-    setLoadingUsers(false);
+  const loadSavedUploads=async()=>{
+    try{const r=await fetch('/api/uploads');const d=await r.json();setSavedUploads(d.uploads||[])}catch{}
   };
 
-  // If already authed on mount (restored from localStorage), load users
-  useEffect(() => {
-    if (googleAuthed && users.length === 0) loadUsers();
-  }, [googleAuthed]);
+  useEffect(()=>{loadSavedUploads()},[]);
 
-  const signInGoogle = () => {
-    window.open('/auth/google/login', 'googleauth', 'width=500,height=700,left=300,top=100');
-    window.addEventListener('message', function h(e) {
-      if (e.data?.type === 'google-auth-success') {
-        window.removeEventListener('message', h);
-        setGoogleAuthed(true);
-        loadUsers();
-      }
-    });
-  };
+  // Close menu when clicking outside
+  useEffect(()=>{
+    const h=e=>{if(menuRef.current&&!menuRef.current.contains(e.target))setShowMenu(false)};
+    document.addEventListener('mousedown',h);return()=>document.removeEventListener('mousedown',h);
+  },[]);
 
-  const logoutGoogle = async () => {
-    await fetch('/auth/google/logout', {method:'POST'});
-    setGoogleAuthed(false);
-    setUsers([]);
-    setSelected(new Set());
-  };
+  const toggleUser=e=>setSelected(p=>{const n=new Set(p);n.has(e)?n.delete(e):n.add(e);return n});
+  const toggleAll=()=>{if(selected.size===googleUsers.length)setSelected(new Set());else setSelected(new Set(googleUsers.map(u=>u.email)))};
 
-  const toggleUser = (email) => {
-    setSelected(prev => {
-      const n = new Set(prev);
-      n.has(email) ? n.delete(email) : n.add(email);
-      return n;
-    });
-  };
-
-  const toggleAll = () => {
-    if (selected.size === users.length) setSelected(new Set());
-    else setSelected(new Set(users.map(u=>u.email)));
-  };
-
-  const startExport = async () => {
-    setExporting(true);
-    setElapsed(0);
-    elapsedRef.current = setInterval(()=>setElapsed(p=>p+1), 1000);
+  const startExport=async()=>{
+    setExporting(true);setElapsed(0);
+    elapsedRef.current=setInterval(()=>setElapsed(p=>p+1),1000);
     setExportStatus('Creating Vault export...');
-    try {
-      const res = await fetch('/api/google/vault-export', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({user_emails: [...selected]}),
-      });
-      const data = await res.json();
-      if (!res.ok) { setExportStatus(`Error: ${data.error}`); clearInterval(elapsedRef.current); setExporting(false); return; }
-      setExportStatus('Export in progress...');
-      poll();
-    } catch(e) {
-      setExportStatus(`Error: ${e.message}`);
-      clearInterval(elapsedRef.current);
-      setExporting(false);
-    }
+    try{
+      const res=await fetch('/api/google/vault-export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_emails:[...selected]})});
+      const data=await res.json();
+      if(!res.ok){setExportStatus(`Error: ${data.error}`);clearInterval(elapsedRef.current);setExporting(false);return}
+      setExportStatus('Export in progress...');pollExport();
+    }catch(e){setExportStatus(`Error: ${e.message}`);clearInterval(elapsedRef.current);setExporting(false)}
   };
 
-  const poll = async () => {
-    const check = async () => {
-      try {
-        const res = await fetch('/api/google/vault-export/status');
-        const data = await res.json();
-        if (data.status === 'COMPLETED' && data.users) {
-          clearInterval(elapsedRef.current);
-          setExportStatus(`Done — ${data.total_users} users, ${data.total_conversations} conversations`);
-          setExporting(false);
-          setTimeout(() => onComplete(data), 800);
-          return;
-        }
-        if (data.status === 'FAILED') {
-          clearInterval(elapsedRef.current);
-          setExportStatus(`Export failed: ${data.error || 'Unknown error'}`);
-          setExporting(false);
-          return;
-        }
-        setExportStatus(`Export in progress (${data.status})...`);
-        setTimeout(check, 10000);
-      } catch(e) {
-        setTimeout(check, 15000);
-      }
-    };
-    check();
+  const pollExport=()=>{
+    const check=async()=>{
+      try{
+        const res=await fetch('/api/google/vault-export/status');const data=await res.json();
+        if(data.status==='COMPLETED'&&data.users){clearInterval(elapsedRef.current);setExportStatus(`Done`);setExporting(false);setTimeout(()=>onComplete(data),600);return}
+        if(data.status==='FAILED'){clearInterval(elapsedRef.current);setExportStatus(`Failed: ${data.error||'Unknown'}`);setExporting(false);return}
+        setExportStatus(`In progress (${data.status})...`);setTimeout(check,10000);
+      }catch{setTimeout(check,15000)}
+    };check();
   };
 
-  const doUpload = async (file) => {
-    if (!file.name.endsWith('.zip')) return;
+  const doUpload=async file=>{
+    if(!file.name.endsWith('.zip'))return;
     setUploading(true);
-    const fd = new FormData();
-    fd.append('vault_zip', file);
-    try {
-      const res = await fetch('/api/upload', {method:'POST', body:fd});
-      const data = await res.json();
-      if (res.ok) onComplete(data);
-    } catch(e){}
+    const fd=new FormData();fd.append('vault_zip',file);
+    try{
+      const res=await fetch('/api/upload',{method:'POST',body:fd});
+      const data=await res.json();
+      if(res.ok){loadSavedUploads();onComplete(data)}
+    }catch{}
     setUploading(false);
   };
 
-  return (
+  const loadSavedUpload=async(entry)=>{
+    setShowMenu(false);
+    // Fetch the users for this extract_path by re-reading metadata
+    onComplete({
+      id:entry.id, extract_path:entry.extract_path,
+      total_users:entry.total_users, total_conversations:entry.total_conversations,
+      users:[] // users list not stored in meta; will be populated by mapping step
+    });
+  };
+
+  const deleteSavedUpload=async(e,id)=>{
+    e.stopPropagation();
+    await fetch(`/api/uploads/${id}`,{method:'DELETE'});
+    loadSavedUploads();
+  };
+
+  return(
     <div className="fade-up">
       <div style={{marginBottom:20}}>
-        <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Import Gemini Data</div>
-        <div style={{fontSize:13,color:C.muted}}>Connect Google Vault to export Gemini conversations, or upload a ZIP manually.</div>
+        <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Import Data</div>
+        <div style={{fontSize:13,color:C.muted}}>Select users to export from Google Workspace, or upload a Vault ZIP file.</div>
       </div>
 
-      {/* Tabs */}
-      <div style={{display:'flex',gap:4,marginBottom:20,background:C.bg,borderRadius:8,padding:4}}>
-        {[['vault','Google Vault'],['upload','Upload ZIP']].map(([id,label])=>(
-          <button key={id} onClick={()=>setTab(id)} style={{
-            flex:1,padding:'8px 0',borderRadius:6,border:'none',fontSize:13,fontWeight:tab===id?600:400,
-            background:tab===id?'white':C.bg,color:tab===id?C.primary:C.muted,
-            boxShadow:tab===id?'0 1px 4px rgba(0,0,0,.1)':'none',transition:'all .2s',cursor:'pointer'}}>
-            {label}
+      {/* Tabs + hamburger */}
+      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:20}}>
+        <div style={{display:'flex',gap:4,flex:1,background:C.bg,borderRadius:8,padding:4}}>
+          {[['userwise','User-wise'],['upload','Upload ZIP']].map(([id,label])=>(
+            <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:'8px 0',borderRadius:6,border:'none',fontSize:13,fontWeight:tab===id?600:400,background:tab===id?'white':C.bg,color:tab===id?C.primary:C.muted,boxShadow:tab===id?'0 1px 4px rgba(0,0,0,.1)':'none',transition:'all .2s',cursor:'pointer'}}>{label}</button>
+          ))}
+        </div>
+        {/* Saved uploads hamburger */}
+        <div ref={menuRef} style={{position:'relative'}}>
+          <button onClick={()=>{setShowMenu(p=>!p);loadSavedUploads()}} title="Previous uploads" style={{width:36,height:36,borderRadius:8,border:`1px solid ${C.border}`,background:'white',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',color:C.muted,flexShrink:0,transition:'all .15s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=C.primary;e.currentTarget.style.color=C.primary}} onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.color=C.muted}}>
+            <IcoMenu s={16}/>
           </button>
-        ))}
-      </div>
-
-      {/* Google Vault Panel */}
-      {tab === 'vault' && (
-        <div>
-          {!googleAuthed ? (
-            <Card className="fade-up" style={{textAlign:'center',padding:32}}>
-              <div style={{display:'flex',justifyContent:'center',marginBottom:12}}>
-                <IcoCloud s={44} c={C.primaryL}/>
-              </div>
-              <div style={{fontSize:15,fontWeight:600,marginBottom:6}}>Connect Google Workspace</div>
-              <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Sign in with a Google Workspace admin account to access Vault.</div>
-              <button onClick={signInGoogle} style={{display:'inline-flex',alignItems:'center',gap:10,
-                padding:'11px 20px',borderRadius:6,border:`1px solid ${C.border}`,background:'white',
-                fontSize:14,fontWeight:500,cursor:'pointer',transition:'all .15s',boxShadow:'0 1px 3px rgba(0,0,0,.08)'}}
-                onMouseEnter={e=>e.currentTarget.style.background=C.bg}
-                onMouseLeave={e=>e.currentTarget.style.background='white'}>
-                <GoogleIcon/> Sign in with Google
-              </button>
-            </Card>
-          ) : loadingUsers ? (
-            <Card className="fade-up" style={{textAlign:'center',padding:40}}>
-              <Spinner s={28}/>
-              <div style={{marginTop:12,fontSize:13,color:C.muted}}>Loading domain users...</div>
-            </Card>
-          ) : loadError ? (
-            <Card className="fade-up" style={{textAlign:'center',padding:28}}>
-              <div style={{display:'flex',justifyContent:'center',marginBottom:12,color:C.error}}><IcoError s={28}/></div>
-              <div style={{fontSize:14,fontWeight:600,marginBottom:6}}>Failed to load users</div>
-              <div style={{fontSize:12,color:C.muted,marginBottom:16}}>{loadError}</div>
-              <Btn onClick={loadUsers}>Retry</Btn>
-            </Card>
-          ) : exporting ? (
-            <Card className="scale-in" style={{textAlign:'center',padding:28}}>
-              <div style={{display:'flex',justifyContent:'center',marginBottom:16}}>
-                <div style={{position:'relative',display:'inline-flex',alignItems:'center',justifyContent:'center'}}>
-                  <Ring pct={Math.min(elapsed * 1.5, 90)} size={88} stroke={6} color={C.primary}/>
-                  <div style={{position:'absolute',textAlign:'center',transform:'rotate(0deg)'}}>
-                    <IcoCloud s={22} c={C.primaryL}/>
-                    <div style={{fontSize:10,color:C.muted,fontWeight:600}}>{elapsed}s</div>
+          {showMenu&&(
+            <div style={{position:'absolute',right:0,top:'calc(100% + 6px)',width:320,background:'white',border:`1px solid ${C.border}`,borderRadius:10,boxShadow:'0 8px 30px rgba(0,0,0,.12)',zIndex:100,overflow:'hidden'}}>
+              <div style={{padding:'10px 14px',borderBottom:`1px solid ${C.bg}`,fontSize:12,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.5}}>Previous Uploads</div>
+              {savedUploads.length===0?(
+                <div style={{padding:'16px 14px',fontSize:13,color:C.muted,textAlign:'center'}}>No saved uploads yet</div>
+              ):savedUploads.map(u=>(
+                <div key={u.id} onClick={()=>loadSavedUpload(u)} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',cursor:'pointer',borderBottom:`1px solid ${C.bg}`,transition:'background .15s'}} onMouseEnter={e=>e.currentTarget.style.background=C.bg} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+                  <IcoZip s={20} c={C.primaryL}/>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:12,fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{u.original_name||u.id}</div>
+                    <div style={{fontSize:11,color:C.muted}}>{u.total_users} users · {new Date(u.upload_time).toLocaleDateString()}</div>
                   </div>
+                  <button onClick={e=>deleteSavedUpload(e,u.id)} style={{padding:'4px 6px',border:'none',background:'none',cursor:'pointer',color:C.muted,borderRadius:4,flexShrink:0,display:'flex',alignItems:'center'}} onMouseEnter={e=>{e.currentTarget.style.background='#FEF2F2';e.currentTarget.style.color=C.error}} onMouseLeave={e=>{e.currentTarget.style.background='none';e.currentTarget.style.color=C.muted}}><IcoTrash s={13}/></button>
                 </div>
-              </div>
-              <div style={{fontWeight:600,fontSize:14,marginBottom:4}}>Exporting Gemini Data</div>
-              <div style={{fontSize:12,color:C.muted}}>{exportStatus}</div>
-            </Card>
-          ) : (
-            <UserSelectPanel users={users} selected={selected} toggleUser={toggleUser} toggleAll={toggleAll} startExport={startExport} onLogout={logoutGoogle}/>
-          )}
-        </div>
-      )}
-
-      {/* Upload ZIP Panel */}
-      {tab === 'upload' && (
-        <div className="fade-up"
-          onDragOver={e=>{e.preventDefault();setDragOver(true)}}
-          onDragLeave={()=>setDragOver(false)}
-          onDrop={e=>{e.preventDefault();setDragOver(false);if(e.dataTransfer.files[0]) doUpload(e.dataTransfer.files[0])}}>
-          <div onClick={()=>!uploading&&fileInputRef.current.click()} style={{
-            border:`2px dashed ${dragOver?C.primary:C.border}`,borderRadius:10,padding:'48px 20px',
-            textAlign:'center',cursor:uploading?'wait':'pointer',transition:'all .2s',
-            background:dragOver?C.tint:'white'}}>
-            <input ref={fileInputRef} type="file" accept=".zip" style={{display:'none'}}
-              onChange={e=>{if(e.target.files[0]) doUpload(e.target.files[0])}}/>
-            {uploading ? (
-              <div><Spinner s={32}/><div style={{marginTop:12,fontSize:13,color:C.muted}}>Uploading...</div></div>
-            ) : (
-              <>
-                <div style={{display:'flex',justifyContent:'center',marginBottom:12}}>
-                  <IcoZip s={44} c={dragOver?C.primary:C.primaryL}/>
-                </div>
-                <div style={{fontSize:14,fontWeight:500,marginBottom:4}}><span style={{color:C.primary,fontWeight:600}}>Click to browse</span> or drag & drop</div>
-                <div style={{fontSize:12,color:C.muted}}>Google Vault .zip export file</div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-/* ══════════════════════════════ */
-/* ═══     STEP 2: CONFIG     ═══ */
-/* ══════════════════════════════ */
-const Step2 = ({uploadData, config, setConfig, msAuthed, setMsAuthed, onNext, onBack}) => {
-  const signInMs = () => {
-    window.open(`/auth/login?tenant_id=${config.tenantId}`, 'msauth', 'width=500,height=700,left=300,top=100');
-    window.addEventListener('message', function h(e) {
-      if (e.data?.type === 'auth-success') {
-        window.removeEventListener('message', h);
-        setMsAuthed(true);
-      }
-    });
-  };
-
-  const logoutMs = async () => {
-    await fetch('/auth/logout', {method:'POST'});
-    setMsAuthed(false);
-  };
-
-  return (
-    <div className="fade-up">
-      <div style={{marginBottom:20}}>
-        <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Customer Configuration</div>
-        <div style={{fontSize:13,color:C.muted}}>Enter Microsoft 365 details and authenticate as admin.</div>
-      </div>
-
-      {uploadData && (
-        <Card className="scale-in" style={{marginBottom:20,background:C.tint,border:`1px solid ${C.primary}30`,padding:'14px 16px'}}>
-          <div style={{display:'flex',alignItems:'center',gap:10}}>
-            <span className="check-pop" style={{display:'flex',color:C.success}}><Check s={20} c={C.success}/></span>
-            <div>
-              <div style={{fontSize:13,fontWeight:600,color:C.primary}}>Gemini data imported</div>
-              <div style={{fontSize:12,color:C.muted}}>{uploadData.total_users} users · {uploadData.total_conversations} conversations</div>
+              ))}
             </div>
-          </div>
-        </Card>
-      )}
-
-      <Field label="Customer Name">
-        <Input value={config.customerName} onChange={e=>setConfig(p=>({...p,customerName:e.target.value}))} placeholder="e.g. Acme Corp"/>
-      </Field>
-
-      <Card style={{marginBottom:20,padding:'14px 16px'}}>
-        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
-          <div style={{display:'flex',alignItems:'center',gap:8}}>
-            <div style={{width:8,height:8,borderRadius:'50%',background:msAuthed?C.success:'#e5e7eb',transition:'background .3s'}}/>
-            <span style={{fontSize:13,color:msAuthed?C.success:C.muted,fontWeight:500}}>
-              {msAuthed ? 'Signed in to Microsoft 365' : 'Not signed in — required for live migration'}
-            </span>
-          </div>
-          {msAuthed && (
-            <button onClick={logoutMs} style={{fontSize:11,color:C.muted,background:'none',border:`1px solid ${C.border}`,
-              borderRadius:5,padding:'4px 8px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,
-              display:'inline-flex',alignItems:'center',gap:4}}>
-              <IcoLogout s={11}/> Sign Out
-            </button>
           )}
         </div>
-        {!msAuthed ? (
-          <button onClick={signInMs} style={{display:'inline-flex',alignItems:'center',gap:10,
-            padding:'10px 16px',borderRadius:6,border:`1px solid ${C.border}`,background:'white',
-            fontSize:13,fontWeight:500,cursor:'pointer',transition:'all .15s'}}
-            onMouseEnter={e=>e.currentTarget.style.background=C.bg}
-            onMouseLeave={e=>e.currentTarget.style.background='white'}>
-            <MsIcon/> Sign in with Microsoft
-          </button>
-        ) : (
-          <div style={{display:'inline-flex',alignItems:'center',gap:8,fontSize:13,color:C.success,fontWeight:500}}>
-            <span className="check-pop" style={{display:'flex'}}><Check s={16} c={C.success}/></span> Authenticated
-          </div>
-        )}
-        {msAuthed && <MsUserPanel/>}
-      </Card>
+      </div>
 
-      <div style={{display:'flex',gap:10}}>
+      {tab==='userwise'&&(
+        exporting?(
+          <Card className="scale-in" style={{textAlign:'center',padding:28}}>
+            <div style={{display:'flex',justifyContent:'center',marginBottom:16}}>
+              <div style={{position:'relative',display:'inline-flex',alignItems:'center',justifyContent:'center'}}>
+                <Ring pct={Math.min(elapsed*1.5,90)} size={88} stroke={6} color={C.primary}/>
+                <div style={{position:'absolute',textAlign:'center'}}><IcoCloud s={22} c={C.primaryL}/><div style={{fontSize:10,color:C.muted,fontWeight:600}}>{elapsed}s</div></div>
+              </div>
+            </div>
+            <div style={{fontWeight:600,fontSize:14,marginBottom:4}}>Exporting Gemini Data</div>
+            <div style={{fontSize:12,color:C.muted}}>{exportStatus}</div>
+          </Card>
+        ):googleUsers.length>0?(
+          <UserSelectPanel users={googleUsers} selected={selected} toggleUser={toggleUser} toggleAll={toggleAll} startExport={startExport}/>
+        ):(
+          <Card className="fade-up" style={{textAlign:'center',padding:32}}>
+            <IcoCloud s={44} c={C.primaryL}/>
+            <div style={{marginTop:12,fontSize:13,color:C.muted}}>No users loaded. Please go back and connect Google Workspace, or use Upload ZIP.</div>
+          </Card>
+        )
+      )}
+
+      {tab==='upload'&&(
+        <div className="fade-up" onDragOver={e=>{e.preventDefault();setDragOver(true)}} onDragLeave={()=>setDragOver(false)} onDrop={e=>{e.preventDefault();setDragOver(false);if(e.dataTransfer.files[0])doUpload(e.dataTransfer.files[0])}}>
+          <div onClick={()=>!uploading&&fileInputRef.current.click()} style={{border:`2px dashed ${dragOver?C.primary:C.border}`,borderRadius:10,padding:'48px 20px',textAlign:'center',cursor:uploading?'wait':'pointer',transition:'all .2s',background:dragOver?C.tint:'white'}}>
+            <input ref={fileInputRef} type="file" accept=".zip" style={{display:'none'}} onChange={e=>{if(e.target.files[0])doUpload(e.target.files[0])}}/>
+            {uploading?(<div><Spinner s={32}/><div style={{marginTop:12,fontSize:13,color:C.muted}}>Uploading & extracting...</div></div>):(<><div style={{display:'flex',justifyContent:'center',marginBottom:12}}><IcoZip s={44} c={dragOver?C.primary:C.primaryL}/></div><div style={{fontSize:14,fontWeight:500,marginBottom:4}}><span style={{color:C.primary,fontWeight:600}}>Click to browse</span> or drag & drop</div><div style={{fontSize:12,color:C.muted}}>Google Vault .zip export file</div></>)}
+          </div>
+        </div>
+      )}
+
+      <div style={{marginTop:16,paddingTop:12,borderTop:`1px solid ${C.bg}`}}>
         <Btn variant="ghost" onClick={onBack}>← Back</Btn>
-        <Btn onClick={onNext} disabled={!config.customerName} style={{flex:1,justifyContent:'center'}}>Continue →</Btn>
       </div>
     </div>
   );
 };
 
 /* ══════════════════════════════ */
-/* ═══   STEP 3: MAP USERS    ═══ */
+/* ═══   STEP 2: MAP USERS    ═══ */
 /* ══════════════════════════════ */
-const Step3 = ({uploadData, mappings, setMappings, selectedUsers, setSelectedUsers, onNext, onBack}) => {
-  const csvRef = useRef(null);
-  const [search, setSearch] = useState('');
+const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedUsers,onNext,onBack,showToast})=>{
+  const csvRef=useRef(null);
+  const [search,setSearch]=useState('');
+  const [csvUploading,setCsvUploading]=useState(false);
 
-  useEffect(() => {
-    if (uploadData?.users) {
-      const m = {};
-      uploadData.users.forEach(u => { m[u.email] = u.email; });
-      setMappings(m);
-      setSelectedUsers(new Set(uploadData.users.map(u => u.email)));
-    }
-  }, [uploadData]);
-
-  const downloadMappingCsv = () => {
-    const rows = (uploadData?.users||[]).map(u => `"${u.email}","${mappings[u.email]||u.email}"`);
-    const csv = 'Google Email,M365 Email\n' + rows.join('\n');
-    const a = document.createElement('a'); a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
-    a.download = 'user-mappings.csv'; a.click();
-  };
-
-  const uploadMappingCsv = (file) => {
-    const reader = new FileReader();
-    reader.onload = e => {
-      const lines = e.target.result.split(/\r?\n/).slice(1); // skip header
-      const m = {...mappings};
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        const cols = parseCsvLine(line);
-        if (cols.length >= 2 && cols[0]) m[cols[0]] = cols[1];
-      }
-      setMappings(m);
-      // After CSV upload: reset selection to all loaded users
-      setSelectedUsers(new Set(Object.keys(m)));
-    };
-    reader.readAsText(file);
-  };
-
-  const users = uploadData?.users || [];
-  const filtered = users.filter(u => {
-    const q = search.toLowerCase();
-    return u.email.toLowerCase().includes(q) || (mappings[u.email]||'').toLowerCase().includes(q);
-  });
-
-  const toggleUser = (email) => {
-    setSelectedUsers(prev => {
-      const n = new Set(prev);
-      n.has(email) ? n.delete(email) : n.add(email);
-      return n;
+  // Auto-map by email local-part similarity on mount / when uploadData changes
+  useEffect(()=>{
+    if(!uploadData?.users?.length)return;
+    const byLocal={};
+    msUsers.forEach(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=u.mail||u.userPrincipalName||''});
+    const m={...mappings};let changed=false;
+    uploadData.users.forEach(u=>{
+      if(!(u.email in m)){const gl=u.email.split('@')[0].toLowerCase();m[u.email]=byLocal[gl]||'';changed=true}
     });
-  };
-  const toggleAll = () => {
-    if (selectedUsers.size === users.length) setSelectedUsers(new Set());
-    else setSelectedUsers(new Set(users.map(u=>u.email)));
+    if(changed)setMappings(m);
+    if(selectedUsers.size===0)setSelectedUsers(new Set(uploadData.users.map(u=>u.email)));
+  },[uploadData,msUsers]);
+
+  const downloadCsv=()=>{
+    const rows=(uploadData?.users||[]).map(u=>`"${u.email}","${mappings[u.email]||''}"`);
+    const csv='Google Email,M365 Email\n'+rows.join('\n');
+    const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='user-mappings.csv';a.click();
+    showToast('User mapping CSV downloaded successfully.');
   };
 
-  return (
+  const uploadCsv=file=>{
+    setCsvUploading(true);
+    const r=new FileReader();
+    r.onload=e=>{
+      const lines=e.target.result.split(/\r?\n/).slice(1);
+      const m={...mappings};
+      for(const l of lines){if(!l.trim())continue;const c=parseCsvLine(l);if(c.length>=2&&c[0])m[c[0]]=c[1]}
+      setMappings(m);setSelectedUsers(new Set(Object.keys(m)));
+      setCsvUploading(false);
+      showToast('User mapping uploaded successfully.');
+    };
+    r.onerror=()=>setCsvUploading(false);
+    r.readAsText(file);
+  };
+
+  const users=uploadData?.users||[];
+  const filtered=users.filter(u=>{const q=search.toLowerCase();return u.email.toLowerCase().includes(q)||(mappings[u.email]||'').toLowerCase().includes(q)});
+  const toggleUser=e=>setSelectedUsers(p=>{const n=new Set(p);n.has(e)?n.delete(e):n.add(e);return n});
+  const toggleAll=()=>{if(selectedUsers.size===users.length)setSelectedUsers(new Set());else setSelectedUsers(new Set(users.map(u=>u.email)))};
+  const autoMapped=users.filter(u=>!!mappings[u.email]).length;
+  const unmapped=users.filter(u=>!mappings[u.email]).length;
+
+  return(
     <div style={{display:'flex',flexDirection:'column',height:'100%'}} className="fade-up">
-      {/* Header row — static */}
       <div style={{flexShrink:0,marginBottom:12}}>
         <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:8}}>
           <div>
-            <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:2}}>User Mappings</div>
-            <div style={{fontSize:13,color:C.muted}}>Map each Google account to its Microsoft 365 email.</div>
+            <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:2}}>User Mapping</div>
+            <div style={{fontSize:13,color:C.muted}}>
+              Map Google accounts to M365 emails.{' '}
+              {autoMapped>0&&<span style={{color:C.success,fontWeight:500}}>{autoMapped} auto-mapped</span>}
+              {unmapped>0&&<span style={{color:C.error}}>{autoMapped>0?' · ':''}{unmapped} need mapping</span>}
+            </div>
           </div>
           <div style={{display:'flex',gap:6,flexShrink:0}}>
-            <input ref={csvRef} type="file" accept=".csv" style={{display:'none'}}
-              onChange={e=>{ if(e.target.files[0]) uploadMappingCsv(e.target.files[0]); e.target.value=''; }}/>
-            <button onClick={()=>csvRef.current.click()} style={{fontSize:12,color:C.muted,background:'white',
-              border:`1px solid ${C.border}`,borderRadius:5,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,
-              display:'inline-flex',alignItems:'center',gap:4}}>
-              <IcoUpload s={11}/> Upload CSV
+            <input ref={csvRef} type="file" accept=".csv" style={{display:'none'}} onChange={e=>{if(e.target.files[0])uploadCsv(e.target.files[0]);e.target.value=''}}/>
+            <button onClick={()=>csvRef.current.click()} disabled={csvUploading} style={{fontSize:12,color:C.muted,background:'white',border:`1px solid ${C.border}`,borderRadius:5,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,display:'inline-flex',alignItems:'center',gap:4}}>
+              {csvUploading?<Spinner s={10}/>:<IcoUpload s={11}/>} Upload CSV
             </button>
-            <button onClick={downloadMappingCsv} style={{fontSize:12,color:C.primary,background:'white',
-              border:`1px solid ${C.primary}`,borderRadius:5,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,
-              display:'inline-flex',alignItems:'center',gap:4}}>
-              <IcoDownload s={11} c={C.primary}/> Download CSV
-            </button>
+            <button onClick={downloadCsv} style={{fontSize:12,color:C.primary,background:'white',border:`1px solid ${C.primary}`,borderRadius:5,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,display:'inline-flex',alignItems:'center',gap:4}}><IcoDownload s={11} c={C.primary}/> Download CSV</button>
           </div>
         </div>
-
-        {/* Selection toolbar */}
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
-          <div style={{fontSize:12,color:C.muted}}>
-            <span style={{fontWeight:600,color:C.primary}}>{selectedUsers.size}</span> of {users.length} selected for migration
-          </div>
-          <TextBtn onClick={toggleAll}>
-            {selectedUsers.size === users.length ? 'Deselect All' : 'Select All'}
-          </TextBtn>
+          <div style={{fontSize:12,color:C.muted}}><span style={{fontWeight:600,color:C.primary}}>{selectedUsers.size}</span> of {users.length} selected</div>
+          <TextBtn onClick={toggleAll}>{selectedUsers.size===users.length?'Deselect All':'Select All'}</TextBtn>
         </div>
-
         <SearchBar value={search} onChange={setSearch} placeholder="Search by email..."/>
       </div>
 
-      {/* Table — scrollable */}
-      <div style={{flex:1,overflowY:'auto',minHeight:0,
-        background:'white',border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden'}}>
-        <div style={{display:'grid',gridTemplateColumns:'32px 1fr 1fr 60px',padding:'9px 14px',
-          background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:11,fontWeight:600,
-          color:C.muted,textTransform:'uppercase',letterSpacing:.4,position:'sticky',top:0,zIndex:1}}>
-          <div></div>
-          <div>Google Email</div>
-          <div>M365 Email</div>
-          <div style={{textAlign:'right'}}>Chats</div>
+      <div style={{flex:1,overflowY:'auto',minHeight:0,background:'white',border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden'}}>
+        <div style={{display:'grid',gridTemplateColumns:'32px 1fr 1fr 60px',padding:'9px 14px',background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.4,position:'sticky',top:0,zIndex:1}}>
+          <div/><div>Google Email</div><div>M365 Email</div><div style={{textAlign:'right'}}>Chats</div>
         </div>
-        {filtered.map((u, i) => (
-          <div key={u.email} style={{
-            display:'grid',gridTemplateColumns:'32px 1fr 1fr 60px',alignItems:'center',
-            padding:'9px 14px',borderBottom:i<filtered.length-1?`1px solid ${C.bg}`:'none',
-            background:selectedUsers.has(u.email)?C.tint:'white',transition:'background .15s',
-            cursor:'pointer'}}
-            onClick={()=>toggleUser(u.email)}>
-            <input type="checkbox" checked={selectedUsers.has(u.email)} onChange={()=>toggleUser(u.email)}
-              style={{accentColor:C.primary,width:15,height:15}}
-              onClick={e=>e.stopPropagation()}/>
-            <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}>
-              <Avatar name={u.email} email={u.email} size={26}/>
-              <span style={{fontSize:12,color:C.muted,fontFamily:'monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{u.email}</span>
+        {filtered.map((u,i)=>{
+          const mapped=!!(mappings[u.email]);
+          return(
+            <div key={u.email} style={{display:'grid',gridTemplateColumns:'32px 1fr 1fr 60px',alignItems:'center',padding:'9px 14px',borderBottom:i<filtered.length-1?`1px solid ${C.bg}`:'none',background:selectedUsers.has(u.email)?C.tint:'white',transition:'background .15s',cursor:'pointer'}} onClick={()=>toggleUser(u.email)}>
+              <input type="checkbox" checked={selectedUsers.has(u.email)} onChange={()=>toggleUser(u.email)} style={{accentColor:C.primary,width:15,height:15}} onClick={e=>e.stopPropagation()}/>
+              <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}><Avatar name={u.email} email={u.email} size={26}/><span style={{fontSize:12,color:C.muted,fontFamily:'monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{u.email}</span></div>
+              <input value={mappings[u.email]||''} onChange={e=>{e.stopPropagation();setMappings(p=>({...p,[u.email]:e.target.value}))}}
+                placeholder="Enter M365 email..."
+                style={{border:`1px solid ${mapped?C.primary+'50':C.border}`,borderRadius:5,padding:'5px 9px',fontSize:12,fontFamily:'inherit',outline:'none',marginRight:8,width:'100%',background:mapped?C.tint:'white'}}
+                onFocus={e=>{e.stopPropagation();e.target.style.borderColor=C.primary}} onBlur={e=>e.target.style.borderColor=mapped?C.primary+'50':C.border} onClick={e=>e.stopPropagation()}/>
+              <div style={{textAlign:'right',fontSize:12,color:C.muted,fontWeight:500}}>{u.conversation_count}</div>
             </div>
-            <input value={mappings[u.email]||''} onChange={e=>{e.stopPropagation();setMappings(p=>({...p,[u.email]:e.target.value}))}}
-              style={{border:`1px solid ${C.border}`,borderRadius:5,padding:'5px 9px',fontSize:12,
-                fontFamily:'inherit',outline:'none',marginRight:8,width:'100%'}}
-              onFocus={e=>{e.stopPropagation();e.target.style.borderColor=C.primary}}
-              onBlur={e=>e.target.style.borderColor=C.border}
-              onClick={e=>e.stopPropagation()}/>
-            <div style={{textAlign:'right',fontSize:12,color:C.muted,fontWeight:500}}>{u.conversation_count}</div>
-          </div>
-        ))}
-        {filtered.length === 0 && (
-          <div style={{textAlign:'center',padding:'24px',fontSize:13,color:C.muted}}>No users match "{search}"</div>
-        )}
+          );
+        })}
+        {filtered.length===0&&<div style={{textAlign:'center',padding:'24px',fontSize:13,color:C.muted}}>No users found.</div>}
       </div>
 
-      {/* Buttons — static */}
       <div style={{flexShrink:0,display:'flex',gap:10,paddingTop:12}}>
         <Btn variant="ghost" onClick={onBack}>← Back</Btn>
         <Btn onClick={onNext} style={{flex:1,justifyContent:'center'}}>Continue →</Btn>
@@ -1011,50 +525,54 @@ const Step3 = ({uploadData, mappings, setMappings, selectedUsers, setSelectedUse
 };
 
 /* ══════════════════════════════ */
-/* ═══    STEP 4: OPTIONS     ═══ */
+/* ═══    STEP 3: OPTIONS     ═══ */
 /* ══════════════════════════════ */
-const Step4 = ({options, setOptions, msAuthed, onRun, onBack}) => {
-  const Chk = ({label, checked, onChange}) => (
+const Step3=({options,setOptions,config,setConfig,msAuthed,onRun,onBack})=>{
+  const Chk=({label,checked,onChange,hint})=>(
     <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer',padding:'8px 0'}}>
-      <input type="checkbox" checked={checked} onChange={onChange}
-        style={{accentColor:C.primary,width:16,height:16}}/>
-      <span>{label}</span>
+      <input type="checkbox" checked={checked} onChange={onChange} style={{accentColor:C.primary,width:16,height:16}}/>
+      <div><span>{label}</span>{hint&&<div style={{fontSize:11,color:C.muted,marginTop:1}}>{hint}</div>}</div>
     </label>
   );
-
-  return (
+  return(
     <div className="fade-up">
       <div style={{marginBottom:20}}>
         <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Migration Options</div>
         <div style={{fontSize:13,color:C.muted}}>Configure and start the migration.</div>
       </div>
 
+      <Field label="File Name" hint="(used for report naming)">
+        <Input value={config.fileName||''} onChange={e=>setConfig(p=>({...p,fileName:e.target.value}))} placeholder="e.g. Acme Corp Migration"/>
+      </Field>
+
       <Card style={{marginBottom:16}}>
-        <div style={{fontSize:13,fontWeight:600,marginBottom:12,color:C.dark}}>Behavior</div>
-        <Chk label="Dry run (preview only — no pages created)" checked={options.dryRun} onChange={e=>setOptions(p=>({...p,dryRun:e.target.checked}))}/>
-        <Chk label="Skip follow-up messages" checked={options.skipFollowups} onChange={e=>setOptions(p=>({...p,skipFollowups:e.target.checked}))}/>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:4,color:C.dark}}>Behavior</div>
+        <Chk label="Dry run (preview only — no pages created)" hint="Recommended before first live migration" checked={options.dryRun} onChange={e=>setOptions(p=>({...p,dryRun:e.target.checked}))}/>
+        <Chk label="Skip follow-up messages" hint="Only migrate the first message of each conversation thread" checked={options.skipFollowups} onChange={e=>setOptions(p=>({...p,skipFollowups:e.target.checked}))}/>
       </Card>
 
       <Card style={{marginBottom:20}}>
-        <div style={{fontSize:13,fontWeight:600,marginBottom:12,color:C.dark}}>Date Range</div>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+          <div style={{fontSize:13,fontWeight:600,color:C.dark}}>Date Range</div>
+          <span style={{fontSize:11,color:C.primaryL,fontStyle:'italic'}}>Optional — blank = migrate all data</span>
+        </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
           <Field label="From Date"><Input type="date" value={options.fromDate} onChange={e=>setOptions(p=>({...p,fromDate:e.target.value}))}/></Field>
           <Field label="To Date"><Input type="date" value={options.toDate} onChange={e=>setOptions(p=>({...p,toDate:e.target.value}))}/></Field>
         </div>
+        {(options.fromDate||options.toDate)&&<TextBtn onClick={()=>setOptions(p=>({...p,fromDate:'',toDate:''}))} style={{fontSize:11,marginTop:2,color:C.muted}}>Clear date range</TextBtn>}
       </Card>
 
-      {!options.dryRun && !msAuthed && (
-        <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 16px',
-          background:C.tint,border:`1px solid ${C.primary}30`,borderRadius:8,fontSize:13,color:C.primary,marginBottom:16}}>
-          <IcoWarn s={15}/>
-          Live migration requires Microsoft sign-in (Step 2).
+      {!options.dryRun&&!msAuthed&&(
+        <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 16px',background:C.tint,border:`1px solid ${C.primary}30`,borderRadius:8,fontSize:13,color:C.primary,marginBottom:16}}>
+          <IcoWarn s={15}/>Live migration requires Microsoft sign-in (Step 1 — Add Clouds).
         </div>
       )}
 
       <div style={{display:'flex',gap:10}}>
         <Btn variant="ghost" onClick={onBack}>← Back</Btn>
-        <Btn onClick={onRun} disabled={!options.dryRun && !msAuthed} style={{flex:1,justifyContent:'center'}}>
-          {options.dryRun ? <><IcoSearch s={14}/> Start Dry Run</> : <><IcoRocket s={14}/> Start Migration</>}
+        <Btn onClick={onRun} disabled={!options.dryRun&&!msAuthed} style={{flex:1,justifyContent:'center'}}>
+          {options.dryRun?<><IcoSearch s={14}/>Start Dry Run</>:<><IcoRocket s={14}/>Start Migration</>}
         </Btn>
       </div>
     </div>
@@ -1062,180 +580,231 @@ const Step4 = ({options, setOptions, msAuthed, onRun, onBack}) => {
 };
 
 /* ══════════════════════════════ */
-/* ═══    STEP 5: RUNNING     ═══ */
+/* ═══   STEP 4/5: MIGRATE    ═══ */
 /* ══════════════════════════════ */
-const MIG_ENTITIES = [
-  {label:'Users',   icon: <IcoUser s={18}/>,  color:C.primary},
-  {label:'Pages',   icon: <IcoPage s={18}/>,  color:C.success},
-  {label:'Errors',  icon: <IcoError s={18}/>, color:C.error},
-  {label:'Flagged', icon: <IcoFlag s={18}/>,  color:C.primaryL},
+const MIG_ENTITIES=[
+  {label:'Users',  icon:<IcoUser s={18}/>,  color:C.primary},
+  {label:'Pages',  icon:<IcoPage s={18}/>,  color:C.success},
+  {label:'Errors', icon:<IcoError s={18}/>, color:C.error},
+  {label:'Flagged',icon:<IcoFlag s={18}/>,  color:C.primaryL},
 ];
 
-const Step5 = ({stats, done}) => {
-  const [ring, setRing] = React.useState(0);
-  React.useEffect(() => {
-    if (!done) {
-      const t = setInterval(() => setRing(r => Math.min(r + 2, 95)), 800);
-      return () => clearInterval(t);
-    } else {
-      setRing(100);
+const StepMigrate=({stats,done,lastRunWasDry,batchId,onStartLive,onRunAnother})=>{
+  const [ring,setRing]=useState(0);
+  useEffect(()=>{if(!done){const t=setInterval(()=>setRing(r=>Math.min(r+2,95)),800);return()=>clearInterval(t)}else setRing(100)},[done]);
+  const vals=[stats.users,stats.pages,stats.errors,stats.flagged];
+
+  const dlMigrationCsv=async()=>{
+    try{
+      const endpoint=batchId?`/api/reports/${batchId}`:'/api/reports/migration';
+      const res=await fetch(endpoint);
+      if(!res.ok)throw new Error('not found');
+      const data=await res.json();
+      const users=data.users||[];
+      // Flatten: one row per user, or one per error for failed users
+      const rows=[];
+      users.forEach(u=>{
+        if(u.errors&&u.errors.length>0){
+          u.errors.forEach(e=>rows.push([u.email,u.status,u.pages_created,e.conversation||'',e.error_message||'']));
+        }else{
+          rows.push([u.email,u.status,u.pages_created,'','']);
+        }
+      });
+      const csv='Email,Status,Pages Created,Conversation,Error\n'+
+        rows.map(r=>r.map(f=>`"${String(f||'').replace(/"/g,'""')}"`).join(',')).join('\n');
+      const a=document.createElement('a');
+      a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
+      a.download=`migration_report_${batchId||'latest'}.csv`;a.click();
+    }catch{
+      // Fallback: direct download
+      const a=document.createElement('a');
+      a.href='/api/reports/migration';a.download='migration_report.json';a.click();
     }
-  }, [done]);
-
-  const vals = [stats.users, stats.pages, stats.errors, stats.flagged];
-
-  const downloadReport = (type) => {
-    const a = document.createElement('a');
-    a.href = `/api/reports/${type}`;
-    a.download = type === 'migration' ? 'migration_report.json' : 'visual_assets_report.json';
-    a.click();
   };
 
-  return (
-  <div className="fade-up">
-    {!done ? (
-      <>
-        <div style={{marginBottom:20}}>
-          <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Migration in Progress</div>
-          <div style={{fontSize:13,color:C.muted}}>Creating OneNote pages... watch the log for live updates.</div>
-        </div>
-        <div style={{display:'flex',justifyContent:'center',padding:'28px 0 20px'}}>
-          <div style={{position:'relative',display:'inline-flex',alignItems:'center',justifyContent:'center'}}>
-            <Ring pct={ring} size={120} stroke={8} color={C.primary}/>
-            <div style={{position:'absolute',textAlign:'center',transform:'rotate(0deg)'}}>
-              <div style={{fontSize:22,fontWeight:700,color:C.primary}}>{ring}%</div>
-              <div style={{fontSize:10,color:C.muted}}>Progress</div>
+  return(
+    <div className="fade-up">
+      {!done?(
+        <>
+          <div style={{marginBottom:20}}>
+            <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Migration in Progress</div>
+            <div style={{fontSize:13,color:C.muted}}>Watch the log on the right for live updates.</div>
+          </div>
+          <div style={{display:'flex',justifyContent:'center',padding:'28px 0 20px'}}>
+            <div style={{position:'relative',display:'inline-flex',alignItems:'center',justifyContent:'center'}}>
+              <Ring pct={ring} size={120} stroke={8} color={C.primary}/>
+              <div style={{position:'absolute',textAlign:'center'}}><div style={{fontSize:22,fontWeight:700,color:C.primary}}>{ring}%</div><div style={{fontSize:10,color:C.muted}}>Progress</div></div>
             </div>
           </div>
-        </div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:16}}>
-          {MIG_ENTITIES.map((e,i) => (
-            <div key={i} className="slide-r" style={{animationDelay:`${i*60}ms`,
-              background:'white',borderRadius:10,padding:'12px 14px',
-              border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.color}`,
-              display:'flex',alignItems:'center',gap:10}}>
-              <div style={{color:e.color,animation:'float 3s ease-in-out infinite',animationDelay:`${i*.4}s`}}>{e.icon}</div>
-              <div>
-                <div style={{fontSize:18,fontWeight:700,color:e.color}}>{vals[i]}</div>
-                <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:16}}>
+            {MIG_ENTITIES.map((e,i)=>(
+              <div key={i} className="slide-r" style={{animationDelay:`${i*60}ms`,background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.color}`,display:'flex',alignItems:'center',gap:10}}>
+                <div style={{color:e.color,animation:'float 3s ease-in-out infinite',animationDelay:`${i*.4}s`}}>{e.icon}</div>
+                <div><div style={{fontSize:18,fontWeight:700,color:e.color}}>{vals[i]}</div><div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div></div>
               </div>
-            </div>
-          ))}
-        </div>
-        <div style={{background:C.tint,borderRadius:8,padding:'10px 14px',fontSize:12,color:C.primary,textAlign:'center'}}>
-          Processing conversations... watch the log →
-        </div>
-      </>
-    ) : (
-      <>
-        <div style={{marginBottom:20,textAlign:'center'}}>
-          <div style={{display:'flex',justifyContent:'center',marginBottom:8,color:C.success}}>
-            <IcoDone s={48}/>
+            ))}
           </div>
-          <div style={{fontSize:20,fontWeight:600,color:C.success,marginBottom:4}}>Migration Complete!</div>
-          <div style={{fontSize:13,color:C.muted}}>All conversations migrated. Copilot Agent deployed.</div>
-        </div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:20}}>
-          {[
-            {label:'Users',          val:stats.users,   icon:<IcoUser s={22}/>,  color:C.primary},
-            {label:'Pages Created',  val:stats.pages,   icon:<IcoPage s={22}/>,  color:C.success},
-            {label:'Errors',         val:stats.errors,  icon:<IcoError s={22}/>, color:stats.errors>0?C.error:C.muted},
-            {label:'Flagged Assets', val:stats.flagged, icon:<IcoFlag s={22}/>,  color:C.primaryL},
-          ].map((s,i) => (
-            <Card key={i} className="scale-in" style={{animationDelay:`${i*80}ms`,textAlign:'center',padding:16}}>
-              <div style={{display:'flex',justifyContent:'center',marginBottom:6,color:s.color}}>{s.icon}</div>
-              <div style={{fontSize:28,fontWeight:700,color:s.color}}>{s.val}</div>
-              <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.4,marginTop:2}}>{s.label}</div>
+          <div style={{background:C.tint,borderRadius:8,padding:'10px 14px',fontSize:12,color:C.primary,textAlign:'center'}}>Processing conversations... watch the log →</div>
+        </>
+      ):(
+        <>
+          <div style={{marginBottom:20,textAlign:'center'}}>
+            <div style={{display:'flex',justifyContent:'center',marginBottom:8,color:C.success}}><IcoDone s={48}/></div>
+            <div style={{fontSize:20,fontWeight:600,color:C.success,marginBottom:4}}>
+              {lastRunWasDry?'Dry Run Complete!':'Migration Complete!'}
+            </div>
+            <div style={{fontSize:13,color:C.muted}}>
+              {lastRunWasDry?'Preview complete — no pages were created.':'All conversations migrated. Copilot Agent deployed.'}
+            </div>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:20}}>
+            {[{label:'Users',val:stats.users,icon:<IcoUser s={22}/>,color:C.primary},{label:'Pages Created',val:stats.pages,icon:<IcoPage s={22}/>,color:C.success},{label:'Errors',val:stats.errors,icon:<IcoError s={22}/>,color:stats.errors>0?C.error:C.muted},{label:'Flagged Assets',val:stats.flagged,icon:<IcoFlag s={22}/>,color:C.primaryL}].map((s,i)=>(
+              <Card key={i} className="scale-in" style={{animationDelay:`${i*80}ms`,textAlign:'center',padding:16}}>
+                <div style={{display:'flex',justifyContent:'center',marginBottom:6,color:s.color}}>{s.icon}</div>
+                <div style={{fontSize:28,fontWeight:700,color:s.color}}>{s.val}</div>
+                <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.4,marginTop:2}}>{s.label}</div>
+              </Card>
+            ))}
+          </div>
+
+          {!lastRunWasDry&&(
+            <Card style={{background:C.tint,border:`1px solid ${C.primary}30`,marginBottom:16,padding:'14px 16px',fontSize:13}}>
+              <b>What's next:</b> Users can open <b>Microsoft Copilot</b> or <b>Teams</b> — the agent is pinned in their sidebar with all migrated conversations.
             </Card>
-          ))}
-        </div>
-        <Card style={{background:C.tint,border:`1px solid ${C.primary}30`,marginBottom:16,padding:'14px 16px',fontSize:13}}>
-          <b>What's next:</b> Users can open <b>Microsoft Copilot</b> or <b>Teams</b> — the agent is pinned in their sidebar with all migrated conversations.
-        </Card>
-        {/* Download report buttons */}
-        <div style={{display:'flex',gap:8,marginBottom:16}}>
-          <button onClick={()=>downloadReport('migration')} style={{
-            flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:8,
-            padding:'10px 16px',borderRadius:6,border:`1px solid ${C.primary}`,background:'white',
-            fontSize:13,fontWeight:500,cursor:'pointer',color:C.primary,fontFamily:'inherit',transition:'all .15s'}}
-            onMouseEnter={e=>e.currentTarget.style.background=C.tint}
-            onMouseLeave={e=>e.currentTarget.style.background='white'}>
-            <IcoDownload s={13} c={C.primary}/> Migration Report
+          )}
+
+          <button onClick={dlMigrationCsv} style={{width:'100%',display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'10px 16px',borderRadius:6,border:`1px solid ${C.primary}`,background:'white',fontSize:13,fontWeight:500,cursor:'pointer',color:C.primary,fontFamily:'inherit',transition:'all .15s',marginBottom:10}} onMouseEnter={e=>e.currentTarget.style.background=C.tint} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+            <IcoDownload s={13} c={C.primary}/> Download Migration Report (CSV)
           </button>
-          <button onClick={()=>downloadReport('visual-assets')} style={{
-            flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:8,
-            padding:'10px 16px',borderRadius:6,border:`1px solid ${C.border}`,background:'white',
-            fontSize:13,fontWeight:500,cursor:'pointer',color:C.muted,fontFamily:'inherit',transition:'all .15s'}}
-            onMouseEnter={e=>e.currentTarget.style.background=C.bg}
-            onMouseLeave={e=>e.currentTarget.style.background='white'}>
-            <IcoDownload s={13} c={C.muted}/> Visual Assets Report
-          </button>
-        </div>
-        <Btn onClick={()=>location.reload()} style={{width:'100%',justifyContent:'center'}}>Start New Migration</Btn>
-      </>
-    )}
-  </div>
+
+          {/* Batch migration actions */}
+          <div style={{display:'flex',gap:10}}>
+            {lastRunWasDry&&onStartLive&&(
+              <Btn onClick={onStartLive} style={{flex:1,justifyContent:'center'}}>
+                <IcoRocket s={14}/> Start Migration (Live)
+              </Btn>
+            )}
+            <Btn variant="outline" onClick={onRunAnother} style={{flex:1,justifyContent:'center'}}>
+              Run Another Batch
+            </Btn>
+            <Btn variant="ghost" onClick={()=>location.reload()} style={{flex:lastRunWasDry?undefined:1,justifyContent:'center'}}>
+              New Migration
+            </Btn>
+          </div>
+        </>
+      )}
+    </div>
   );
 };
 
 /* ══════════════════════════════ */
 /* ═══      LOG FEED          ═══ */
 /* ══════════════════════════════ */
-const LOG_STYLES = {
-  info:    {bg:'white',           border:`1px solid ${C.border}`,          color:C.dark,    borderL:`3px solid ${C.primary}`,   ico:<IcoInfo s={13}/>},
-  success: {bg:C.tint,           border:`1px solid ${C.primaryL}`,         color:C.primary,  borderL:`3px solid ${C.primary}`,   ico:<Check s={13} c={C.primary}/>},
-  error:   {bg:'#FEF2F2',        border:'1px solid #FCA5A5',               color:'#991B1B',  borderL:'3px solid #FF1F1F',        ico:<IcoError s={13}/>},
-  warn:    {bg:C.tint,           border:`1px solid ${C.primaryL}`,         color:C.primary,  borderL:`3px solid ${C.primaryL}`,  ico:<IcoWarn s={13}/>},
-  done:    {bg:C.primary,        border:'none',                             color:'white',    borderL:'none',                     ico:<IcoDone s={13}/>},
-  user:    {bg:C.tint,           border:`1px solid ${C.primary}40`,        color:C.primary,  borderL:`3px solid ${C.primary}`,   ico:<IcoUser s={13}/>},
+const LOG_STYLES={
+  info:   {bg:'white',      border:`1px solid ${C.border}`,      color:C.dark,    borderL:`3px solid ${C.primary}`,  ico:<IcoInfo s={13}/>},
+  success:{bg:C.tint,       border:`1px solid ${C.primaryL}`,    color:C.primary, borderL:`3px solid ${C.primary}`,  ico:<Check s={13} c={C.primary}/>},
+  error:  {bg:'#FEF2F2',    border:'1px solid #FCA5A5',          color:'#991B1B', borderL:'3px solid #FF1F1F',       ico:<IcoError s={13}/>},
+  warn:   {bg:C.tint,       border:`1px solid ${C.primaryL}`,    color:C.primary, borderL:`3px solid ${C.primaryL}`, ico:<IcoWarn s={13}/>},
+  done:   {bg:C.primary,    border:'none',                        color:'white',   borderL:'none',                    ico:<IcoDone s={13}/>},
+  user:   {bg:C.tint,       border:`1px solid ${C.primary}40`,   color:C.primary, borderL:`3px solid ${C.primary}`,  ico:<IcoUser s={13}/>},
 };
-
-const LogFeed = ({logs, live}) => {
-  const endRef = useRef(null);
-  useEffect(()=>{ endRef.current?.scrollIntoView({behavior:'smooth'}) }, [logs, live]);
-
-  const BotAv = () => (
-    <div style={{width:28,height:28,borderRadius:'50%',
-      background:`linear-gradient(135deg,${C.primary},${C.primaryL})`,
-      display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round">
-        <path d="M12 2a4 4 0 014 4v2H8V6a4 4 0 014-4z"/><rect x="4" y="8" width="16" height="12" rx="2"/>
-        <circle cx="9" cy="14" r="1.5" fill="white"/><circle cx="15" cy="14" r="1.5" fill="white"/>
-      </svg>
+const LogFeed=({logs,live})=>{
+  const endRef=useRef(null);
+  useEffect(()=>{endRef.current?.scrollIntoView({behavior:'smooth'})},[logs,live]);
+  const BotAv=()=><div style={{width:28,height:28,borderRadius:'50%',background:`linear-gradient(135deg,${C.primary},${C.primaryL})`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><path d="M12 2a4 4 0 014 4v2H8V6a4 4 0 014-4z"/><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5" fill="white"/><circle cx="15" cy="14" r="1.5" fill="white"/></svg></div>;
+  return(
+    <div style={{flex:1,overflowY:'auto',padding:'16px 20px',display:'flex',flexDirection:'column',gap:8}}>
+      {logs.length===0&&!live&&(<div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',color:C.muted,textAlign:'center',padding:'40px 20px'}}><div style={{display:'flex',justifyContent:'center',marginBottom:12,opacity:.25,color:C.primary,animation:'float 3s ease-in-out infinite'}}><IcoPage s={48}/></div><div style={{fontSize:14,fontWeight:500}}>Migration log</div><div style={{fontSize:12,marginTop:4}}>Activity will appear here when you start</div></div>)}
+      {logs.map((log,i)=>{const s=LOG_STYLES[log.type]||LOG_STYLES.info;return(
+        <div key={i} className="fade-up" style={{display:'flex',alignItems:'flex-start',gap:8}}>
+          <BotAv/>
+          <div style={{background:s.bg,border:s.border,borderLeft:s.borderL||s.border,borderRadius:'10px 10px 10px 3px',padding:'9px 13px',flex:1,lineHeight:1.5,fontSize:13,color:s.color,display:'flex',alignItems:'flex-start',gap:8}}>
+            <span style={{flexShrink:0,marginTop:1,opacity:.7}}>{s.ico}</span>
+            <div style={{flex:1}}><span style={{fontSize:10,color:s.color==='white'?'rgba(255,255,255,.6)':C.muted,marginRight:6}}>{log.ts}</span>{log.message}</div>
+          </div>
+        </div>
+      )})}
+      {live&&<TypingDots/>}
+      <div ref={endRef}/>
     </div>
   );
+};
 
-  return (
-    <div style={{flex:1,overflowY:'auto',padding:'16px 20px',display:'flex',flexDirection:'column',gap:8}}>
-      {logs.length === 0 && !live && (
-        <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
-          color:C.muted,textAlign:'center',padding:'40px 20px'}}>
-          <div style={{display:'flex',justifyContent:'center',marginBottom:12,opacity:.25,color:C.primary,animation:'float 3s ease-in-out infinite'}}>
-            <IcoPage s={48}/>
+/* ══════════════════════════════ */
+/* ═══     REPORTS PANEL      ═══ */
+/* ══════════════════════════════ */
+const ReportsPanel=({onClose})=>{
+  const [reports,setReports]=useState([]);
+  const [loading,setLoading]=useState(true);
+
+  useEffect(()=>{
+    fetch('/api/reports').then(r=>r.json()).then(d=>{setReports(Array.isArray(d)?d:[]);setLoading(false)}).catch(()=>setLoading(false));
+  },[]);
+
+  const dlBatch=async(id)=>{
+    try{
+      const res=await fetch(`/api/reports/${id}`);
+      const data=await res.json();
+      const users=data.users||[];
+      const rows=[];
+      users.forEach(u=>{
+        if(u.errors&&u.errors.length>0){u.errors.forEach(e=>rows.push([u.email,u.status,u.pages_created,e.conversation||'',e.error_message||'']))}
+        else rows.push([u.email,u.status,u.pages_created,'','']);
+      });
+      const csv='Email,Status,Pages Created,Conversation,Error\n'+rows.map(r=>r.map(f=>`"${String(f||'').replace(/"/g,'""')}"`).join(',')).join('\n');
+      const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download=`batch_${id}.csv`;a.click();
+    }catch{
+      const a=document.createElement('a');a.href=`/api/reports/${id}`;a.download=`batch_${id}.json`;a.click();
+    }
+  };
+
+  const fmtDate=ts=>{try{const d=new Date(ts);return d.toLocaleDateString()+' '+d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'})}catch{return ts}};
+
+  return(
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.45)',zIndex:200,display:'flex',alignItems:'flex-end',justifyContent:'flex-end'}} onClick={onClose}>
+      <div style={{width:'100%',maxWidth:680,height:'100vh',background:'white',display:'flex',flexDirection:'column',boxShadow:'-4px 0 30px rgba(0,0,0,.15)',animation:'slideRight .3s ease'}} onClick={e=>e.stopPropagation()}>
+        <div style={{padding:'20px 24px',borderBottom:`1px solid ${C.border}`,display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
+          <div>
+            <div style={{fontSize:18,fontWeight:600,color:C.primary}}>Migration Reports</div>
+            <div style={{fontSize:12,color:C.muted}}>All migration batches across sessions</div>
           </div>
-          <div style={{fontSize:14,fontWeight:500}}>Migration log</div>
-          <div style={{fontSize:12,marginTop:4}}>Activity will appear here when you start</div>
+          <button onClick={onClose} style={{width:32,height:32,borderRadius:'50%',border:`1px solid ${C.border}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,color:C.muted}}>✕</button>
         </div>
-      )}
-      {logs.map((log, i) => {
-        const s = LOG_STYLES[log.type] || LOG_STYLES.info;
-        return (
-          <div key={i} className="fade-up" style={{display:'flex',alignItems:'flex-start',gap:8}}>
-            <BotAv/>
-            <div style={{background:s.bg,border:s.border,borderLeft:s.borderL||s.border,
-              borderRadius:'10px 10px 10px 3px',padding:'9px 13px',flex:1,lineHeight:1.5,fontSize:13,color:s.color,
-              display:'flex',alignItems:'flex-start',gap:8}}>
-              <span style={{flexShrink:0,marginTop:1,opacity:.7}}>{s.ico}</span>
-              <div style={{flex:1}}>
-                <span style={{fontSize:10,color:s.color==='white'?'rgba(255,255,255,.6)':C.muted,marginRight:6}}>{log.ts}</span>
-                {log.message}
+        <div style={{flex:1,overflowY:'auto',padding:'16px 24px'}}>
+          {loading&&<div style={{display:'flex',alignItems:'center',gap:8,padding:'20px 0',color:C.muted}}><Spinner s={16}/> Loading...</div>}
+          {!loading&&reports.length===0&&<div style={{textAlign:'center',padding:'40px 0',color:C.muted,fontSize:13}}>No migration reports yet. Run a migration to see results here.</div>}
+          {reports.map((r,i)=>(
+            <Card key={i} className="fade-up" style={{marginBottom:12,animationDelay:`${i*40}ms`}}>
+              <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:8}}>
+                <div>
+                  <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+                    <span style={{fontSize:13,fontWeight:600,color:C.dark}}>{r.customer_name||'Migration'}</span>
+                    <span style={{fontSize:11,padding:'2px 8px',borderRadius:20,fontWeight:600,
+                      background:r.dry_run?'#FEF3C7':C.tint,
+                      color:r.dry_run?'#92400E':C.primary}}>
+                      {r.dry_run?'Dry Run':'Live'}
+                    </span>
+                  </div>
+                  <div style={{fontSize:12,color:C.muted}}>{fmtDate(r.timestamp)}</div>
+                </div>
+                <button onClick={()=>dlBatch(r.id)} title="Download CSV" style={{display:'flex',alignItems:'center',gap:4,padding:'6px 10px',borderRadius:6,border:`1px solid ${C.primary}`,background:'white',fontSize:12,color:C.primary,cursor:'pointer',fontFamily:'inherit',fontWeight:500,flexShrink:0}} onMouseEnter={e=>e.currentTarget.style.background=C.tint} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+                  <IcoDownload s={12} c={C.primary}/> CSV
+                </button>
               </div>
-            </div>
-          </div>
-        );
-      })}
-      {live && <TypingDots/>}
-      <div ref={endRef}/>
+              {r.summary&&(
+                <div style={{display:'flex',gap:16,borderTop:`1px solid ${C.bg}`,paddingTop:8,marginTop:4}}>
+                  {[['Users',r.summary.total_users],[r.dry_run?'Conversations':'Pages',r.dry_run?r.summary.total_conversations:r.summary.total_pages_created],['Errors',r.summary.total_errors]].map(([lbl,val],j)=>(
+                    <div key={j} style={{textAlign:'center'}}>
+                      <div style={{fontSize:16,fontWeight:700,color:lbl==='Errors'&&val>0?C.error:C.primary}}>{val??0}</div>
+                      <div style={{fontSize:10,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{lbl}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          ))}
+        </div>
+      </div>
     </div>
   );
 };
@@ -1243,213 +812,191 @@ const LogFeed = ({logs, live}) => {
 /* ══════════════════════════════════════ */
 /* ═══            MAIN APP            ═══ */
 /* ══════════════════════════════════════ */
-function App() {
-  // Hydrate state from localStorage on mount
-  const [step, setStep] = useState(() => lsGet(LS_KEYS.step, 0));
-  const [uploadData, setUploadData] = useState(() => lsGet(LS_KEYS.uploadData, null));
-  const [config, setConfig] = useState(() => lsGet(LS_KEYS.config, {customerName:'', tenantId:'807d6772-847c-40e2-9bec-e2c930b3a42e'}));
-  const [mappings, setMappings] = useState(() => lsGet(LS_KEYS.mappings, {}));
-  const [selectedUsers, setSelectedUsers] = useState(() => {
-    const saved = lsGet('gem_selected_users', null);
-    return saved ? new Set(saved) : new Set();
-  });
-  const [options, setOptions] = useState({dryRun:false, skipFollowups:false, fromDate:'', toDate:''});
-  const [googleAuthed, setGoogleAuthed] = useState(() => lsGet(LS_KEYS.authGoogle, {signedIn:false}).signedIn || false);
-  const [msAuthed, setMsAuthed] = useState(() => lsGet(LS_KEYS.authMs, {signedIn:false}).signedIn || false);
-  const [logs, setLogs] = useState(() => lsGet(LS_KEYS.logs, []));
-  const [live, setLive] = useState(false);
-  const [migDone, setMigDone] = useState(false);
-  const [stats, setStats] = useState({users:0, pages:0, errors:0, flagged:0});
-  const sseRef = useRef(null);
+function App(){
+  const [step,setStep]=useState(()=>lsGet(LS.step,0));
+  const [uploadData,setUploadData]=useState(()=>lsGet(LS.uploadData,null));
+  const [config,setConfig]=useState(()=>{const s=lsGet(LS.config,{});return{fileName:s.fileName||s.customerName||'',tenantId:s.tenantId||'807d6772-847c-40e2-9bec-e2c930b3a42e'}});
+  const [mappings,setMappings]=useState(()=>lsGet(LS.mappings,{}));
+  const [selectedUsers,setSelectedUsers]=useState(()=>{const s=lsGet(LS.selUsers,null);return s?new Set(s):new Set()});
+  const [options,setOptions]=useState({dryRun:true,skipFollowups:false,fromDate:'',toDate:''});
+  const [googleAuthed,setGoogleAuthed]=useState(()=>lsGet(LS.authG,{signedIn:false}).signedIn||false);
+  const [msAuthed,setMsAuthed]=useState(()=>lsGet(LS.authMs,{signedIn:false}).signedIn||false);
+  const [googleUsers,setGoogleUsers]=useState([]);
+  const [msUsers,setMsUsers]=useState([]);
+  const [logs,setLogs]=useState(()=>lsGet(LS.logs,[]));
+  const [live,setLive]=useState(false);
+  const [migDone,setMigDone]=useState(false);
+  const [stats,setStats]=useState({users:0,pages:0,errors:0,flagged:0});
+  const [lastRunWasDry,setLastRunWasDry]=useState(false);
+  const [currentBatchId,setCurrentBatchId]=useState(null);
+  const [toast,setToast]=useState(null); // {message, type}
+  const [showReports,setShowReports]=useState(false);
+  const sseRef=useRef(null);
+  const [splitPct,setSplitPct]=useState(50);
+  const containerRef=useRef(null);
+  const dividerRef=useRef(null);
 
-  // Re-verify auth on mount — check both Google and MS tokens.
-  // If ANY stored auth is expired OR if there are stale logs but no active migration, clean up.
-  useEffect(() => {
+  const showToast=useCallback((message,type='success')=>{
+    setToast({message,type});
+  },[]);
+
+  const handleDividerMouseDown=useCallback(e=>{
+    e.preventDefault();
+    if(dividerRef.current)dividerRef.current.classList.add('active');
+    const onMove=ev=>{
+      if(!containerRef.current)return;
+      const rect=containerRef.current.getBoundingClientRect();
+      setSplitPct(Math.max(20,Math.min(80,((ev.clientX-rect.left)/rect.width)*100)));
+    };
+    const onUp=()=>{if(dividerRef.current)dividerRef.current.classList.remove('active');document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp)};
+    document.addEventListener('mousemove',onMove);document.addEventListener('mouseup',onUp);
+  },[]);
+
+  // Auth check on mount
+  useEffect(()=>{
     Promise.all([
-      fetch('/auth/google/status').then(r=>r.json()).then(d=> d.authenticated).catch(()=>false),
-      fetch('/auth/status').then(r=>r.json()).then(d=> d.authenticated).catch(()=>false),
-    ]).then(([gOk, mOk]) => {
-      // If stored auth doesn't match server, clear everything
-      const stale = (googleAuthed && !gOk) || (msAuthed && !mOk);
-      // Also clear if we have logs/data but neither auth is valid on server
-      const orphanedData = !gOk && !mOk && (logs.length > 0 || uploadData);
-      if (stale || orphanedData) {
-        lsClear();
-        setGoogleAuthed(false); setMsAuthed(false);
-        setStep(0); setUploadData(null); setMappings({});
-        setSelectedUsers(new Set()); setLogs([]);
-      } else {
-        // Sync auth state with server
-        if (!gOk && googleAuthed) setGoogleAuthed(false);
-        if (!mOk && msAuthed) setMsAuthed(false);
-      }
+      fetch('/auth/google/status').then(r=>r.json()).then(d=>d.authenticated).catch(()=>false),
+      fetch('/auth/status').then(r=>r.json()).then(d=>d.authenticated).catch(()=>false),
+    ]).then(([gOk,mOk])=>{
+      const stale=(googleAuthed&&!gOk)||(msAuthed&&!mOk);
+      const orphaned=!gOk&&!mOk&&(logs.length>0||uploadData);
+      if(stale||orphaned){lsClear();setGoogleAuthed(false);setMsAuthed(false);setStep(0);setUploadData(null);setMappings({});setSelectedUsers(new Set());setLogs([])}
+      else{if(!gOk&&googleAuthed)setGoogleAuthed(false);if(!mOk&&msAuthed)setMsAuthed(false)}
     });
-  }, []);
+  },[]);
 
-  // Persist state to localStorage on change
-  useEffect(() => { lsSet(LS_KEYS.step, step); }, [step]);
-  useEffect(() => { lsSet(LS_KEYS.uploadData, uploadData); }, [uploadData]);
-  useEffect(() => { lsSet(LS_KEYS.config, config); }, [config]);
-  useEffect(() => { lsSet(LS_KEYS.mappings, mappings); }, [mappings]);
-  useEffect(() => { lsSet(LS_KEYS.logs, logs.slice(-500)); }, [logs]);
-  useEffect(() => { lsSet(LS_KEYS.authGoogle, {signedIn: googleAuthed}); }, [googleAuthed]);
-  useEffect(() => { lsSet(LS_KEYS.authMs, {signedIn: msAuthed}); }, [msAuthed]);
-  useEffect(() => { lsSet('gem_selected_users', [...selectedUsers]); }, [selectedUsers]);
+  // Persist state
+  useEffect(()=>{lsSet(LS.step,step)},[step]);
+  useEffect(()=>{lsSet(LS.uploadData,uploadData)},[uploadData]);
+  useEffect(()=>{lsSet(LS.config,config)},[config]);
+  useEffect(()=>{lsSet(LS.mappings,mappings)},[mappings]);
+  useEffect(()=>{lsSet(LS.logs,logs.slice(-500))},[logs]);
+  useEffect(()=>{lsSet(LS.authG,{signedIn:googleAuthed})},[googleAuthed]);
+  useEffect(()=>{lsSet(LS.authMs,{signedIn:msAuthed})},[msAuthed]);
+  useEffect(()=>{lsSet(LS.selUsers,[...selectedUsers])},[selectedUsers]);
 
-  const addLog = (type, message) => {
-    const ts = new Date().toTimeString().slice(0,8);
-    setLogs(p => [...p, {type, message, ts}]);
-  };
+  const addLog=(type,message)=>{const ts=new Date().toTimeString().slice(0,8);setLogs(p=>[...p,{type,message,ts}])};
 
-  const handleImportComplete = (data) => {
+  const handleImportComplete=data=>{
     setUploadData(data);
-    addLog('success', `Imported — ${data.total_users} users, ${data.total_conversations} conversations`);
-    setTimeout(() => setStep(1), 400);
+    addLog('success',`Imported — ${data.total_users} users, ${data.total_conversations} conversations`);
+    // Reset mappings for fresh import so auto-map runs again
+    setMappings({});
+    setSelectedUsers(new Set());
+    setTimeout(()=>setStep(2),400);
   };
 
-  const runMigration = async () => {
-    setStep(4);
-    const isDry = options.dryRun;
-    addLog('info', isDry ? 'Starting dry run...' : 'Starting live migration...');
+  const runMigration=async(forceLive=false)=>{
+    const isDry=forceLive?false:options.dryRun;
+    setLastRunWasDry(isDry);
+    // If running live after dry-run, update options too
+    if(forceLive)setOptions(p=>({...p,dryRun:false}));
+    setStep(4);setMigDone(false);setStats({users:0,pages:0,errors:0,flagged:0});setLogs([]);
+    addLog('info',isDry?'Starting dry run...':'Starting live migration...');
     setLive(true);
-    const curStats = {users:0, pages:0, errors:0, flagged:0};
+    const curStats={users:0,pages:0,errors:0,flagged:0};
 
-    // SSE
-    if (sseRef.current) sseRef.current.close();
-    sseRef.current = new EventSource('/api/migration-log');
-    sseRef.current.onmessage = e => {
-      try {
-        const d = JSON.parse(e.data);
-        if (d.type==='success' && d.message.includes('Page created')) curStats.pages++;
-        if (d.type==='error') curStats.errors++;
-        if (d.type==='info' && d.message.includes('Processing:')) curStats.users++;
-        if (d.type==='warn' && d.message.includes('flagged')) {
-          const m = d.message.match(/(\d+) conversations flagged/);
-          if (m) curStats.flagged += parseInt(m[1]);
+    if(sseRef.current)sseRef.current.close();
+    sseRef.current=new EventSource('/api/migration-log');
+    sseRef.current.onmessage=e=>{
+      try{
+        const d=JSON.parse(e.data);
+        if(d.type==='success'&&d.message.includes('Page created'))curStats.pages++;
+        if(d.type==='error')curStats.errors++;
+        if(d.type==='info'&&d.message.includes('Processing:'))curStats.users++;
+        if(d.type==='warn'&&d.message.includes('flagged')){const m=d.message.match(/(\d+) conversations flagged/);if(m)curStats.flagged+=parseInt(m[1])}
+        setStats({...curStats});addLog(d.type,d.message);
+        if(d.type==='done'){
+          if(d.batch_id)setCurrentBatchId(d.batch_id);
+          sseRef.current.close();setLive(false);setMigDone(true);setStep(5);
         }
-        setStats({...curStats});
-        addLog(d.type, d.message);
-        if (d.type === 'done') {
-          sseRef.current.close();
-          setLive(false);
-          setMigDone(true);
-          setStep(5);
-        }
-      } catch(ex){}
+      }catch{}
     };
-    sseRef.current.onerror = () => { if(sseRef.current){sseRef.current.close();setLive(false);} };
+    sseRef.current.onerror=()=>{if(sseRef.current){sseRef.current.close();setLive(false)}};
 
-    // Filter mappings to only selected users
-    const filteredMappings = {};
-    const keysToMigrate = selectedUsers.size > 0 ? [...selectedUsers] : Object.keys(mappings);
-    keysToMigrate.forEach(k => { if (mappings[k] !== undefined) filteredMappings[k] = mappings[k]; });
-
-    const payload = {
-      extract_path: uploadData.extract_path,
-      tenant_id: config.tenantId,
-      customer_name: config.customerName || 'Gemini',
-      user_mappings: filteredMappings,
-      dry_run: isDry,
-      skip_followups: options.skipFollowups,
-      from_date: options.fromDate || null,
-      to_date: options.toDate || null,
-    };
-
-    try {
-      const res = await fetch('/api/migrate', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-      if (!res.ok) { const d=await res.json(); addLog('error',d.error); setLive(false); }
-    } catch(err) { addLog('error',err.message); setLive(false); }
+    const fm={};const keys=selectedUsers.size>0?[...selectedUsers]:Object.keys(mappings);
+    keys.forEach(k=>{if(mappings[k]!==undefined)fm[k]=mappings[k]});
+    const payload={extract_path:uploadData.extract_path,tenant_id:config.tenantId,customer_name:config.fileName||'Gemini',user_mappings:fm,dry_run:isDry,skip_followups:options.skipFollowups,from_date:options.fromDate||null,to_date:options.toDate||null};
+    try{
+      const res=await fetch('/api/migrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      if(!res.ok){const d=await res.json();addLog('error',d.error);setLive(false)}
+    }catch(err){addLog('error',err.message);setLive(false)}
   };
 
-  const resetSession = () => {
-    if (confirm('Reset all session data? This will clear auth, mappings, and logs.')) {
-      lsClear();
-      location.reload();
-    }
+  // Run Another Batch: keep auth + data, go back to Import step for new data
+  const runAnotherBatch=()=>{
+    setUploadData(null);setMappings({});setSelectedUsers(new Set());
+    setMigDone(false);setStats({users:0,pages:0,errors:0,flagged:0});setLogs([]);
+    setOptions(p=>({...p,dryRun:true,fromDate:'',toDate:''}));
+    setStep(1);
   };
 
-  const leftContent = [
-    <Step1 onComplete={handleImportComplete} googleAuthed={googleAuthed} setGoogleAuthed={setGoogleAuthed}/>,
-    <Step2 uploadData={uploadData} config={config} setConfig={setConfig}
-      msAuthed={msAuthed} setMsAuthed={setMsAuthed}
-      onNext={()=>{addLog('info',`M365 configured — customer: ${config.customerName}`);setStep(2)}}
-      onBack={()=>setStep(0)}/>,
-    <Step3 uploadData={uploadData} mappings={mappings} setMappings={setMappings}
-      selectedUsers={selectedUsers} setSelectedUsers={setSelectedUsers}
-      onNext={()=>{addLog('info',`User mappings ready — ${selectedUsers.size || Object.keys(mappings).length} users selected`);setStep(3)}}
-      onBack={()=>setStep(1)}/>,
-    <Step4 options={options} setOptions={setOptions} msAuthed={msAuthed}
-      onRun={runMigration} onBack={()=>setStep(2)}/>,
-    <Step5 stats={stats} done={false}/>,
-    <Step5 stats={stats} done={true}/>,
-  ];
+  const resetSession=()=>{if(confirm('Reset all session data?')){lsClear();location.reload()}};
+  const handleStepClick=i=>{if(i<step&&!live)setStep(i)};
 
-  return (
+  return(
     <div style={{display:'flex',flexDirection:'column',height:'100vh',fontFamily:'Poppins,system-ui,sans-serif'}}>
       {/* Header */}
-      <div style={{background:C.primary,height:52,display:'flex',alignItems:'center',
-        padding:'0 24px',gap:12,flexShrink:0,boxShadow:'0 2px 8px rgba(1,41,172,.2)'}}>
+      <div style={{background:C.primary,height:52,display:'flex',alignItems:'center',padding:'0 24px',gap:12,flexShrink:0,boxShadow:'0 2px 8px rgba(1,41,172,.2)'}}>
         <img src="/cloudfuze-logo.png" alt="CloudFuze" style={{height:32,objectFit:'contain',borderRadius:4}}/>
         <div style={{width:1,height:24,background:'rgba(255,255,255,.25)',margin:'0 4px'}}/>
-        <div>
-          <div style={{color:'white',fontSize:14,fontWeight:600,lineHeight:1.2}}>Gemini → Copilot Migration</div>
-          <div style={{color:'rgba(255,255,255,.6)',fontSize:11}}>powered by CloudFuze</div>
-        </div>
-        <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:12}}>
+        <div><div style={{color:'white',fontSize:14,fontWeight:600,lineHeight:1.2}}>Gemini → Copilot Migration</div><div style={{color:'rgba(255,255,255,.6)',fontSize:11}}>powered by CloudFuze</div></div>
+        <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:10}}>
           <div style={{display:'flex',alignItems:'center',gap:6}}>
-            <div className={live?'pulse-dot':''} style={{width:8,height:8,borderRadius:'50%',
-              background:live?C.success:'rgba(255,255,255,.3)',transition:'background .3s'}}/>
+            <div className={live?'pulse-dot':''} style={{width:8,height:8,borderRadius:'50%',background:live?'#4ade80':'rgba(255,255,255,.3)',transition:'background .3s'}}/>
             <span style={{color:'rgba(255,255,255,.7)',fontSize:12}}>{live?'Live':'Idle'}</span>
           </div>
-          <button onClick={resetSession} title="Reset Session"
-            style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:'rgba(255,255,255,.6)',
-              background:'transparent',border:'1px solid rgba(255,255,255,.2)',borderRadius:5,
-              padding:'4px 9px',cursor:'pointer',fontFamily:'inherit',transition:'all .15s'}}
-            onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.1)'}
-            onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+          <button onClick={()=>setShowReports(true)} style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:'rgba(255,255,255,.8)',background:'rgba(255,255,255,.12)',border:'1px solid rgba(255,255,255,.25)',borderRadius:5,padding:'4px 10px',cursor:'pointer',fontFamily:'inherit',transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.2)'} onMouseLeave={e=>e.currentTarget.style.background='rgba(255,255,255,.12)'}>
+            <IcoReport s={12}/> Reports
+          </button>
+          <button onClick={resetSession} style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:'rgba(255,255,255,.6)',background:'transparent',border:'1px solid rgba(255,255,255,.2)',borderRadius:5,padding:'4px 9px',cursor:'pointer',fontFamily:'inherit',transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.1)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
             <IcoReset s={11}/> Reset
           </button>
         </div>
       </div>
 
-      {/* Step Tracker */}
-      <StepTracker active={Math.min(step,5)}/>
+      {/* Step Tracker — clickable backward only, disabled during migration */}
+      <StepTracker active={Math.min(step,5)} onStepClick={handleStepClick} live={live}/>
 
-      {/* Split Panel */}
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',flex:1,overflow:'hidden'}}>
-        {/* Left */}
-        <div style={{display:'flex',flexDirection:'column',borderRight:`1px solid ${C.border}`,overflow:'hidden',background:'white'}}>
-          <div style={{padding:'12px 24px',borderBottom:`1px solid ${C.bg}`,background:'white',flexShrink:0}}>
-            <span style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.5}}>
-              Step {Math.min(step+1,6)} of 6
-            </span>
+      {/* Draggable Split Panel */}
+      <div ref={containerRef} style={{display:'flex',flex:1,overflow:'hidden'}}>
+        {/* Left Panel */}
+        <div style={{width:`${splitPct}%`,display:'flex',flexDirection:'column',overflow:'hidden',background:'white',flexShrink:0}}>
+          <div style={{padding:'10px 24px',borderBottom:`1px solid ${C.bg}`,background:'white',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <span style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.5}}>Step {Math.min(step+1,6)} of 6</span>
+            {migDone&&step===5&&currentBatchId&&<span style={{fontSize:10,color:C.primaryL}}>Batch #{currentBatchId.slice(-6)}</span>}
           </div>
-          {/* Step3 manages its own internal scroll; others scroll via this container */}
-          <div style={{flex:1,
-            overflowY: step === 2 ? 'hidden' : 'auto',
-            padding:'20px 24px',
-            display: step === 2 ? 'flex' : 'block',
-            flexDirection: step === 2 ? 'column' : undefined}}>
-            {leftContent[Math.min(step, 5)]}
+          <div style={{flex:1,overflowY:step===2?'hidden':'auto',padding:'20px 24px',display:step===2?'flex':'block',flexDirection:step===2?'column':undefined}}>
+            {/* Render steps inline to avoid component recreation issues */}
+            {step===0&&<Step0 googleAuthed={googleAuthed} setGoogleAuthed={setGoogleAuthed} msAuthed={msAuthed} setMsAuthed={setMsAuthed} googleUsers={googleUsers} setGoogleUsers={setGoogleUsers} msUsers={msUsers} setMsUsers={setMsUsers} tenantId={config.tenantId} onComplete={()=>setStep(1)}/>}
+            {step===1&&<Step1 googleUsers={googleUsers} onComplete={handleImportComplete} onBack={()=>setStep(0)} showToast={showToast}/>}
+            {step===2&&<Step2 uploadData={uploadData} msUsers={msUsers} mappings={mappings} setMappings={setMappings} selectedUsers={selectedUsers} setSelectedUsers={setSelectedUsers} onNext={()=>{addLog('info',`User mappings ready — ${selectedUsers.size||Object.keys(mappings).length} users selected`);setStep(3)}} onBack={()=>setStep(1)} showToast={showToast}/>}
+            {step===3&&<Step3 options={options} setOptions={setOptions} config={config} setConfig={setConfig} msAuthed={msAuthed} onRun={runMigration} onBack={()=>setStep(2)}/>}
+            {(step===4||step===5)&&<StepMigrate stats={stats} done={migDone} lastRunWasDry={lastRunWasDry} batchId={currentBatchId} onStartLive={()=>runMigration(true)} onRunAnother={runAnotherBatch}/>}
           </div>
         </div>
 
-        {/* Right */}
-        <div style={{display:'flex',flexDirection:'column',background:C.bg,overflow:'hidden'}}>
-          <div style={{padding:'14px 20px',borderBottom:`1px solid ${C.border}`,background:'white',
-            display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+        {/* Drag Handle */}
+        <div ref={dividerRef} className="drag-divider" onMouseDown={handleDividerMouseDown}/>
+
+        {/* Right Panel */}
+        <div style={{flex:1,display:'flex',flexDirection:'column',background:C.bg,overflow:'hidden'}}>
+          <div style={{padding:'14px 20px',borderBottom:`1px solid ${C.border}`,background:'white',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
             <span style={{fontSize:14,fontWeight:600}}>Migration Log</span>
             <div style={{display:'flex',alignItems:'center',gap:6}}>
-              <div className={live?'pulse-dot':''} style={{width:8,height:8,borderRadius:'50%',
-                background:live?C.success:'#d1d5db',transition:'background .3s'}}/>
-              <span style={{fontSize:12,color:live?C.success:C.muted,fontWeight:500}}>
-                {live?'Running':'Waiting'}
-              </span>
+              <div className={live?'pulse-dot':''} style={{width:8,height:8,borderRadius:'50%',background:live?'#4ade80':'#d1d5db',transition:'background .3s'}}/>
+              <span style={{fontSize:12,color:live?C.success:C.muted,fontWeight:500}}>{live?'Running':'Waiting'}</span>
             </div>
           </div>
           <LogFeed logs={logs} live={live}/>
         </div>
       </div>
+
+      {/* Reports side panel */}
+      {showReports&&<ReportsPanel onClose={()=>setShowReports(false)}/>}
+
+      {/* Toast notification */}
+      {toast&&<Toast message={toast.message} type={toast.type} onHide={()=>setToast(null)}/>}
     </div>
   );
 }

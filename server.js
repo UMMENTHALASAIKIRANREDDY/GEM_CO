@@ -29,6 +29,32 @@ const logBuffer = []; // replay buffer for late SSE clients
 // Store tenant ID for auth flow
 let currentTenantId = null;
 
+// ─── Ensure runtime dirs exist ────────────────────────────────────────────────
+const uploadsDir   = path.join(__dirname, 'uploads');
+const reportsDir   = path.join(__dirname, 'uploads', 'reports');
+fs.mkdirSync(uploadsDir, { recursive: true });
+fs.mkdirSync(reportsDir, { recursive: true });
+
+// ─── Upload metadata helpers ──────────────────────────────────────────────────
+const uploadsMetaPath = path.join(uploadsDir, 'uploads_meta.json');
+
+function readUploadsMeta() {
+  try { return JSON.parse(fs.readFileSync(uploadsMetaPath, 'utf8')); } catch { return { uploads: [] }; }
+}
+function saveUploadsMeta(meta) {
+  fs.writeFileSync(uploadsMetaPath, JSON.stringify(meta, null, 2));
+}
+
+// ─── Batch reports index helpers ─────────────────────────────────────────────
+const reportsIndexPath = path.join(reportsDir, 'index.json');
+
+function readReportsIndex() {
+  try { return JSON.parse(fs.readFileSync(reportsIndexPath, 'utf8')); } catch { return []; }
+}
+function saveReportsIndex(index) {
+  fs.writeFileSync(reportsIndexPath, JSON.stringify(index, null, 2));
+}
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'ui')));
 
@@ -327,11 +353,21 @@ app.post('/api/upload', upload.single('vault_zip'), async (req, res) => {
       return res.status(400).json({ error: 'No users found in Vault export XML files.' });
     }
 
-    res.json({
-      upload_id: req.file.filename,
+    const uploadEntry = {
+      id: req.file.filename,
+      original_name: req.file.originalname || 'vault_export.zip',
+      upload_time: new Date().toISOString(),
       extract_path: extractTo,
       total_users: users.length,
       total_conversations: users.reduce((s, u) => s + u.conversationCount, 0),
+    };
+    const meta = readUploadsMeta();
+    // Remove duplicates by id, keep newest first
+    meta.uploads = [uploadEntry, ...meta.uploads.filter(u => u.id !== uploadEntry.id)].slice(0, 20);
+    saveUploadsMeta(meta);
+
+    res.json({
+      ...uploadEntry,
       users: users.map(u => ({
         email: u.email,
         display_name: u.displayName,
@@ -343,19 +379,42 @@ app.post('/api/upload', upload.single('vault_zip'), async (req, res) => {
   }
 });
 
-// ─── Report Downloads ─────────────────────────────────────────────────────────
-app.get('/api/reports/migration', (req, res) => {
-  const p = path.join(__dirname, 'uploads', 'migration_report.json');
-  if (!fs.existsSync(p)) return res.status(404).json({ error: 'No report yet' });
-  res.setHeader('Content-Disposition', 'attachment; filename="migration_report.json"');
-  res.setHeader('Content-Type', 'application/json');
-  fs.createReadStream(p).pipe(res);
+// ─── Upload Management ────────────────────────────────────────────────────────
+app.get('/api/uploads', (_req, res) => {
+  res.json(readUploadsMeta());
 });
 
-app.get('/api/reports/visual-assets', (req, res) => {
-  const p = path.join(__dirname, 'uploads', 'visual_assets_report.json');
-  if (!fs.existsSync(p)) return res.status(404).json({ error: 'No report yet' });
-  res.setHeader('Content-Disposition', 'attachment; filename="visual_assets_report.json"');
+app.delete('/api/uploads/:id', (req, res) => {
+  const { id } = req.params;
+  const meta = readUploadsMeta();
+  const idx = meta.uploads.findIndex(u => u.id === id);
+  if (idx === -1) return res.status(404).json({ error: 'Upload not found' });
+  const entry = meta.uploads[idx];
+  try { fs.rmSync(entry.extract_path, { recursive: true, force: true }); } catch {}
+  meta.uploads.splice(idx, 1);
+  saveUploadsMeta(meta);
+  res.json({ ok: true });
+});
+
+// ─── Report Downloads ─────────────────────────────────────────────────────────
+
+// List all batch reports
+app.get('/api/reports', (_req, res) => {
+  res.json(readReportsIndex());
+});
+
+// Download a specific batch report by id
+app.get('/api/reports/:id', (req, res) => {
+  const { id } = req.params;
+  // Legacy alias
+  if (id === 'migration') {
+    const p = path.join(uploadsDir, 'migration_report.json');
+    if (!fs.existsSync(p)) return res.status(404).json({ error: 'No report yet' });
+    return res.sendFile(p);
+  }
+  const p = path.join(reportsDir, `batch_${id}.json`);
+  if (!fs.existsSync(p)) return res.status(404).json({ error: 'Batch report not found' });
+  res.setHeader('Content-Disposition', `attachment; filename="migration_report_${id}.json"`);
   res.setHeader('Content-Type', 'application/json');
   fs.createReadStream(p).pipe(res);
 });
@@ -403,8 +462,9 @@ app.post('/api/migrate', async (req, res) => {
     return res.status(401).json({ error: 'Admin not signed in. Click "Sign in with Microsoft" first.' });
   }
 
-  res.json({ started: true });
-  runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, from_date, to_date });
+  const batch_id = Date.now().toString();
+  res.json({ started: true, batch_id });
+  runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, from_date, to_date, batch_id });
 });
 
 async function withConcurrency(items, limit, fn) {
@@ -419,8 +479,10 @@ async function withConcurrency(items, limit, fn) {
   return Promise.all(executing);
 }
 
-async function runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, from_date, to_date }) {
+async function runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, from_date, to_date, batch_id }) {
   logBuffer.length = 0; // clear previous run's logs
+  const batchId = batch_id || Date.now().toString();
+  const startTime = new Date();
   await new Promise(r => setTimeout(r, 200));
   emit('info', '━━━ Migration started ━━━');
 
@@ -436,7 +498,12 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
         emit('user', `${u.email} → ${m365Email} (${u.conversationCount} conversations)`);
       }
       const total = users.reduce((s, u) => s + u.conversationCount, 0);
-      emit('done', `DRY RUN complete — ${users.length} users, ${total} conversations. No API calls made.`);
+      // Save dry-run batch to index
+      const idx = readReportsIndex();
+      idx.unshift({ id: batchId, timestamp: startTime.toISOString(), customer_name, dry_run: true,
+        summary: { total_users: users.length, total_conversations: total, total_pages_created: 0, total_errors: 0 }});
+      saveReportsIndex(idx);
+      emit('done', `DRY RUN complete — ${users.length} users, ${total} conversations. No API calls made.`, { batch_id: batchId });
       return;
     }
 
@@ -500,10 +567,16 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
       }
     });
 
-    const reportPath = path.join(__dirname, 'uploads', 'migration_report.json');
-    const visualPath = path.join(__dirname, 'uploads', 'visual_assets_report.json');
+    const reportPath = path.join(uploadsDir, 'migration_report.json');
     report.write(reportPath);
-    scanner.writeReport(visualPath, visualReports);
+    // Also save per-batch copy
+    const batchReportPath = path.join(reportsDir, `batch_${batchId}.json`);
+    fs.copyFileSync(reportPath, batchReportPath);
+    // Update reports index
+    const fullReport = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+    const idx = readReportsIndex();
+    idx.unshift({ id: batchId, timestamp: startTime.toISOString(), customer_name, dry_run: false, summary: fullReport.summary });
+    saveReportsIndex(idx);
 
     // Auto-deploy Copilot Declarative Agent after migration
     if (!dry_run) {
@@ -521,7 +594,7 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
       }
     }
 
-    emit('done', `━━━ Migration complete! Reports saved. ━━━`);
+    emit('done', `━━━ Migration complete! Reports saved. ━━━`, { batch_id: batchId });
   } catch (err) {
     emit('error', `Migration failed: ${err.message}`);
   }
