@@ -16,11 +16,22 @@ const GRAPH_V1 = 'https://graph.microsoft.com/v1.0';
  *  4. Pin for all users via Teams app setup policy (best-effort)
  */
 export class AgentDeployer {
-  constructor(customerName, tenantId) {
+  /**
+   * @param {string} customerName — display name for the customer
+   * @param {string} tenantId — Azure AD tenant
+   * @param {object} [options]
+   * @param {string} [options.notebookName] — OneNote notebook name (default: customerName)
+   * @param {string} [options.sectionName] — OneNote section name (default: "{customerName} Conversations")
+   * @param {string} [options.driveFolder] — OneDrive folder path (default: "Migrated from Google Drive")
+   */
+  constructor(customerName, tenantId, options = {}) {
     this.customerName = customerName;
     this.tenantId = tenantId;
     this.agentName = `${customerName} Conversation Agent`;
     this.appId = this._generateGuid();
+    this.notebookName = options.notebookName || customerName;
+    this.sectionName = options.sectionName || `${customerName} Conversations`;
+    this.driveFolder = options.driveFolder || 'Migrated from Google Drive';
   }
 
   _headers() {
@@ -85,6 +96,34 @@ export class AgentDeployer {
     return { ...appInfo, installed, failed, failedEmails, totalUsers: targetEmails.length };
   }
 
+  _buildInstructions() {
+    return `You are the ${this.agentName}. You help users search and recall their AI conversations that were migrated from Google Gemini to Microsoft 365.
+
+Where to find conversations:
+- OneNote: "${this.notebookName}" notebook → "${this.sectionName}" section — each page is one complete conversation thread
+- OneDrive: "${this.driveFolder}" folder — contains migrated Google Drive documents (.docx, .xlsx, .pptx)
+
+Each OneNote page contains:
+- A title and date (in the page metadata)
+- One or more prompts the user originally asked in Gemini
+- The original Gemini response for each prompt
+- A Copilot-generated response for comparison
+- A footer with the migration date and a link to the original Gemini conversation (when available)
+
+How to answer:
+- Search the user's OneNote "${this.sectionName}" section and OneDrive "${this.driveFolder}" folder for relevant content.
+- Match the user's query against page titles, prompt text, and response content.
+- Treat each OneNote page as one complete, self-contained conversation thread. Never mix content across pages unless the user explicitly asks to compare.
+- For follow-up questions ("What was the number they mentioned?" / "What did it say about that?") — stay in the same page from the previous turn. Do not re-search unless the user changes topic.
+- When quoting, identify whether the text came from the user's original prompt, the Gemini response, or the Copilot response.
+- Always cite the conversation title and date.
+- For visual content (charts, images): note that visuals may not have migrated — point the user to the original Gemini link in the page footer.
+- If both Gemini and Copilot responses exist for a prompt, present both clearly labeled.
+- If nothing matches, suggest the user check their "${this.notebookName}" notebook in OneNote or the "${this.driveFolder}" folder in OneDrive directly.
+
+Never make up information. Only answer based on the actual migrated conversation data.`;
+  }
+
   /**
    * Build the Teams app package ZIP containing:
    *  - manifest.json (M365 app manifest)
@@ -100,22 +139,7 @@ export class AgentDeployer {
       "version": "v1.5",
       "name": this.agentName,
       "description": `Search and review migrated ${this.customerName} Gemini conversations. Ask questions about past chats and get instant answers grounded in your conversation history.`,
-      "instructions": `You are the ${this.agentName}. Your role is to help users find, review, and answer questions about their migrated Google Gemini conversation history.
-
-The conversations were migrated from Google Gemini to Microsoft 365 and are stored in the user's OneDrive and OneNote. Each conversation contains:
-- The original user prompt (what the user asked Gemini)
-- The original Gemini response
-- A Copilot-generated response for comparison
-- Metadata: date, conversation title, Gemini URL
-
-When answering:
-1. Search the user's OneDrive and OneNote for relevant migrated conversations
-2. Always cite which conversation your answer came from (title + date)
-3. If both Gemini and Copilot responses exist, present both clearly
-4. Be concise and helpful
-5. If no relevant conversation is found, say so clearly
-
-Never make up information. Only answer based on the actual migrated conversation data.`,
+      "instructions": this._buildInstructions(),
       "capabilities": [
         {
           "name": "OneDriveAndSharePoint"
@@ -124,15 +148,15 @@ Never make up information. Only answer based on the actual migrated conversation
       "conversation_starters": [
         {
           "title": "My Conversations",
-          "text": `Show me all my migrated ${this.customerName} Gemini conversations`
+          "text": `Show me all my migrated conversations from the "${this.sectionName}" section`
         },
         {
           "title": "Search by Topic",
-          "text": "What did I discuss about marketing in Gemini?"
+          "text": "What did I discuss about marketing in my Gemini conversations?"
         },
         {
           "title": "Find a Conversation",
-          "text": "Find my Gemini conversation about data analysis"
+          "text": "Find my conversation about data analysis"
         },
         {
           "title": "Compare Responses",
@@ -140,7 +164,7 @@ Never make up information. Only answer based on the actual migrated conversation
         }
       ],
       "disclaimer": {
-        "text": `This agent searches your migrated ${this.customerName} Gemini conversation history. Data is sourced from your OneDrive/OneNote.`
+        "text": `This agent searches your migrated ${this.customerName} conversation history stored in OneNote ("${this.notebookName}") and OneDrive ("${this.driveFolder}").`
       },
       "behavior_overrides": {
         "special_instructions": {

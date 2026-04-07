@@ -16,6 +16,8 @@ services:
       - ./customers:/app/customers
       # Service account (only if file exists on host)
       - ./service_account.json:/app/service_account.json:ro
+    depends_on:
+      - mongodb
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000"]
@@ -23,3 +25,29 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  mongodb:
+    image: mongo:7.0
+    container_name: gem-co-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USERNAME:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-changeme}
+      MONGO_INITDB_DATABASE: ${MONGO_DATABASE:-gemco}
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  mongodb_data:
+    driver: local
+  mongodb_config:
+    driver: local
