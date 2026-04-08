@@ -45,13 +45,20 @@ const C={primary:'#0129AC',primaryH:'#0C18D4',primaryL:'#809EFC',tint:'#E1ECFF',
   bg:'#F6F6F6',white:'#FFFFFF',dark:'#2e2e2e',muted:'#707070',
   border:'#EBEBEB',success:'#0129AC',error:'#FF1F1F',warn:'#809EFC'};
 
-/* ── localStorage ── */
-const LS={step:'gem_step',uploadData:'gem_upload_data',config:'gem_config',
-  mappings:'gem_mappings',logs:'gem_logs',authG:'gem_auth_google',authMs:'gem_auth_ms',
-  batches:'gem_batches',selUsers:'gem_selected_users'};
+/* ── localStorage — user-scoped keys ── */
+// Keys are prefixed with the userId so different users don't share state.
+// LS_KEYS: base key names; LS(uid): returns prefixed key map for that user.
+const LS_KEYS={step:'step',uploadData:'upload_data',config:'config',
+  mappings:'mappings',logs:'logs',authG:'auth_google',authMs:'auth_ms',
+  batches:'batches',selUsers:'selected_users',
+  migDone:'mig_done',stats:'stats',batchId:'current_batch',lastDry:'last_dry'};
+const LS=(uid)=>{const p=uid?`gem_${uid}_`:'gem_';return Object.fromEntries(Object.entries(LS_KEYS).map(([k,v])=>[k,p+v]))};
 const lsGet=(k,fb)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb}catch{return fb}};
 const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}};
-const lsClear=()=>{Object.values(LS).forEach(k=>localStorage.removeItem(k))};
+// Clear only this user's keys
+const lsClear=(uid)=>{Object.values(LS(uid)).forEach(k=>localStorage.removeItem(k))};
+// Clear ALL gem_ keys (used when switching users)
+const lsClearAll=()=>{Object.keys(localStorage).filter(k=>k.startsWith('gem_')).forEach(k=>localStorage.removeItem(k))};
 
 function parseCsvLine(line){
   const f=[];let cur='',inQ=false;
@@ -147,7 +154,7 @@ const STEP_ICONS=[
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>,
 ];
-const STEP_LABELS=['Add Clouds','Import Data','Map Users','Options','Migrate','Complete'];
+const STEP_LABELS=['Connect Clouds','Import Data','Map Users','Options','Migrate','Complete'];
 
 const StepTracker=({active,onStepClick,live})=>(
   <div style={{display:'flex',alignItems:'center',padding:'14px 24px',borderBottom:`1px solid ${C.border}`,background:'white'}}>
@@ -196,7 +203,7 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
   return(
     <div className="fade-up">
       <div style={{marginBottom:20}}>
-        <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Add Clouds</div>
+        <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Connect Clouds</div>
         <div style={{fontSize:13,color:C.muted}}>Connect source and destination cloud accounts with admin credentials.</div>
       </div>
 
@@ -258,8 +265,8 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
 /* ══════════════════════════════ */
 /* ═══   STEP 1: IMPORT DATA  ═══ */
 /* ══════════════════════════════ */
-const Step1=({googleUsers,onComplete,onBack,showToast})=>{
-  const [tab,setTab]=useState('userwise');
+const Step1=({googleUsers,googleAuthed,onComplete,onBack,showToast,uploadData:activeUpload})=>{
+  const [tab,setTab]=useState(activeUpload?'upload':'userwise');
   const [selected,setSelected]=useState(new Set());
   const [exporting,setExporting]=useState(false);
   const [exportStatus,setExportStatus]=useState('');
@@ -268,7 +275,6 @@ const Step1=({googleUsers,onComplete,onBack,showToast})=>{
   const fileInputRef=useRef(null);
   const [uploading,setUploading]=useState(false);
   const [dragOver,setDragOver]=useState(false);
-  // Saved uploads
   const [savedUploads,setSavedUploads]=useState([]);
   const [showMenu,setShowMenu]=useState(false);
   const menuRef=useRef(null);
@@ -281,7 +287,7 @@ const Step1=({googleUsers,onComplete,onBack,showToast})=>{
 
   useEffect(()=>{loadSavedUploads()},[]);
 
-  // Close menu when clicking outside
+  // Close hamburger when clicking outside
   useEffect(()=>{
     const h=e=>{if(menuRef.current&&!menuRef.current.contains(e.target))setShowMenu(false)};
     document.addEventListener('mousedown',h);return()=>document.removeEventListener('mousedown',h);
@@ -325,13 +331,13 @@ const Step1=({googleUsers,onComplete,onBack,showToast})=>{
     setUploading(false);
   };
 
-  const loadSavedUpload=async(entry)=>{
+  const loadSavedUpload=(entry)=>{
     setShowMenu(false);
-    // Fetch the users for this extract_path by re-reading metadata
     onComplete({
-      id:entry.id, extract_path:entry.extract_path,
+      id:entry.id, original_name:entry.original_name,
+      extract_path:entry.extract_path,
       total_users:entry.total_users, total_conversations:entry.total_conversations,
-      users:[] // users list not stored in meta; will be populated by mapping step
+      users:(entry.users||[]).map(u=>({email:u.email,display_name:u.display_name,conversation_count:u.conversation_count}))
     });
   };
 
@@ -340,6 +346,10 @@ const Step1=({googleUsers,onComplete,onBack,showToast})=>{
     await fetch(`/api/uploads/${id}`,{method:'DELETE'});
     loadSavedUploads();
   };
+
+  // Safe display helpers
+  const fmtDate=v=>{if(!v)return'—';const d=new Date(v);return isNaN(d)?'—':d.toLocaleDateString()};
+  const fmtCount=(n,label)=>n!=null?`${n} ${label}${n!==1?'s':''}`:null;
 
   return(
     <div className="fade-up">
@@ -351,30 +361,37 @@ const Step1=({googleUsers,onComplete,onBack,showToast})=>{
       {/* Tabs + hamburger */}
       <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:20}}>
         <div style={{display:'flex',gap:4,flex:1,background:C.bg,borderRadius:8,padding:4}}>
-          {[['userwise','User-wise'],['upload','Upload ZIP']].map(([id,label])=>(
+          {[['userwise',googleAuthed?"User's List":'Connect Google First'],['upload','Upload ZIP']].map(([id,label])=>(
             <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:'8px 0',borderRadius:6,border:'none',fontSize:13,fontWeight:tab===id?600:400,background:tab===id?'white':C.bg,color:tab===id?C.primary:C.muted,boxShadow:tab===id?'0 1px 4px rgba(0,0,0,.1)':'none',transition:'all .2s',cursor:'pointer'}}>{label}</button>
           ))}
         </div>
-        {/* Saved uploads hamburger */}
+        {/* Previous uploads hamburger */}
         <div ref={menuRef} style={{position:'relative'}}>
           <button onClick={()=>{setShowMenu(p=>!p);loadSavedUploads()}} title="Previous uploads" style={{width:36,height:36,borderRadius:8,border:`1px solid ${C.border}`,background:'white',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',color:C.muted,flexShrink:0,transition:'all .15s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor=C.primary;e.currentTarget.style.color=C.primary}} onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.color=C.muted}}>
             <IcoMenu s={16}/>
           </button>
           {showMenu&&(
-            <div style={{position:'absolute',right:0,top:'calc(100% + 6px)',width:320,background:'white',border:`1px solid ${C.border}`,borderRadius:10,boxShadow:'0 8px 30px rgba(0,0,0,.12)',zIndex:100,overflow:'hidden'}}>
+            <div style={{position:'absolute',right:0,top:'calc(100% + 6px)',width:340,background:'white',border:`1px solid ${C.border}`,borderRadius:10,boxShadow:'0 8px 30px rgba(0,0,0,.12)',zIndex:100,overflow:'hidden'}}>
               <div style={{padding:'10px 14px',borderBottom:`1px solid ${C.bg}`,fontSize:12,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.5}}>Previous Uploads</div>
               {savedUploads.length===0?(
-                <div style={{padding:'16px 14px',fontSize:13,color:C.muted,textAlign:'center'}}>No saved uploads yet</div>
-              ):savedUploads.map(u=>(
-                <div key={u.id} onClick={()=>loadSavedUpload(u)} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',cursor:'pointer',borderBottom:`1px solid ${C.bg}`,transition:'background .15s'}} onMouseEnter={e=>e.currentTarget.style.background=C.bg} onMouseLeave={e=>e.currentTarget.style.background='white'}>
-                  <IcoZip s={20} c={C.primaryL}/>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:12,fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{u.original_name||u.id}</div>
-                    <div style={{fontSize:11,color:C.muted}}>{u.total_users} users · {new Date(u.upload_time).toLocaleDateString()}</div>
+                <div style={{padding:'20px 14px',fontSize:13,color:C.muted,textAlign:'center'}}>No uploads yet</div>
+              ):savedUploads.map((u,i)=>{
+                const isActive=activeUpload&&activeUpload.id===u.id;
+                const meta=[fmtCount(u.total_users,'user'),fmtDate(u.upload_time)].filter(Boolean).join(' · ');
+                return(
+                  <div key={u.id} onClick={()=>!isActive&&loadSavedUpload(u)} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',cursor:isActive?'default':'pointer',borderBottom:i<savedUploads.length-1?`1px solid ${C.bg}`:'none',transition:'background .15s',background:isActive?C.tint:'white'}} onMouseEnter={e=>{if(!isActive)e.currentTarget.style.background=C.bg}} onMouseLeave={e=>{e.currentTarget.style.background=isActive?C.tint:'white'}}>
+                    <IcoZip s={20} c={isActive?C.primary:C.primaryL}/>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:12,fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',display:'flex',alignItems:'center',gap:6}}>
+                        <span style={{overflow:'hidden',textOverflow:'ellipsis'}}>{u.original_name||u.id}</span>
+                        {isActive&&<span style={{fontSize:10,padding:'1px 6px',borderRadius:10,background:C.primary,color:'white',flexShrink:0}}>active</span>}
+                      </div>
+                      <div style={{fontSize:11,color:C.muted}}>{meta||'—'}</div>
+                    </div>
+                    <button onClick={e=>deleteSavedUpload(e,u.id)} title="Delete" style={{padding:'4px 6px',border:'none',background:'none',cursor:'pointer',color:C.muted,borderRadius:4,flexShrink:0,display:'flex',alignItems:'center',transition:'all .15s'}} onMouseEnter={e=>{e.currentTarget.style.background='#FEF2F2';e.currentTarget.style.color=C.error}} onMouseLeave={e=>{e.currentTarget.style.background='none';e.currentTarget.style.color=C.muted}}><IcoTrash s={13}/></button>
                   </div>
-                  <button onClick={e=>deleteSavedUpload(e,u.id)} style={{padding:'4px 6px',border:'none',background:'none',cursor:'pointer',color:C.muted,borderRadius:4,flexShrink:0,display:'flex',alignItems:'center'}} onMouseEnter={e=>{e.currentTarget.style.background='#FEF2F2';e.currentTarget.style.color=C.error}} onMouseLeave={e=>{e.currentTarget.style.background='none';e.currentTarget.style.color=C.muted}}><IcoTrash s={13}/></button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -403,10 +420,25 @@ const Step1=({googleUsers,onComplete,onBack,showToast})=>{
       )}
 
       {tab==='upload'&&(
-        <div className="fade-up" onDragOver={e=>{e.preventDefault();setDragOver(true)}} onDragLeave={()=>setDragOver(false)} onDrop={e=>{e.preventDefault();setDragOver(false);if(e.dataTransfer.files[0])doUpload(e.dataTransfer.files[0])}}>
-          <div onClick={()=>!uploading&&fileInputRef.current.click()} style={{border:`2px dashed ${dragOver?C.primary:C.border}`,borderRadius:10,padding:'48px 20px',textAlign:'center',cursor:uploading?'wait':'pointer',transition:'all .2s',background:dragOver?C.tint:'white'}}>
-            <input ref={fileInputRef} type="file" accept=".zip" style={{display:'none'}} onChange={e=>{if(e.target.files[0])doUpload(e.target.files[0])}}/>
-            {uploading?(<div><Spinner s={32}/><div style={{marginTop:12,fontSize:13,color:C.muted}}>Uploading & extracting...</div></div>):(<><div style={{display:'flex',justifyContent:'center',marginBottom:12}}><IcoZip s={44} c={dragOver?C.primary:C.primaryL}/></div><div style={{fontSize:14,fontWeight:500,marginBottom:4}}><span style={{color:C.primary,fontWeight:600}}>Click to browse</span> or drag & drop</div><div style={{fontSize:12,color:C.muted}}>Google Vault .zip export file</div></>)}
+        <div className="fade-up">
+          {/* Active upload banner */}
+          {activeUpload&&(
+            <div style={{display:'flex',alignItems:'center',gap:12,padding:'12px 14px',background:C.tint,border:`1.5px solid ${C.primary}40`,borderRadius:10,marginBottom:16}}>
+              <IcoZip s={26} c={C.primary}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:11,fontWeight:600,color:C.primary,marginBottom:1}}>Currently using</div>
+                <div style={{fontSize:13,fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{activeUpload.original_name||activeUpload.id}</div>
+                <div style={{fontSize:11,color:C.muted}}>{[fmtCount(activeUpload.total_users,'user'),fmtCount(activeUpload.total_conversations,'conversation')].filter(Boolean).join(' · ')}</div>
+              </div>
+              <Btn onClick={()=>onComplete(activeUpload)} style={{flexShrink:0,fontSize:12,padding:'6px 14px'}}>Continue →</Btn>
+            </div>
+          )}
+          {/* Drop zone */}
+          <div onDragOver={e=>{e.preventDefault();setDragOver(true)}} onDragLeave={()=>setDragOver(false)} onDrop={e=>{e.preventDefault();setDragOver(false);if(e.dataTransfer.files[0])doUpload(e.dataTransfer.files[0])}}>
+            <div onClick={()=>!uploading&&fileInputRef.current.click()} style={{border:`2px dashed ${dragOver?C.primary:C.border}`,borderRadius:10,padding:activeUpload?'28px 20px':'48px 20px',textAlign:'center',cursor:uploading?'wait':'pointer',transition:'all .2s',background:dragOver?C.tint:'white'}}>
+              <input ref={fileInputRef} type="file" accept=".zip" style={{display:'none'}} onChange={e=>{if(e.target.files[0])doUpload(e.target.files[0])}}/>
+              {uploading?(<div><Spinner s={32}/><div style={{marginTop:12,fontSize:13,color:C.muted}}>Uploading & extracting...</div></div>):(<><div style={{display:'flex',justifyContent:'center',marginBottom:12}}><IcoZip s={activeUpload?32:44} c={dragOver?C.primary:C.primaryL}/></div><div style={{fontSize:14,fontWeight:500,marginBottom:4}}><span style={{color:C.primary,fontWeight:600}}>Click to browse</span> or drag & drop</div><div style={{fontSize:12,color:C.muted}}>{activeUpload?'Upload a different Vault .zip file':'Google Vault .zip export file'}</div></>)}
+            </div>
           </div>
         </div>
       )}
@@ -425,6 +457,17 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
   const csvRef=useRef(null);
   const [search,setSearch]=useState('');
   const [csvUploading,setCsvUploading]=useState(false);
+  const [prevMigrated,setPrevMigrated]=useState(new Set());
+
+  // Fetch previously migrated M365 emails for this upload to show duplicate warnings
+  useEffect(()=>{
+    if(uploadData?.id){
+      fetch(`/api/batches/migrated-users?uploadId=${encodeURIComponent(uploadData.id)}`)
+        .then(r=>r.ok?r.json():null)
+        .then(d=>{if(d?.migrated_users)setPrevMigrated(new Set(d.migrated_users))})
+        .catch(()=>{});
+    }
+  },[uploadData?.id]);
 
   // Auto-map by email local-part similarity on mount / when uploadData changes
   useEffect(()=>{
@@ -501,10 +544,11 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
         </div>
         {filtered.map((u,i)=>{
           const mapped=!!(mappings[u.email]);
+          const alreadyMigrated=prevMigrated.has(mappings[u.email]);
           return(
             <div key={u.email} style={{display:'grid',gridTemplateColumns:'32px 1fr 1fr 60px',alignItems:'center',padding:'9px 14px',borderBottom:i<filtered.length-1?`1px solid ${C.bg}`:'none',background:selectedUsers.has(u.email)?C.tint:'white',transition:'background .15s',cursor:'pointer'}} onClick={()=>toggleUser(u.email)}>
               <input type="checkbox" checked={selectedUsers.has(u.email)} onChange={()=>toggleUser(u.email)} style={{accentColor:C.primary,width:15,height:15}} onClick={e=>e.stopPropagation()}/>
-              <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}><Avatar name={u.email} email={u.email} size={26}/><span style={{fontSize:12,color:C.muted,fontFamily:'monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{u.email}</span></div>
+              <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}><Avatar name={u.email} email={u.email} size={26}/><div style={{minWidth:0}}><span style={{fontSize:12,color:C.muted,fontFamily:'monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',display:'block'}}>{u.email}</span>{alreadyMigrated&&<span style={{fontSize:10,color:'#92400e',background:'#fef3c7',padding:'1px 5px',borderRadius:3,fontWeight:600}}>Previously migrated</span>}</div></div>
               <input value={mappings[u.email]||''} onChange={e=>{e.stopPropagation();setMappings(p=>({...p,[u.email]:e.target.value}))}}
                 placeholder="Enter M365 email..."
                 style={{border:`1px solid ${mapped?C.primary+'50':C.border}`,borderRadius:5,padding:'5px 9px',fontSize:12,fontFamily:'inherit',outline:'none',marginRight:8,width:'100%',background:mapped?C.tint:'white'}}
@@ -541,14 +585,13 @@ const Step3=({options,setOptions,config,setConfig,msAuthed,onRun,onBack})=>{
         <div style={{fontSize:13,color:C.muted}}>Configure and start the migration.</div>
       </div>
 
-      <Field label="File Name" hint="(used for report naming)">
-        <Input value={config.fileName||''} onChange={e=>setConfig(p=>({...p,fileName:e.target.value}))} placeholder="e.g. Acme Corp Migration"/>
+      <Field label="File Path *" hint="OneNote path where migrated pages will be created (required)">
+        <Input value={config.filePath||''} onChange={e=>setConfig(p=>({...p,filePath:e.target.value}))} placeholder="e.g. /Sites/Migration/GeminiExports"/>
       </Field>
 
       <Card style={{marginBottom:16}}>
         <div style={{fontSize:13,fontWeight:600,marginBottom:4,color:C.dark}}>Behavior</div>
         <Chk label="Dry run (preview only — no pages created)" hint="Recommended before first live migration" checked={options.dryRun} onChange={e=>setOptions(p=>({...p,dryRun:e.target.checked}))}/>
-        <Chk label="Skip follow-up messages" hint="Only migrate the first message of each conversation thread" checked={options.skipFollowups} onChange={e=>setOptions(p=>({...p,skipFollowups:e.target.checked}))}/>
         <Chk label="Disable Azure OpenAI (GPT-4o) responses" hint="Skip AI-generated Copilot responses — migrate Gemini content only. Faster and avoids OpenAI costs." checked={options.skipAiResponse} onChange={e=>setOptions(p=>({...p,skipAiResponse:e.target.checked}))}/>
       </Card>
 
@@ -572,7 +615,7 @@ const Step3=({options,setOptions,config,setConfig,msAuthed,onRun,onBack})=>{
 
       <div style={{display:'flex',gap:10}}>
         <Btn variant="ghost" onClick={onBack}>← Back</Btn>
-        <Btn onClick={onRun} disabled={!options.dryRun&&!msAuthed} style={{flex:1,justifyContent:'center'}}>
+        <Btn onClick={()=>onRun()} disabled={!config.filePath||(!options.dryRun&&!msAuthed)} style={{flex:1,justifyContent:'center'}}>
           {options.dryRun?<><IcoSearch s={14}/>Start Dry Run</>:<><IcoRocket s={14}/>Start Migration</>}
         </Btn>
       </div>
@@ -590,9 +633,16 @@ const MIG_ENTITIES=[
   {label:'Flagged',icon:<IcoFlag s={18}/>,  color:C.primaryL},
 ];
 
-const StepMigrate=({stats,done,lastRunWasDry,batchId,onStartLive,onRunAnother})=>{
+const StepMigrate=({stats,done,lastRunWasDry,batchId,onStartLive,onRunAnother,onRetry,retrying,hasUploadData})=>{
   const [ring,setRing]=useState(0);
+  const [batchUsers,setBatchUsers]=useState(null);
+  const [showUserDetail,setShowUserDetail]=useState(false);
   useEffect(()=>{if(!done){const t=setInterval(()=>setRing(r=>Math.min(r+2,95)),800);return()=>clearInterval(t)}else setRing(100)},[done]);
+  useEffect(()=>{
+    if(done&&batchId&&!lastRunWasDry){
+      fetch(`/api/reports/${batchId}`).then(r=>r.ok?r.json():null).then(d=>{if(d?.users)setBatchUsers(d.users)}).catch(()=>{});
+    }
+  },[done,batchId,lastRunWasDry]);
   const vals=[stats.users,stats.pages,stats.errors,stats.flagged];
 
   const dlMigrationCsv=async()=>{
@@ -678,18 +728,54 @@ const StepMigrate=({stats,done,lastRunWasDry,batchId,onStartLive,onRunAnother})=
             <IcoDownload s={13} c={C.primary}/> Download Migration Report (CSV)
           </button>
 
+          {/* Retry failed conversations */}
+          {!lastRunWasDry&&stats.errors>0&&onRetry&&(
+            <button onClick={onRetry} disabled={retrying} style={{width:'100%',display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'10px 16px',borderRadius:6,border:`1px solid #FF1F1F`,background:'white',fontSize:13,fontWeight:500,cursor:retrying?'not-allowed':'pointer',color:'#FF1F1F',fontFamily:'inherit',transition:'all .15s',marginBottom:10,opacity:retrying?0.6:1}} onMouseEnter={e=>{if(!retrying)e.currentTarget.style.background='#fff0f0'}} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+              <IcoReset s={13} c='#FF1F1F'/> {retrying?'Retrying…':`Retry Failed (${stats.errors})`}
+            </button>
+          )}
+
+          {/* Per-user breakdown (collapsible) */}
+          {batchUsers&&batchUsers.length>0&&(
+            <div style={{marginBottom:12}}>
+              <button onClick={()=>setShowUserDetail(p=>!p)} style={{width:'100%',display:'flex',alignItems:'center',justifyContent:'space-between',padding:'9px 14px',borderRadius:6,border:`1px solid ${C.border}`,background:C.bg,fontSize:12,fontWeight:600,cursor:'pointer',color:C.dark,fontFamily:'inherit',transition:'background .15s'}} onMouseEnter={e=>e.currentTarget.style.background='#EBEBEB'} onMouseLeave={e=>e.currentTarget.style.background=C.bg}>
+                <span>Per-User Breakdown</span>
+                <span style={{color:C.muted,fontSize:11}}>{showUserDetail?'▲ Hide':'▼ Show'}</span>
+              </button>
+              {showUserDetail&&(
+                <div style={{border:`1px solid ${C.border}`,borderTop:'none',borderRadius:'0 0 6px 6px',overflow:'hidden'}}>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 80px 70px 60px',padding:'7px 12px',background:C.bg,fontSize:10,fontWeight:700,color:C.muted,textTransform:'uppercase',letterSpacing:.4}}>
+                    <div>User</div><div style={{textAlign:'center'}}>Status</div><div style={{textAlign:'center'}}>Pages</div><div style={{textAlign:'center'}}>Errors</div>
+                  </div>
+                  {batchUsers.map((u,i)=>(
+                    <div key={i} style={{display:'grid',gridTemplateColumns:'1fr 80px 70px 60px',alignItems:'center',padding:'8px 12px',borderTop:`1px solid ${C.bg}`,background:'white'}}>
+                      <div style={{fontSize:12,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:C.dark}}>{u.email}</div>
+                      <div style={{textAlign:'center'}}>
+                        <span style={{fontSize:10,padding:'2px 7px',borderRadius:20,fontWeight:600,background:u.status==='success'?'#dcfce7':u.status==='partial'?'#fef3c7':'#fee2e2',color:u.status==='success'?'#166534':u.status==='partial'?'#92400e':'#991b1b'}}>{u.status}</span>
+                      </div>
+                      <div style={{textAlign:'center',fontSize:13,fontWeight:600,color:C.primary}}>{u.pages_created}</div>
+                      <div style={{textAlign:'center',fontSize:13,fontWeight:600,color:u.error_count>0?C.error:C.muted}}>{u.error_count}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Batch migration actions */}
-          <div style={{display:'flex',gap:10}}>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
             {lastRunWasDry&&onStartLive&&(
-              <Btn onClick={onStartLive} style={{flex:1,justifyContent:'center'}}>
+              <Btn onClick={onStartLive} style={{flex:'1 1 120px',justifyContent:'center'}}>
                 <IcoRocket s={14}/> Start Migration (Live)
               </Btn>
             )}
-            <Btn variant="outline" onClick={onRunAnother} style={{flex:1,justifyContent:'center'}}>
-              Run Another Batch
-            </Btn>
-            <Btn variant="ghost" onClick={()=>location.reload()} style={{flex:lastRunWasDry?undefined:1,justifyContent:'center'}}>
-              New Migration
+            {hasUploadData&&(
+              <Btn variant="outline" onClick={()=>onRunAnother(true)} style={{flex:'1 1 120px',justifyContent:'center'}}>
+                Another Batch (Same Data)
+              </Btn>
+            )}
+            <Btn variant="ghost" onClick={()=>onRunAnother(false)} style={{flex:'1 1 100px',justifyContent:'center'}}>
+              New Import
             </Btn>
           </div>
         </>
@@ -734,32 +820,52 @@ const LogFeed=({logs,live})=>{
 /* ══════════════════════════════ */
 /* ═══     REPORTS PANEL      ═══ */
 /* ══════════════════════════════ */
-const ReportsPanel=({onClose})=>{
+const ReportsPanel=({onClose,refreshKey=0})=>{
   const [reports,setReports]=useState([]);
   const [loading,setLoading]=useState(true);
+  const [agg,setAgg]=useState(null);
+  const [expanded,setExpanded]=useState({});
+  const [batchDetails,setBatchDetails]=useState({});
 
-  useEffect(()=>{
-    fetch('/api/reports').then(r=>r.json()).then(d=>{setReports(Array.isArray(d)?d:[]);setLoading(false)}).catch(()=>setLoading(false));
+  const loadReports=useCallback(()=>{
+    setLoading(true);
+    Promise.all([
+      fetch('/api/reports').then(r=>r.json()).catch(()=>[]),
+      fetch('/api/reports/aggregate').then(r=>r.json()).catch(()=>null)
+    ]).then(([list,aggData])=>{
+      setReports(Array.isArray(list)?list:[]);
+      setAgg(aggData);
+      setLoading(false);
+    });
   },[]);
 
-  const dlBatch=async(id)=>{
-    try{
-      const res=await fetch(`/api/reports/${id}`);
-      const data=await res.json();
-      const users=data.users||[];
-      const rows=[];
-      users.forEach(u=>{
-        if(u.errors&&u.errors.length>0){u.errors.forEach(e=>rows.push([u.email,u.status,u.pages_created,e.conversation||'',e.error_message||'']))}
-        else rows.push([u.email,u.status,u.pages_created,'','']);
-      });
-      const csv='Email,Status,Pages Created,Conversation,Error\n'+rows.map(r=>r.map(f=>`"${String(f||'').replace(/"/g,'""')}"`).join(',')).join('\n');
-      const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download=`batch_${id}.csv`;a.click();
-    }catch{
-      const a=document.createElement('a');a.href=`/api/reports/${id}`;a.download=`batch_${id}.json`;a.click();
+  // Re-fetch whenever panel opens (refreshKey changes) or migration completes
+  useEffect(()=>{ loadReports(); },[refreshKey]);
+
+  const toggleDetail=async(id)=>{
+    setExpanded(p=>({...p,[id]:!p[id]}));
+    if(!batchDetails[id]){
+      fetch(`/api/reports/${id}`).then(r=>r.ok?r.json():null).then(d=>{
+        if(d?.users)setBatchDetails(p=>({...p,[id]:d.users}));
+      }).catch(()=>{});
     }
   };
 
+  const dlBatch=id=>{
+    const a=document.createElement('a');a.href=`/api/reports/${id}/csv`;a.download=`batch_${id}.csv`;a.click();
+  };
+  const dlBatchJson=id=>{
+    const a=document.createElement('a');a.href=`/api/reports/${id}?download=true`;a.download=`batch_${id}.json`;a.click();
+  };
+
   const fmtDate=ts=>{try{const d=new Date(ts);return d.toLocaleDateString()+' '+d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'})}catch{return ts}};
+  const fmtDur=(s,e)=>{try{const sec=Math.round((new Date(e)-new Date(s))/1000);return sec<60?`${sec}s`:`${Math.floor(sec/60)}m ${sec%60}s`}catch{return ''}};
+  const statusStyle=(r)=>{
+    if(r.dryRun)return{bg:'#FEF3C7',color:'#92400E',label:'Dry Run'};
+    if(r.status==='failed')return{bg:'#FEE2E2',color:'#991B1B',label:'Failed'};
+    if(r.totalErrors>0)return{bg:'#FEF3C7',color:'#92400E',label:'Partial'};
+    return{bg:'#DCFCE7',color:'#166534',label:'Success'};
+  };
 
   return(
     <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.45)',zIndex:200,display:'flex',alignItems:'flex-end',justifyContent:'flex-end'}} onClick={onClose}>
@@ -769,41 +875,85 @@ const ReportsPanel=({onClose})=>{
             <div style={{fontSize:18,fontWeight:600,color:C.primary}}>Migration Reports</div>
             <div style={{fontSize:12,color:C.muted}}>All migration batches across sessions</div>
           </div>
-          <button onClick={onClose} style={{width:32,height:32,borderRadius:'50%',border:`1px solid ${C.border}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,color:C.muted}}>✕</button>
+          <div style={{display:'flex',gap:8,alignItems:'center'}}>
+            <button onClick={loadReports} title="Refresh" style={{width:32,height:32,borderRadius:'50%',border:`1px solid ${C.border}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',color:C.primary}} onMouseEnter={e=>e.currentTarget.style.background=C.tint} onMouseLeave={e=>e.currentTarget.style.background='white'}><IcoReset s={13}/></button>
+            <button onClick={onClose} style={{width:32,height:32,borderRadius:'50%',border:`1px solid ${C.border}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,color:C.muted}}>✕</button>
+          </div>
         </div>
+
+        {/* Aggregate Summary Bar */}
+        {agg&&(
+          <div style={{padding:'12px 24px',background:C.tint,borderBottom:`1px solid ${C.primary}20`,flexShrink:0}}>
+            <div style={{fontSize:10,fontWeight:700,color:C.primary,textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>Overall Summary</div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8}}>
+              {[['Total Batches',agg.totalBatches,C.primary],['Live Batches',agg.liveBatches,C.primary],['Pages Created',agg.totalPages,C.success],['Total Errors',agg.totalErrors,agg.totalErrors>0?C.error:C.muted]].map(([lbl,val,col],i)=>(
+                <div key={i} style={{background:'white',borderRadius:8,padding:'8px 12px',textAlign:'center',border:`1px solid ${C.border}`}}>
+                  <div style={{fontSize:18,fontWeight:700,color:col}}>{val??0}</div>
+                  <div style={{fontSize:10,color:C.muted,textTransform:'uppercase',letterSpacing:.3,marginTop:2}}>{lbl}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div style={{flex:1,overflowY:'auto',padding:'16px 24px'}}>
           {loading&&<div style={{display:'flex',alignItems:'center',gap:8,padding:'20px 0',color:C.muted}}><Spinner s={16}/> Loading...</div>}
           {!loading&&reports.length===0&&<div style={{textAlign:'center',padding:'40px 0',color:C.muted,fontSize:13}}>No migration reports yet. Run a migration to see results here.</div>}
-          {reports.map((r,i)=>(
-            <Card key={i} className="fade-up" style={{marginBottom:12,animationDelay:`${i*40}ms`}}>
-              <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:8}}>
-                <div>
-                  <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
-                    <span style={{fontSize:13,fontWeight:600,color:C.dark}}>{r.customer_name||'Migration'}</span>
-                    <span style={{fontSize:11,padding:'2px 8px',borderRadius:20,fontWeight:600,
-                      background:r.dry_run?'#FEF3C7':C.tint,
-                      color:r.dry_run?'#92400E':C.primary}}>
-                      {r.dry_run?'Dry Run':'Live'}
-                    </span>
-                  </div>
-                  <div style={{fontSize:12,color:C.muted}}>{fmtDate(r.timestamp)}</div>
-                </div>
-                <button onClick={()=>dlBatch(r.id)} title="Download CSV" style={{display:'flex',alignItems:'center',gap:4,padding:'6px 10px',borderRadius:6,border:`1px solid ${C.primary}`,background:'white',fontSize:12,color:C.primary,cursor:'pointer',fontFamily:'inherit',fontWeight:500,flexShrink:0}} onMouseEnter={e=>e.currentTarget.style.background=C.tint} onMouseLeave={e=>e.currentTarget.style.background='white'}>
-                  <IcoDownload s={12} c={C.primary}/> CSV
-                </button>
-              </div>
-              {r.summary&&(
-                <div style={{display:'flex',gap:16,borderTop:`1px solid ${C.bg}`,paddingTop:8,marginTop:4}}>
-                  {[['Users',r.summary.total_users],[r.dry_run?'Conversations':'Pages',r.dry_run?r.summary.total_conversations:r.summary.total_pages_created],['Errors',r.summary.total_errors]].map(([lbl,val],j)=>(
-                    <div key={j} style={{textAlign:'center'}}>
-                      <div style={{fontSize:16,fontWeight:700,color:lbl==='Errors'&&val>0?C.error:C.primary}}>{val??0}</div>
-                      <div style={{fontSize:10,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{lbl}</div>
+          {reports.map((r,i)=>{
+            const ss=statusStyle(r);
+            const isExp=expanded[r._id];
+            const details=batchDetails[r._id];
+            return(
+              <Card key={i} className="fade-up" style={{marginBottom:12,animationDelay:`${i*40}ms`}}>
+                <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:8}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,flexWrap:'wrap'}}>
+                      <span style={{fontSize:13,fontWeight:600,color:C.dark}}>{r.customerName||'Migration'}</span>
+                      <span style={{fontSize:11,padding:'2px 8px',borderRadius:20,fontWeight:600,background:ss.bg,color:ss.color}}>{ss.label}</span>
                     </div>
-                  ))}
+                    <div style={{fontSize:12,color:C.muted,display:'flex',gap:12}}>
+                      <span>{fmtDate(r.startTime)}</span>
+                      {r.endTime&&<span>⏱ {fmtDur(r.startTime,r.endTime)}</span>}
+                    </div>
+                  </div>
+                  <div style={{display:'flex',gap:6,flexShrink:0,marginLeft:8}}>
+                    {!r.dryRun&&<button onClick={()=>dlBatch(r._id)} title="Download CSV" style={{display:'flex',alignItems:'center',gap:4,padding:'5px 9px',borderRadius:6,border:`1px solid ${C.primary}`,background:'white',fontSize:11,color:C.primary,cursor:'pointer',fontFamily:'inherit',fontWeight:500}} onMouseEnter={e=>e.currentTarget.style.background=C.tint} onMouseLeave={e=>e.currentTarget.style.background='white'}><IcoDownload s={11} c={C.primary}/> CSV</button>}
+                    <button onClick={()=>dlBatchJson(r._id)} title="Download JSON" style={{display:'flex',alignItems:'center',gap:4,padding:'5px 9px',borderRadius:6,border:`1px solid ${C.border}`,background:'white',fontSize:11,color:C.muted,cursor:'pointer',fontFamily:'inherit',fontWeight:500}} onMouseEnter={e=>e.currentTarget.style.background=C.bg} onMouseLeave={e=>e.currentTarget.style.background='white'}><IcoDownload s={11}/> JSON</button>
+                  </div>
                 </div>
-              )}
-            </Card>
-          ))}
+
+                <div style={{display:'flex',gap:16,borderTop:`1px solid ${C.bg}`,paddingTop:8,marginTop:4,justifyContent:'space-between',alignItems:'flex-end'}}>
+                  <div style={{display:'flex',gap:16}}>
+                    {[['Users',r.totalUsers],['Pages',r.migratedConversations],['Errors',r.totalErrors]].map(([lbl,val],j)=>(
+                      <div key={j} style={{textAlign:'center'}}>
+                        <div style={{fontSize:16,fontWeight:700,color:lbl==='Errors'&&val>0?C.error:C.primary}}>{val??0}</div>
+                        <div style={{fontSize:10,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{lbl}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {!r.dryRun&&<button onClick={()=>toggleDetail(r._id)} style={{fontSize:11,color:C.primaryL,background:'none',border:'none',cursor:'pointer',fontFamily:'inherit',padding:'0 4px'}}>{isExp?'▲ Hide Details':'▼ View Details'}</button>}
+                </div>
+
+                {/* Per-user detail expand */}
+                {isExp&&(
+                  <div style={{marginTop:12,border:`1px solid ${C.border}`,borderRadius:6,overflow:'hidden'}}>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 80px 60px 60px',padding:'6px 12px',background:C.bg,fontSize:10,fontWeight:700,color:C.muted,textTransform:'uppercase',letterSpacing:.4}}>
+                      <div>User</div><div style={{textAlign:'center'}}>Status</div><div style={{textAlign:'center'}}>Pages</div><div style={{textAlign:'center'}}>Errors</div>
+                    </div>
+                    {!details&&<div style={{padding:'12px',textAlign:'center',fontSize:12,color:C.muted}}><Spinner s={14}/></div>}
+                    {details&&details.map((u,k)=>(
+                      <div key={k} style={{display:'grid',gridTemplateColumns:'1fr 80px 60px 60px',alignItems:'center',padding:'7px 12px',borderTop:`1px solid ${C.bg}`,background:'white'}}>
+                        <div style={{fontSize:12,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:C.dark}}>{u.email}</div>
+                        <div style={{textAlign:'center'}}><span style={{fontSize:10,padding:'2px 6px',borderRadius:20,fontWeight:600,background:u.status==='success'?'#dcfce7':u.status==='partial'?'#fef3c7':'#fee2e2',color:u.status==='success'?'#166534':u.status==='partial'?'#92400e':'#991b1b'}}>{u.status}</span></div>
+                        <div style={{textAlign:'center',fontSize:13,fontWeight:600,color:C.primary}}>{u.pages_created}</div>
+                        <div style={{textAlign:'center',fontSize:13,fontWeight:600,color:u.error_count>0?C.error:C.muted}}>{u.error_count}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Card>
+            );
+          })}
         </div>
       </div>
     </div>
@@ -814,24 +964,35 @@ const ReportsPanel=({onClose})=>{
 /* ═══            MAIN APP            ═══ */
 /* ══════════════════════════════════════ */
 function App(){
-  const [step,setStep]=useState(()=>lsGet(LS.step,0));
-  const [uploadData,setUploadData]=useState(()=>lsGet(LS.uploadData,null));
-  const [config,setConfig]=useState(()=>{const s=lsGet(LS.config,{});return{fileName:s.fileName||s.customerName||'',tenantId:s.tenantId||'807d6772-847c-40e2-9bec-e2c930b3a42e'}});
-  const [mappings,setMappings]=useState(()=>lsGet(LS.mappings,{}));
-  const [selectedUsers,setSelectedUsers]=useState(()=>{const s=lsGet(LS.selUsers,null);return s?new Set(s):new Set()});
+  // Read stored userId synchronously so state initializers use the right scoped keys
+  const storedUid=(()=>{try{return localStorage.getItem('gem_active_user')||''}catch{return ''}})();
+  const K=LS(storedUid); // scoped key map for current user
+
+  const [step,setStep]=useState(()=>lsGet(K.step,0));
+  const [uploadData,setUploadData]=useState(()=>lsGet(K.uploadData,null));
+  const [config,setConfig]=useState(()=>{const s=lsGet(K.config,{});return{filePath:s.filePath||s.fileName||s.customerName||'',tenantId:s.tenantId||'807d6772-847c-40e2-9bec-e2c930b3a42e'}});
+  const [mappings,setMappings]=useState(()=>lsGet(K.mappings,{}));
+  const [selectedUsers,setSelectedUsers]=useState(()=>{const s=lsGet(K.selUsers,null);return s?new Set(s):new Set()});
   const [options,setOptions]=useState({dryRun:true,skipFollowups:false,skipAiResponse:false,fromDate:'',toDate:''});
-  const [googleAuthed,setGoogleAuthed]=useState(()=>lsGet(LS.authG,{signedIn:false}).signedIn||false);
-  const [msAuthed,setMsAuthed]=useState(()=>lsGet(LS.authMs,{signedIn:false}).signedIn||false);
+  const [googleAuthed,setGoogleAuthed]=useState(()=>lsGet(K.authG,{signedIn:false}).signedIn||false);
+  const [msAuthed,setMsAuthed]=useState(()=>lsGet(K.authMs,{signedIn:false}).signedIn||false);
   const [googleUsers,setGoogleUsers]=useState([]);
   const [msUsers,setMsUsers]=useState([]);
-  const [logs,setLogs]=useState(()=>lsGet(LS.logs,[]));
+  const [logs,setLogs]=useState(()=>lsGet(K.logs,[]));
   const [live,setLive]=useState(false);
-  const [migDone,setMigDone]=useState(false);
-  const [stats,setStats]=useState({users:0,pages:0,errors:0,flagged:0});
-  const [lastRunWasDry,setLastRunWasDry]=useState(false);
-  const [currentBatchId,setCurrentBatchId]=useState(null);
+  const [migDone,setMigDone]=useState(()=>lsGet(K.migDone,false));
+  const [stats,setStats]=useState(()=>lsGet(K.stats,{users:0,pages:0,errors:0,flagged:0}));
+  const [lastRunWasDry,setLastRunWasDry]=useState(()=>lsGet(K.lastDry,false));
+  const [currentBatchId,setCurrentBatchId]=useState(()=>lsGet(K.batchId,null));
+  const [retrying,setRetrying]=useState(false);
   const [toast,setToast]=useState(null); // {message, type}
   const [showReports,setShowReports]=useState(false);
+  const [appUser,setAppUser]=useState(null);
+  const [reportRefreshKey,setReportRefreshKey]=useState(0); // increments to force reports re-fetch
+  const [wsLoaded,setWsLoaded]=useState(false); // true after DB workspace hydration
+  const KRef=useRef(K); // mutable ref so persist effects always use current scoped keys
+  KRef.current=K;
+  const wsSaveTimer=useRef(null); // debounce timer for workspace saves
   const sseRef=useRef(null);
   const [splitPct,setSplitPct]=useState(50);
   const containerRef=useRef(null);
@@ -853,28 +1014,101 @@ function App(){
     document.addEventListener('mousemove',onMove);document.addEventListener('mouseup',onUp);
   },[]);
 
-  // Auth check on mount
+  // Auth check on mount — verify app session, hydrate state from DB (cross-device), check cloud auth
   useEffect(()=>{
-    Promise.all([
-      fetch('/auth/google/status').then(r=>r.json()).then(d=>d.authenticated).catch(()=>false),
-      fetch('/auth/status').then(r=>r.json()).then(d=>d.authenticated).catch(()=>false),
-    ]).then(([gOk,mOk])=>{
-      const stale=(googleAuthed&&!gOk)||(msAuthed&&!mOk);
-      const orphaned=!gOk&&!mOk&&(logs.length>0||uploadData);
-      if(stale||orphaned){lsClear();setGoogleAuthed(false);setMsAuthed(false);setStep(0);setUploadData(null);setMappings({});setSelectedUsers(new Set());setLogs([])}
-      else{if(!gOk&&googleAuthed)setGoogleAuthed(false);if(!mOk&&msAuthed)setMsAuthed(false)}
-    });
+    fetch('/api/me').then(r=>{
+      if(!r.ok){window.location.href='/login.html';return null}
+      return r.json();
+    }).then(u=>{
+      if(!u)return;
+      setAppUser(u);
+      // Handle user switching — clear old localStorage if different user
+      const prevUid=localStorage.getItem('gem_active_user')||'';
+      if(prevUid && prevUid!==u._id){ lsClearAll(); }
+      localStorage.setItem('gem_active_user',u._id);
+
+      // Hydrate from MongoDB — DB is authoritative for cross-device state
+      fetch('/api/workspace').then(r=>r.ok?r.json():null).then(ws=>{
+        if(ws){
+          // Override localStorage-initialized state with DB values
+          if(ws.step!=null){setStep(ws.step);lsSet(KRef.current.step,ws.step)}
+          if(ws.uploadData!==undefined){setUploadData(ws.uploadData);lsSet(KRef.current.uploadData,ws.uploadData)}
+          if(ws.config){setConfig(ws.config);lsSet(KRef.current.config,ws.config)}
+          if(ws.mappings){setMappings(ws.mappings);lsSet(KRef.current.mappings,ws.mappings)}
+          if(ws.selectedUsers){const s=new Set(ws.selectedUsers);setSelectedUsers(s);lsSet(KRef.current.selUsers,ws.selectedUsers)}
+          if(ws.options){setOptions(ws.options)}
+          if(ws.migDone!=null){setMigDone(ws.migDone);lsSet(KRef.current.migDone,ws.migDone)}
+          if(ws.stats){setStats(ws.stats);lsSet(KRef.current.stats,ws.stats)}
+          if(ws.currentBatchId!==undefined){setCurrentBatchId(ws.currentBatchId);lsSet(KRef.current.batchId,ws.currentBatchId)}
+          if(ws.lastRunWasDry!=null){setLastRunWasDry(ws.lastRunWasDry);lsSet(KRef.current.lastDry,ws.lastRunWasDry)}
+        }
+        setWsLoaded(true);
+
+        // Validate cloud auth status
+        Promise.all([
+          fetch('/auth/google/status').then(r=>r.json()).then(d=>d.authenticated).catch(()=>false),
+          fetch('/auth/status').then(r=>r.json()).then(d=>d.authenticated).catch(()=>false),
+        ]).then(([gOk,mOk])=>{
+          if(!gOk&&googleAuthed)setGoogleAuthed(false);
+          if(!mOk&&msAuthed)setMsAuthed(false);
+        });
+      }).catch(()=>setWsLoaded(true));
+    }).catch(()=>{window.location.href='/login.html'});
   },[]);
 
-  // Persist state
-  useEffect(()=>{lsSet(LS.step,step)},[step]);
-  useEffect(()=>{lsSet(LS.uploadData,uploadData)},[uploadData]);
-  useEffect(()=>{lsSet(LS.config,config)},[config]);
-  useEffect(()=>{lsSet(LS.mappings,mappings)},[mappings]);
-  useEffect(()=>{lsSet(LS.logs,logs.slice(-500))},[logs]);
-  useEffect(()=>{lsSet(LS.authG,{signedIn:googleAuthed})},[googleAuthed]);
-  useEffect(()=>{lsSet(LS.authMs,{signedIn:msAuthed})},[msAuthed]);
-  useEffect(()=>{lsSet(LS.selUsers,[...selectedUsers])},[selectedUsers]);
+  // Persist state (always use KRef.current so keys stay scoped to the right user)
+  useEffect(()=>{lsSet(KRef.current.step,step)},[step]);
+  useEffect(()=>{lsSet(KRef.current.uploadData,uploadData)},[uploadData]);
+  useEffect(()=>{lsSet(KRef.current.config,config)},[config]);
+  useEffect(()=>{lsSet(KRef.current.mappings,mappings)},[mappings]);
+  useEffect(()=>{lsSet(KRef.current.logs,logs.slice(-500))},[logs]);
+  useEffect(()=>{lsSet(KRef.current.authG,{signedIn:googleAuthed})},[googleAuthed]);
+  useEffect(()=>{lsSet(KRef.current.authMs,{signedIn:msAuthed})},[msAuthed]);
+  useEffect(()=>{lsSet(KRef.current.selUsers,[...selectedUsers])},[selectedUsers]);
+  useEffect(()=>{lsSet(KRef.current.migDone,migDone)},[migDone]);
+  useEffect(()=>{lsSet(KRef.current.stats,stats)},[stats]);
+  useEffect(()=>{lsSet(KRef.current.batchId,currentBatchId)},[currentBatchId]);
+  useEffect(()=>{lsSet(KRef.current.lastDry,lastRunWasDry)},[lastRunWasDry]);
+
+  // Cross-device workspace save (debounced 800ms) — only after initial DB hydration
+  const saveWorkspace=useCallback(()=>{
+    if(!wsLoaded)return;
+    clearTimeout(wsSaveTimer.current);
+    wsSaveTimer.current=setTimeout(()=>{
+      fetch('/api/workspace',{method:'PUT',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({step,uploadData,config,mappings,selectedUsers:[...selectedUsers],
+          options,migDone,stats,currentBatchId,lastRunWasDry})
+      }).catch(()=>{});
+    },800);
+  },[wsLoaded,step,uploadData,config,mappings,selectedUsers,options,migDone,stats,currentBatchId,lastRunWasDry]);
+  useEffect(()=>{saveWorkspace()},[saveWorkspace]);
+
+  // Recover migration state after page refresh / laptop shutdown
+  useEffect(()=>{
+    const savedBatchId=lsGet(K.batchId,null);
+    const savedDone=lsGet(K.migDone,false);
+    const savedStep=lsGet(K.step,0);
+    if(savedBatchId&&!savedDone&&savedStep>=4){
+      // Migration was in-progress when browser closed — check MongoDB for actual status
+      fetch(`/api/reports/${savedBatchId}?summary=true`)
+        .then(r=>r.ok?r.json():null)
+        .then(doc=>{
+          if(!doc)return;
+          if(doc.status==='completed'&&doc.summary){
+            setStats({users:doc.summary.total_users||0,pages:doc.summary.total_pages_created||0,errors:doc.summary.total_errors||0,flagged:doc.summary.total_visual_assets_flagged||0});
+            setLastRunWasDry(doc.dryRun||false);
+            setMigDone(true);setStep(5);
+          } else if(doc.status==='failed'){
+            // Server died mid-migration — show done screen with whatever completed
+            const s=doc.summary||{};
+            setStats({users:s.total_users||0,pages:s.total_pages_created||0,errors:s.total_errors||0,flagged:s.total_visual_assets_flagged||0});
+            setLastRunWasDry(doc.dryRun||false);
+            setMigDone(true);setStep(5);
+          }
+          // If status==='running', server may still be active — leave SSE to handle it
+        }).catch(()=>{});
+    }
+  },[]);
 
   const addLog=(type,message)=>{const ts=new Date().toTimeString().slice(0,8);setLogs(p=>[...p,{type,message,ts}])};
 
@@ -888,7 +1122,7 @@ function App(){
   };
 
   const runMigration=async(forceLive=false)=>{
-    const isDry=forceLive?false:options.dryRun;
+    const isDry=forceLive===true?false:options.dryRun;
     setLastRunWasDry(isDry);
     // If running live after dry-run, update options too
     if(forceLive)setOptions(p=>({...p,dryRun:false}));
@@ -909,7 +1143,8 @@ function App(){
         setStats({...curStats});addLog(d.type,d.message);
         if(d.type==='done'){
           if(d.batch_id)setCurrentBatchId(d.batch_id);
-          sseRef.current.close();setLive(false);setMigDone(true);setStep(5);
+          sseRef.current.close();setLive(false);setMigDone(true);setRetrying(false);setStep(5);
+          setReportRefreshKey(p=>p+1); // trigger reports panel to re-fetch
         }
       }catch{}
     };
@@ -917,22 +1152,42 @@ function App(){
 
     const fm={};const keys=selectedUsers.size>0?[...selectedUsers]:Object.keys(mappings);
     keys.forEach(k=>{if(mappings[k]!==undefined)fm[k]=mappings[k]});
-    const payload={extract_path:uploadData.extract_path,tenant_id:config.tenantId,customer_name:config.fileName||'Gemini',user_mappings:fm,dry_run:isDry,skip_followups:options.skipFollowups,skip_ai_response:options.skipAiResponse,from_date:options.fromDate||null,to_date:options.toDate||null};
+    const payload={extract_path:uploadData.extract_path,tenant_id:config.tenantId,customer_name:config.filePath||'Gemini',user_mappings:fm,dry_run:isDry,skip_followups:false,skip_ai_response:options.skipAiResponse,from_date:options.fromDate||null,to_date:options.toDate||null,upload_id:uploadData.id};
     try{
       const res=await fetch('/api/migrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       if(!res.ok){const d=await res.json();addLog('error',d.error);setLive(false)}
     }catch(err){addLog('error',err.message);setLive(false)}
   };
 
-  // Run Another Batch: keep auth + data, go back to Import step for new data
-  const runAnotherBatch=()=>{
-    setUploadData(null);setMappings({});setSelectedUsers(new Set());
-    setMigDone(false);setStats({users:0,pages:0,errors:0,flagged:0});setLogs([]);
+  // Run Another Batch: two modes
+  // keepData=true → same vault, different users (go to Step 2)
+  // keepData=false → new import (clear everything, go to Step 1)
+  const runAnotherBatch=(keepData=true)=>{
+    setMigDone(false);setStats({users:0,pages:0,errors:0,flagged:0});setLogs([]);setCurrentBatchId(null);
     setOptions(p=>({...p,dryRun:true,fromDate:'',toDate:''}));
-    setStep(1);
+    if(keepData){
+      setMappings({});setSelectedUsers(new Set());setStep(2);
+    } else {
+      setUploadData(null);setMappings({});setSelectedUsers(new Set());setStep(1);
+    }
   };
 
-  const resetSession=()=>{if(confirm('Reset all session data?')){lsClear();location.reload()}};
+  const retryFailed=async()=>{
+    if(!currentBatchId||retrying)return;
+    setRetrying(true);
+    setMigDone(false);
+    addLog('info',`Retrying ${stats.errors} failed conversation(s)...`);
+    try{
+      const res=await fetch('/api/migrate/retry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({batchId:currentBatchId})});
+      const data=await res.json();
+      if(!res.ok||!data.started){addLog('error',data.error||data.message||'Retry failed');setMigDone(true);setRetrying(false);}
+      // SSE stream picks up logs automatically — retrying state cleared when 'done' event fires
+    }catch(e){addLog('error','Retry request failed: '+e.message);setMigDone(true);setRetrying(false);}
+  };
+
+  const resetSession=()=>{if(confirm('Reset all session data?')){lsClear(appUser?._id);location.reload()}};
+  // Logout: destroy session only — DO NOT clear localStorage so user returns to their last state
+  const handleLogout=async()=>{await fetch('/api/logout',{method:'POST'});window.location.href='/login.html'};
   const handleStepClick=i=>{if(i<step&&!live)setStep(i)};
 
   return(
@@ -953,6 +1208,13 @@ function App(){
           <button onClick={resetSession} style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:'rgba(255,255,255,.6)',background:'transparent',border:'1px solid rgba(255,255,255,.2)',borderRadius:5,padding:'4px 9px',cursor:'pointer',fontFamily:'inherit',transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.1)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
             <IcoReset s={11}/> Reset
           </button>
+          {appUser&&<div style={{display:'flex',alignItems:'center',gap:8,borderLeft:'1px solid rgba(255,255,255,.2)',paddingLeft:10}}>
+            <div style={{width:26,height:26,borderRadius:'50%',background:'rgba(255,255,255,.2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:700,color:'white'}}>{(appUser.name||appUser.email).slice(0,2).toUpperCase()}</div>
+            <span style={{fontSize:11,color:'rgba(255,255,255,.8)',maxWidth:100,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{appUser.name||appUser.email}</span>
+            <button onClick={handleLogout} title="Sign out" style={{display:'flex',alignItems:'center',gap:4,fontSize:11,color:'rgba(255,255,255,.6)',background:'transparent',border:'1px solid rgba(255,255,255,.2)',borderRadius:5,padding:'4px 8px',cursor:'pointer',fontFamily:'inherit',transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.1)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+              <IcoLogout s={11}/> Sign out
+            </button>
+          </div>}
         </div>
       </div>
 
@@ -970,10 +1232,10 @@ function App(){
           <div style={{flex:1,overflowY:step===2?'hidden':'auto',padding:'20px 24px',display:step===2?'flex':'block',flexDirection:step===2?'column':undefined}}>
             {/* Render steps inline to avoid component recreation issues */}
             {step===0&&<Step0 googleAuthed={googleAuthed} setGoogleAuthed={setGoogleAuthed} msAuthed={msAuthed} setMsAuthed={setMsAuthed} googleUsers={googleUsers} setGoogleUsers={setGoogleUsers} msUsers={msUsers} setMsUsers={setMsUsers} tenantId={config.tenantId} onComplete={()=>setStep(1)}/>}
-            {step===1&&<Step1 googleUsers={googleUsers} onComplete={handleImportComplete} onBack={()=>setStep(0)} showToast={showToast}/>}
+            {step===1&&<Step1 googleUsers={googleUsers} googleAuthed={googleAuthed} onComplete={handleImportComplete} onBack={()=>setStep(0)} showToast={showToast} uploadData={uploadData}/>}
             {step===2&&<Step2 uploadData={uploadData} msUsers={msUsers} mappings={mappings} setMappings={setMappings} selectedUsers={selectedUsers} setSelectedUsers={setSelectedUsers} onNext={()=>{addLog('info',`User mappings ready — ${selectedUsers.size||Object.keys(mappings).length} users selected`);setStep(3)}} onBack={()=>setStep(1)} showToast={showToast}/>}
             {step===3&&<Step3 options={options} setOptions={setOptions} config={config} setConfig={setConfig} msAuthed={msAuthed} onRun={runMigration} onBack={()=>setStep(2)}/>}
-            {(step===4||step===5)&&<StepMigrate stats={stats} done={migDone} lastRunWasDry={lastRunWasDry} batchId={currentBatchId} onStartLive={()=>runMigration(true)} onRunAnother={runAnotherBatch}/>}
+            {(step===4||step===5)&&<StepMigrate stats={stats} done={migDone} lastRunWasDry={lastRunWasDry} batchId={currentBatchId} onStartLive={()=>runMigration(true)} onRunAnother={runAnotherBatch} onRetry={retryFailed} retrying={retrying} hasUploadData={!!uploadData}/>}
           </div>
         </div>
 
@@ -994,7 +1256,7 @@ function App(){
       </div>
 
       {/* Reports side panel */}
-      {showReports&&<ReportsPanel onClose={()=>setShowReports(false)}/>}
+      {showReports&&<ReportsPanel onClose={()=>setShowReports(false)} refreshKey={reportRefreshKey}/>}
 
       {/* Toast notification */}
       {toast&&<Toast message={toast.message} type={toast.type} onHide={()=>setToast(null)}/>}

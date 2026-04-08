@@ -57,4 +57,23 @@ export class ReportWriter {
     logger.info(`Migration report written: ${outputPath}`);
     logger.info(`Summary — users: ${this._users.length}, pages: ${totalPages}, errors: ${totalErrors}`);
   }
+
+  getReport() {
+    const endTime = new Date();
+    const totalPages = this._users.reduce((s, u) => s + u.pages_created, 0);
+    const totalErrors = this._users.reduce((s, u) => s + u.error_count, 0);
+    const totalFlagged = this._users.reduce((s, u) => s + u.visual_assets_flagged, 0);
+    return {
+      report_type: 'migration_report',
+      generated_at: endTime.toISOString(),
+      summary: {
+        total_users: this._users.length,
+        total_pages_created: totalPages,
+        total_errors: totalErrors,
+        total_visual_assets_flagged: totalFlagged,
+        total_duration_seconds: parseFloat(((endTime - this._startTime) / 1000).toFixed(1))
+      },
+      users: this._users
+    };
+  }
 }

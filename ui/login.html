@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Sign In | Gemini → Copilot Migration</title>
+  <link rel="icon" type="image/png" href="/cloudfuze-logo.png"/>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Poppins',system-ui,sans-serif;height:100vh;overflow:hidden;display:flex}
+
+    /* Left panel */
+    .left{flex:0 0 58%;background:#0129AC;display:flex;flex-direction:column;padding:40px 48px;position:relative;overflow:hidden}
+    .left::before{content:'';position:absolute;bottom:-120px;right:-80px;width:400px;height:400px;border-radius:50%;background:rgba(255,255,255,.05)}
+    .left::after{content:'';position:absolute;top:-80px;left:-60px;width:300px;height:300px;border-radius:50%;background:rgba(255,255,255,.04)}
+    .left-logo{display:flex;align-items:center;gap:12px;margin-bottom:48px;position:relative;z-index:1}
+    .left-logo img{height:36px;object-fit:contain}
+    .left-logo-divider{width:1px;height:28px;background:rgba(255,255,255,.3)}
+    .left-logo-text{color:white;font-size:13px;font-weight:500;opacity:.85}
+    .left-content{flex:1;display:flex;flex-direction:column;justify-content:center;position:relative;z-index:1}
+    .left-tag{color:rgba(255,255,255,.7);font-size:13px;font-weight:400;margin-bottom:12px;letter-spacing:.3px}
+    .left-title{color:white;font-size:2rem;font-weight:700;line-height:1.25;margin-bottom:20px}
+    .left-title span{color:#809EFC}
+    .left-desc{color:rgba(255,255,255,.75);font-size:14px;line-height:1.7;max-width:420px;margin-bottom:36px}
+    .left-bullets{display:flex;flex-direction:column;gap:14px}
+    .left-bullet{display:flex;align-items:flex-start;gap:12px;color:rgba(255,255,255,.85);font-size:13.5px;line-height:1.5}
+    .left-bullet-icon{width:22px;height:22px;border-radius:50%;background:rgba(255,255,255,.15);display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+    .left-footer{color:rgba(255,255,255,.4);font-size:11px;margin-top:auto;position:relative;z-index:1}
+
+    /* Right panel */
+    .right{flex:1;background:#F6F6F6;display:flex;align-items:center;justify-content:center;padding:40px}
+    .card{background:white;border-radius:16px;padding:44px 40px;width:100%;max-width:400px;box-shadow:0 4px 24px rgba(0,0,0,.08)}
+    .card-logo{display:flex;justify-content:center;margin-bottom:28px}
+    .card-logo img{height:32px;object-fit:contain}
+    .card-title{font-size:22px;font-weight:700;color:#1a1a2e;text-align:center;margin-bottom:6px}
+    .card-sub{font-size:13px;color:#707070;text-align:center;margin-bottom:32px}
+    .field{margin-bottom:18px}
+    .field label{display:block;font-size:12px;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.5px;margin-bottom:7px}
+    .field input{width:100%;padding:12px 14px;border:1.5px solid #EBEBEB;border-radius:8px;font-size:14px;font-family:inherit;outline:none;transition:border-color .15s,box-shadow .15s;color:#2e2e2e;background:white}
+    .field input:focus{border-color:#0129AC;box-shadow:0 0 0 3px rgba(1,41,172,.1)}
+    .field input::placeholder{color:#bbb}
+    .btn-submit{width:100%;padding:13px;background:#0129AC;color:white;border:none;border-radius:8px;font-size:14px;font-weight:600;font-family:inherit;cursor:pointer;transition:background .15s;margin-top:4px;display:flex;align-items:center;justify-content:center;gap:8px}
+    .btn-submit:hover{background:#0C18D4}
+    .btn-submit:disabled{background:#809EFC;cursor:not-allowed}
+    .error-msg{background:#FEF2F2;border:1px solid #FCA5A5;color:#991B1B;border-radius:7px;padding:10px 14px;font-size:13px;margin-bottom:16px;display:none;align-items:center;gap:8px}
+    .error-msg.show{display:flex}
+    .spinner{width:16px;height:16px;border:2.5px solid rgba(255,255,255,.4);border-top-color:white;border-radius:50%;animation:spin 1s linear infinite;flex-shrink:0}
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    @media(max-width:768px){
+      .left{display:none}
+      .right{padding:24px}
+    }
+  </style>
+</head>
+<body>
+
+<!-- Left Panel -->
+<div class="left">
+  <div class="left-logo">
+    <img src="/cloudfuze-logo.png" alt="CloudFuze"/>
+    <div class="left-logo-divider"></div>
+    <span class="left-logo-text">Migration Suite</span>
+  </div>
+  <div class="left-content">
+    <div class="left-tag">Enterprise Cloud Migration</div>
+    <div class="left-title">Gemini → <span>Copilot</span><br/>Migration Tool</div>
+    <div class="left-desc">Migrate Google Gemini conversation history into Microsoft 365 Copilot — fully automated, secure, and auditable.</div>
+    <div class="left-bullets">
+      <div class="left-bullet">
+        <div class="left-bullet-icon">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        Export from Google Vault, migrate to OneNote / Copilot Pages
+      </div>
+      <div class="left-bullet">
+        <div class="left-bullet-icon">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        Batch-wise migration with per-user mapping and retry support
+      </div>
+      <div class="left-bullet">
+        <div class="left-bullet-icon">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        Full audit reports — per-batch and aggregate, downloadable CSV
+      </div>
+    </div>
+  </div>
+  <div class="left-footer">CloudFuze © 2026. All rights reserved.</div>
+</div>
+
+<!-- Right Panel -->
+<div class="right">
+  <div class="card">
+    <div class="card-logo">
+      <img src="/cloudfuze-logo.png" alt="CloudFuze"/>
+    </div>
+    <div class="card-title">Welcome back</div>
+    <div class="card-sub">Sign in to access the migration tool</div>
+
+    <div class="error-msg" id="errorMsg">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+      <span id="errorText">Invalid email or password.</span>
+    </div>
+
+    <form id="loginForm" onsubmit="handleLogin(event)">
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="email" placeholder="you@company.com" required autocomplete="username"/>
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="password" placeholder="••••••••" required autocomplete="current-password"/>
+      </div>
+      <button type="submit" class="btn-submit" id="submitBtn">
+        Sign In
+      </button>
+    </form>
+  </div>
+</div>
+
+<script>
+async function handleLogin(e) {
+  e.preventDefault();
+  const btn = document.getElementById('submitBtn');
+  const errDiv = document.getElementById('errorMsg');
+  const errText = document.getElementById('errorText');
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+
+  // Hide error, show spinner
+  errDiv.classList.remove('show');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div> Signing in...';
+
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      window.location.href = '/';
+    } else {
+      errText.textContent = data.error || 'Invalid email or password.';
+      errDiv.classList.add('show');
+      btn.disabled = false;
+      btn.innerHTML = 'Sign In';
+    }
+  } catch {
+    errText.textContent = 'Connection error. Please try again.';
+    errDiv.classList.add('show');
+    btn.disabled = false;
+    btn.innerHTML = 'Sign In';
+  }
+}
+</script>
+</body>
+</html>

@@ -19,6 +19,8 @@ import { ReportWriter } from './src/modules/reportWriter.js';
 import { CheckpointManager } from './src/utils/checkpoint.js';
 import { AgentDeployer } from './src/agent/agentDeployer.js';
 import { connectMongo, getDb } from './src/db/mongo.js';
+import session from 'express-session';
+import bcrypt from 'bcryptjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -42,7 +44,92 @@ const dbLog = getLogger('db:ops');
 function db() { return getDb(); }
 
 app.use(express.json());
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'gemco-session-2026',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { maxAge: 24 * 60 * 60 * 1000 } // 24 hours
+}));
+
+// ─── App Auth (login gate) ──────────────────────────────────────────────────
+function requireAuth(req, res, next) {
+  if (req.session?.appUser) return next();
+  res.status(401).json({ error: 'Not logged in' });
+}
+
+// Serve login page for unauthenticated users at root
+app.get('/', (req, res) => {
+  if (req.session?.appUser) {
+    res.sendFile(path.join(__dirname, 'ui', 'index.html'));
+  } else {
+    res.sendFile(path.join(__dirname, 'ui', 'login.html'));
+  }
+});
+
+// Static files (CSS, JS, images) — always accessible
 app.use(express.static(path.join(__dirname, 'ui')));
+
+// Login / logout / me
+app.post('/api/login', async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+  const user = await db().collection('appUsers').findOne({ email: email.toLowerCase().trim() });
+  if (!user) return res.status(401).json({ error: 'Invalid email or password' });
+  const valid = await bcrypt.compare(password, user.password);
+  if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
+  req.session.appUser = { _id: user._id.toString(), email: user.email, name: user.name, role: user.role };
+  res.json({ ok: true, user: { email: user.email, name: user.name, role: user.role } });
+});
+
+app.get('/api/me', (req, res) => {
+  if (req.session?.appUser) return res.json(req.session.appUser);
+  res.status(401).json({ error: 'Not logged in' });
+});
+
+app.post('/api/logout', (req, res) => {
+  req.session.destroy(() => res.json({ ok: true }));
+});
+
+// ─── User Workspace (cross-device state) ─────────────────────────────────────
+app.get('/api/workspace', async (req, res) => {
+  const userId = req.session.appUser._id;
+  const doc = await db().collection('userWorkspace').findOne({ userId });
+  res.json(doc || null);
+});
+
+app.put('/api/workspace', async (req, res) => {
+  const userId = req.session.appUser._id;
+  const { step, uploadData, config, mappings, selectedUsers, options,
+          migDone, stats, currentBatchId, lastRunWasDry } = req.body;
+  await db().collection('userWorkspace').updateOne(
+    { userId },
+    { $set: { userId, step, uploadData, config, mappings, selectedUsers, options,
+               migDone, stats, currentBatchId, lastRunWasDry, updatedAt: new Date() } },
+    { upsert: true }
+  );
+  res.json({ ok: true });
+});
+
+// Admin: manage app users
+app.get('/api/users', requireAuth, async (req, res) => {
+  if (req.session.appUser.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+  const users = await db().collection('appUsers').find({}, { projection: { password: 0 } }).toArray();
+  res.json(users);
+});
+
+app.post('/api/users', requireAuth, async (req, res) => {
+  if (req.session.appUser.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+  const { email, name, password, role = 'user' } = req.body;
+  if (!email || !password || !name) return res.status(400).json({ error: 'email, name, password required' });
+  const hashed = await bcrypt.hash(password, 10);
+  try {
+    await db().collection('appUsers').insertOne({ email: email.toLowerCase().trim(), password: hashed, name, role, createdAt: new Date() });
+    res.json({ ok: true });
+  } catch (e) {
+    if (e.code === 11000) return res.status(409).json({ error: 'Email already exists' });
+    res.status(500).json({ error: e.message });
+  }
+});
 
 const upload = multer({
   dest: path.join(__dirname, 'uploads'),
@@ -50,6 +137,18 @@ const upload = multer({
     if (file.originalname.endsWith('.zip')) cb(null, true);
     else cb(new Error('Only ZIP files are accepted'));
   }
+});
+
+// ─── Protect all API routes (except auth-related) ───────────────────────────
+const PUBLIC_PATHS = ['/api/login', '/api/me', '/api/logout'];
+app.use('/api', (req, res, next) => {
+  if (PUBLIC_PATHS.includes(req.path)) return next();
+  if (!req.session?.appUser) return res.status(401).json({ error: 'Not logged in' });
+  next();
+});
+app.use('/auth', (req, res, next) => {
+  if (!req.session?.appUser) return res.status(401).json({ error: 'Not logged in' });
+  next();
 });
 
 // ─── OAuth: Sign in with Microsoft ────────────────────────────────────────────
@@ -428,6 +527,7 @@ app.post('/api/upload', upload.single('vault_zip'), async (req, res) => {
       totalUsers: users.length,
       totalConversations: users.reduce((s, u) => s + u.conversationCount, 0),
       users: usersArr,
+      appUserId: req.session.appUser?._id || null,
     };
     await db().collection('uploads').updateOne(
       { _id: uploadDoc._id },
@@ -455,9 +555,20 @@ app.post('/api/upload', upload.single('vault_zip'), async (req, res) => {
 });
 
 // ─── Upload Management ────────────────────────────────────────────────────────
-app.get('/api/uploads', async (_req, res) => {
-  const uploads = await db().collection('uploads').find().sort({ uploadTime: -1 }).toArray();
-  res.json({ uploads });
+app.get('/api/uploads', async (req, res) => {
+  const appUserId = req.session.appUser?._id || null;
+  const uploads = await db().collection('uploads').find({ appUserId }).sort({ uploadTime: -1 }).toArray();
+  res.json({
+    uploads: uploads.map(u => ({
+      id: u._id,
+      original_name: u.originalName,
+      upload_time: u.uploadTime,
+      extract_path: u.extractPath,
+      total_users: u.totalUsers,
+      total_conversations: u.totalConversations,
+      users: (u.users || []).map(x => ({ email: x.email, display_name: x.displayName, conversation_count: x.conversationCount }))
+    }))
+  });
 });
 
 app.delete('/api/uploads/:id', async (req, res) => {
@@ -473,28 +584,86 @@ app.delete('/api/uploads/:id', async (req, res) => {
 // ─── Report Downloads ─────────────────────────────────────────────────────────
 
 // List all batch reports (without full report body for performance)
-app.get('/api/reports', async (_req, res) => {
+app.get('/api/reports', async (req, res) => {
+  const appUserId = req.session.appUser?._id || null;
   const reports = await db().collection('reportsWorkspace')
-    .find({}, { projection: { report: 0 } })
+    .find({ appUserId }, { projection: { report: 0 } })
     .sort({ startTime: -1 })
     .toArray();
   res.json(reports);
 });
 
-// Download a specific batch report by id
+// Aggregate stats across all completed batches
+app.get('/api/reports/aggregate', async (req, res) => {
+  const appUserId = req.session.appUser?._id || null;
+  const pipeline = [
+    { $match: { status: 'completed', appUserId } },
+    { $group: {
+      _id: null,
+      totalBatches: { $sum: 1 },
+      totalUsers: { $sum: '$totalUsers' },
+      totalPages: { $sum: '$migratedConversations' },
+      totalErrors: { $sum: { $ifNull: ['$report.summary.total_errors', 0] } },
+      liveBatches: { $sum: { $cond: [{ $ne: ['$dryRun', true] }, 1, 0] } },
+      dryRunBatches: { $sum: { $cond: [{ $eq: ['$dryRun', true] }, 1, 0] } }
+    }}
+  ];
+  const [agg] = await db().collection('reportsWorkspace').aggregate(pipeline).toArray();
+  const result = agg || { totalBatches: 0, totalUsers: 0, totalPages: 0, totalErrors: 0, liveBatches: 0, dryRunBatches: 0 };
+  delete result._id;
+  res.json(result);
+});
+
+// Previously migrated users for a given uploadId (for duplicate-migration warnings)
+app.get('/api/batches/migrated-users', async (req, res) => {
+  const { uploadId } = req.query;
+  if (!uploadId) return res.status(400).json({ error: 'uploadId required' });
+  const appUserId = req.session.appUser?._id || null;
+  const batches = await db().collection('reportsWorkspace')
+    .find({ uploadId, appUserId, status: 'completed', dryRun: { $ne: true } }, { projection: { 'report.users.email': 1 } })
+    .toArray();
+  const migrated = new Set();
+  batches.forEach(b => (b.report?.users || []).forEach(u => migrated.add(u.email)));
+  res.json({ migrated_users: [...migrated] });
+});
+
+// Server-side CSV download for a batch
+app.get('/api/reports/:id/csv', async (req, res) => {
+  const doc = await db().collection('reportsWorkspace').findOne({ _id: req.params.id });
+  if (!doc) return res.status(404).json({ error: 'Batch not found' });
+  const users = doc.report?.users || [];
+  const rows = ['Email,Status,Pages Created,Conversations,Errors,Error Message'];
+  users.forEach(u => {
+    if (u.errors?.length > 0) {
+      u.errors.forEach(e => rows.push([u.email, u.status, u.pages_created, u.conversations_processed, u.error_count, e.error_message || ''].map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(',')));
+    } else {
+      rows.push([u.email, u.status, u.pages_created, u.conversations_processed, u.error_count, ''].map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(','));
+    }
+  });
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="batch_${req.params.id}.csv"`);
+  res.send(rows.join('\n'));
+});
+
+// Get a specific batch report — JSON inline; ?download=true forces download, ?summary=true returns lightweight metadata
 app.get('/api/reports/:id', async (req, res) => {
   const { id } = req.params;
   // Legacy alias
   if (id === 'migration') {
     const latest = await db().collection('reportsWorkspace').findOne({}, { sort: { startTime: -1 } });
     if (!latest) return res.status(404).json({ error: 'No report yet' });
-    res.setHeader('Content-Type', 'application/json');
     return res.json(latest.report || latest);
   }
   const doc = await db().collection('reportsWorkspace').findOne({ _id: id });
   if (!doc) return res.status(404).json({ error: 'Batch report not found' });
-  res.setHeader('Content-Disposition', `attachment; filename="migration_report_${id}.json"`);
+  if (req.query.download === 'true') {
+    res.setHeader('Content-Disposition', `attachment; filename="migration_report_${id}.json"`);
+  }
   res.setHeader('Content-Type', 'application/json');
+  if (req.query.summary === 'true') {
+    const { report, ...meta } = doc;
+    return res.json({ ...meta, summary: report?.summary || null });
+  }
   res.json(doc.report || doc);
 });
 
@@ -565,7 +734,8 @@ app.post('/api/migrate', async (req, res) => {
     skip_followups = false,
     skip_ai_response = false,
     from_date = null,
-    to_date = null
+    to_date = null,
+    upload_id = null
   } = req.body;
 
   if (!extract_path || !tenant_id) {
@@ -577,8 +747,9 @@ app.post('/api/migrate', async (req, res) => {
   }
 
   const batch_id = Date.now().toString();
+  const appUserId = req.session.appUser?._id || null;
   res.json({ started: true, batch_id });
-  runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id });
+  runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id, upload_id, appUserId });
 });
 
 async function withConcurrency(items, limit, fn) {
@@ -593,7 +764,7 @@ async function withConcurrency(items, limit, fn) {
   return Promise.all(executing);
 }
 
-async function runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id }) {
+async function runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id, upload_id, appUserId }) {
   logBuffer.length = 0; // clear previous run's logs
   const batchId = batch_id || Date.now().toString();
   currentBatchId = batchId;
@@ -602,15 +773,15 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
   // Save user mappings snapshot for this batch
   await db().collection('userMappings').updateOne(
     { batchId },
-    { $set: { customerName: customer_name, mappings: user_mappings, createdAt: startTime } },
+    { $set: { customerName: customer_name, mappings: user_mappings, createdAt: startTime, appUserId } },
     { upsert: true }
   );
   dbLog.info(`userMappings.upsert — batch ${batchId} (${Object.keys(user_mappings).length} mappings)`);
 
-  // Create reportsWorkspace doc
+  // Create reportsWorkspace doc (include uploadId + appUserId for per-user filtering)
   await db().collection('reportsWorkspace').updateOne(
     { _id: batchId },
-    { $set: { customerName: customer_name, tenantId: tenant_id, startTime, status: 'running', dryRun: dry_run } },
+    { $set: { customerName: customer_name, tenantId: tenant_id, startTime, status: 'running', dryRun: dry_run, uploadId: upload_id, appUserId } },
     { upsert: true }
   );
   dbLog.info(`reportsWorkspace.insert — batch ${batchId} status=running`);
@@ -621,9 +792,13 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
 
   try {
     const reader = new VaultReader(extract_path);
-    const users = await reader.discoverUsers();
+    const allUsers = await reader.discoverUsers();
+    // Filter to only selected users (those present in user_mappings)
+    const users = Object.keys(user_mappings).length > 0
+      ? allUsers.filter(u => Object.prototype.hasOwnProperty.call(user_mappings, u.email))
+      : allUsers;
 
-    emit('info', `Discovered ${users.length} users from Vault export`);
+    emit('info', `Discovered ${allUsers.length} users — migrating ${users.length} selected`);
 
     if (dry_run) {
       for (const u of users) {
@@ -760,6 +935,111 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
     dbLog.info(`reportsWorkspace.update — batch ${batchId} status=failed`);
     currentBatchId = null;
   }
+}
+
+// ─── Retry Failed Conversations ───────────────────────────────────────────────
+app.post('/api/migrate/retry', async (req, res) => {
+  const { batchId } = req.body;
+  if (!batchId) return res.status(400).json({ error: 'batchId required' });
+  if (!isAuthenticated()) return res.status(401).json({ error: 'Not signed in. Click "Sign in with Microsoft" first.' });
+
+  const batchDoc = await db().collection('reportsWorkspace').findOne({ _id: batchId });
+  if (!batchDoc) return res.status(404).json({ error: 'Batch not found' });
+
+  const mappingDoc = await db().collection('userMappings').findOne({ batchId });
+  // Get most recent upload that matches this batch's extract path, or fall back to latest
+  const uploadDoc = await db().collection('uploads').findOne({}, { sort: { uploadTime: -1 } });
+
+  // Build retryTargets: { m365Email → [failedConversationTitles] }
+  const retryTargets = {};
+  for (const u of batchDoc.report?.users || []) {
+    if (u.errors?.length > 0) {
+      retryTargets[u.email] = u.errors.map(e => e.conversation);
+    }
+  }
+
+  if (Object.keys(retryTargets).length === 0) {
+    return res.json({ started: false, message: 'No failed conversations to retry' });
+  }
+
+  const retryBatchId = `${batchId}_retry_${Date.now()}`;
+  res.json({ started: true, batch_id: retryBatchId, targets: retryTargets });
+
+  runRetry({
+    batchId,
+    retryBatchId,
+    extractPath: uploadDoc?.extractPath,
+    tenantId: batchDoc.tenantId,
+    customerName: batchDoc.customerName,
+    userMappings: mappingDoc?.mappings || {},
+    retryTargets,
+  });
+});
+
+async function runRetry({ batchId, retryBatchId, extractPath, tenantId, customerName, userMappings, retryTargets }) {
+  logBuffer.length = 0;
+  currentBatchId = retryBatchId;
+
+  const totalFailed = Object.values(retryTargets).flat().length;
+  emit('info', `━━━ Retrying ${totalFailed} failed conversation(s) ━━━`);
+
+  const reader = new VaultReader(extractPath);
+  const generator = new ResponseGenerator();
+  const creator = new PagesCreator(tenantId, customerName);
+  const report = new ReportWriter();
+
+  // Reverse mapping: m365Email → googleEmail
+  const reverseMap = Object.fromEntries(
+    Object.entries(userMappings).map(([g, m]) => [m, g])
+  );
+
+  for (const [m365Email, failedTitles] of Object.entries(retryTargets)) {
+    const googleEmail = reverseMap[m365Email] || m365Email;
+    const titleSet = new Set(failedTitles);
+    const errors = [];
+    let pagesCreated = 0;
+
+    emit('info', `Retrying ${failedTitles.length} conversation(s) for ${m365Email}`);
+
+    try {
+      const allConversations = await reader.loadUserConversations(googleEmail, null, null);
+      const toRetry = allConversations.filter(c => titleSet.has(c.title));
+
+      if (toRetry.length === 0) {
+        emit('warn', `  No matching conversations found for ${m365Email} — skipping`);
+        continue;
+      }
+
+      for (const conv of toRetry) {
+        try {
+          const convWithResponses = await generator.generate(conv, false);
+          await creator.createPage(m365Email, convWithResponses, []);
+          pagesCreated++;
+          emit('success', `  Retried: ${conv.title?.slice(0, 60)}`);
+        } catch (err) {
+          errors.push({ conversation: conv.title, error: err.message });
+          emit('error', `  Still failing: ${conv.title?.slice(0, 40)} — ${err.message}`);
+        }
+      }
+
+      report.addUserResult({ email: m365Email, conversations: toRetry.length, pagesCreated, visualAssetsFlagged: 0, errors });
+      emit('success', `  Done: ${pagesCreated}/${toRetry.length} retried for ${m365Email}`);
+    } catch (err) {
+      emit('error', `Fatal for ${m365Email}: ${err.message}`);
+    }
+  }
+
+  // Patch original reportsWorkspace with retry results
+  const retryReport = report.getReport();
+  await db().collection('reportsWorkspace').updateOne(
+    { _id: batchId },
+    { $set: { 'report.retry': retryReport, retryAt: new Date() } }
+  ).catch(() => {});
+
+  const retried = retryReport.summary.total_pages_created;
+  const stillFailing = retryReport.summary.total_errors;
+  emit('done', `━━━ Retry complete — ${retried} recovered, ${stillFailing} still failing ━━━`, { batch_id: retryBatchId });
+  currentBatchId = null;
 }
 
 connectMongo().then(() => {

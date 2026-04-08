@@ -1,4 +1,5 @@
 import { MongoClient } from 'mongodb';
+import bcrypt from 'bcryptjs';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('db:mongo');
@@ -71,5 +72,25 @@ async function ensureCollections() {
   if (!existing.has('agentDeployments')) await _db.createCollection('agentDeployments');
   await _db.collection('agentDeployments').createIndex({ batchId: 1 });
 
-  logger.info('All 9 collections verified with indexes');
+  // 10. userWorkspace (per-user UI state — cross-device persistence)
+  if (!existing.has('userWorkspace')) await _db.createCollection('userWorkspace');
+  await _db.collection('userWorkspace').createIndex({ userId: 1 }, { unique: true });
+
+  // 11. appUsers (login credentials)
+  if (!existing.has('appUsers')) await _db.createCollection('appUsers');
+  await _db.collection('appUsers').createIndex({ email: 1 }, { unique: true });
+
+  // Seed default users if empty
+  const userCount = await _db.collection('appUsers').countDocuments();
+  if (userCount === 0) {
+    const defaultUsers = [
+      { email: 'admin@cloudfuze.com', password: await bcrypt.hash('CloudFuze@2026', 10), name: 'Admin User', role: 'admin', createdAt: new Date() },
+      { email: 'laxman@cloudfuze.com', password: await bcrypt.hash('GemCo@2026', 10), name: 'Laxman Kadari', role: 'admin', createdAt: new Date() },
+      { email: 'demo@cloudfuze.com', password: await bcrypt.hash('Demo@2026', 10), name: 'Demo User', role: 'user', createdAt: new Date() },
+    ];
+    await _db.collection('appUsers').insertMany(defaultUsers);
+    logger.info('Seeded 3 default app users');
+  }
+
+  logger.info('All 11 collections verified with indexes');
 }

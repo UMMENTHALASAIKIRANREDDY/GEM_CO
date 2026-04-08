@@ -1,0 +1,1648 @@
+​
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <title>CloudFuze Webapp</title>
+  <meta http-equiv="content-type" content="text/html;charset=utf-8" />
+  <!-- <meta
+      http-equiv="Content-Security-Policy"
+      content="frame-ancestors 'self'" /> -->
+  <script src="https://www.google.com/recaptcha/api.js" async defer></script>
+  <!-- Always force latest IE rendering engine or request Chrome Frame -->
+  <meta name="csrf-token" content="">
+  <meta content="IE=edge,chrome=1" http-equiv="X-UA-Compatible" />
+  <meta http-equiv="cache-control" content="max-age=31536000" />
+  <meta http-equiv="cache-control" content="no-cache" />
+  <meta http-equiv="expires" content="0" />
+  <meta http-equiv="expires" content="Tue, 01 Jan 1980 1:00:00 GMT" />
+  <meta http-equiv="pragma" content="no-cache" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Login With Google -->
+  <script type="text/javascript" nonce="hcfTSS7mzeBJdDMWCfSOjg==">
+    var onloadCallback = function () {
+      grecaptcha.render("html_element", {
+        sitekey: "6LdmMjErAAAAAOdMs07aLZNH9SLAoeL6WIMFT8A0",
+      });
+    };
+  </script>
+  <meta name="google-signin-scope" content="profile email" />
+  <meta name="google-signin-prompt" content="select_account" />
+  <meta name="google-signin-client_id"
+    content="483376530012-36iglcsbhbmbbtq905llaqedgmv4n2ov.apps.googleusercontent.com" />
+  <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.0/css/bootstrap.min.css"
+    integrity="sha256-aAr2Zpq8MZ+YA/D6JtRD3xtrwpEz2IqOS+pWD/7XKIw=" crossorigin="anonymous">
+  <link rel="preload"
+    href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap"
+    rel="stylesheet" />
+  <link rel="Shortcut Icon" type="image/ico" href="../img/PNG/cfLogo.png" />
+  <link rel="stylesheet" href="../build/css/demo.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.2.1/css/all.min.css"
+    integrity="sha256-Z1K5uhUaJXA7Ll0XrZ/0JhX4lAtZFpT6jkKrEDT0drU=" crossorigin="anonymous">
+  <style type="text/css">
+    #listitems li {
+      list-style-type: none;
+      position: relative;
+      padding-left: 15px;
+    }
+
+    #listitems li:before {
+      content: "\27A4";
+      font-size: 20px;
+      position: absolute;
+      top: -2px;
+      left: -10px;
+    }
+
+    body {
+      font-family: "Poppins", sans-serif;
+      font-size: 14px;
+    }
+
+    /* #customBtn {
+        display: inline-block;
+        background: white;
+        width: 170px;
+        height: 46px;
+        border-radius: 4px;
+        border: thin solid #ccc;
+        white-space: nowrap;
+        text-align: center;
+        margin-left: 15%;
+      }
+      #customBtn:hover {
+        cursor: pointer;
+      } */
+    span.label {
+      font-family: serif;
+      font-weight: normal;
+    }
+
+    span.icon {
+      display: inline-block;
+      vertical-align: middle;
+      width: 42px;
+      height: 42px;
+    }
+
+    span.buttonText {
+      display: inline-block;
+      vertical-align: middle;
+      font-size: 14px;
+      font-weight: 500;
+      color: #1f2129;
+    }
+
+    .underscoreDiv {
+      -webkit-box-orient: horizontal;
+      -webkit-box-direction: normal;
+      -webkit-flex-direction: row;
+      -ms-flex-direction: row;
+      flex-direction: row;
+      margin: 18px 65px 18px;
+      display: flex;
+    }
+
+    .lineDiv {
+      -webkit-box-flex: 1;
+      -webkit-flex-grow: 1;
+      -ms-flex-positive: 1;
+      flex-grow: 1;
+      -webkit-flex-shrink: 1;
+      -ms-flex-negative: 1;
+      flex-shrink: 1;
+      background-color: #dbdbdb;
+      background-color: rgba(var(--b38, 219, 219, 219), 1);
+      height: 1px;
+      position: relative;
+      top: 0.5em;
+    }
+
+    .loginWith {
+      color: black;
+      /*color:rgba(var(--f52,142,142,142),1);*/
+      -webkit-box-flex: 0;
+      -webkit-flex-grow: 0;
+      -ms-flex-positive: 0;
+      flex-grow: 0;
+      -webkit-flex-shrink: 0;
+      -ms-flex-negative: 0;
+      flex-shrink: 0;
+      font-size: 12px;
+      line-height: 15px;
+      margin: 0 18px;
+    }
+
+    .flex-container {
+      width: 40%;
+      min-height: 30%;
+      margin: 0 auto;
+      display: -webkit-flex;
+      /* Safari */
+      display: flex;
+      /* Standard syntax */
+    }
+
+    .flex-container .column {
+      padding: 10px;
+      background: #dbdfe5;
+      -webkit-flex: 1;
+      /* Safari */
+      -ms-flex: 1;
+      /* IE 10 */
+      flex: 1;
+      /* Standard syntax */
+    }
+
+    /*srikanth*/
+    .niceCountryInputMenu {
+      background: white !important;
+      color: black !important;
+      cursor: pointer;
+      /*
+    font-family: Arial;
+    font-size: 12px;
+    */
+    }
+
+    .niceCountryInputMenuDefaultText {
+      display: inline-block;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .niceCountryInputMenuDefaultText a:hover {
+      text-decoration: none;
+    }
+
+    .niceCountryInputMenu a {
+      color: black !important;
+    }
+
+    .niceCountryInputMenuDropdown {
+      /*border-left: 1px solid #a8a8a8;*/
+      /*height: 25px;*/
+      width: 0%;
+      float: right;
+      /* line-height: 25px;*/
+      text-align: center;
+      position: relative;
+      right: 0;
+      color: black;
+    }
+
+    .niceCountryInputMenuDropdownContent {
+      cursor: pointer;
+      position: absolute;
+      width: 84%;
+      padding: 5px;
+      z-index: 2;
+      border: 1px solid #a8a8a8;
+      border-top: 0;
+      max-height: 200px;
+      overflow-y: scroll;
+      overflow-x: hidden;
+      background-color: white;
+      text-align: left;
+    }
+
+    .niceCountryInputMenuDropdownContent a {
+      height: 25px;
+      line-height: 25px;
+      display: block;
+      width: 100%;
+      color: black !important;
+      overflow: hidden;
+      text-decoration: none;
+      /*
+    font-family: Arial;
+    font-size: 12px;
+    */
+    }
+
+    .niceCountryInputMenuDropdownContent a:hover {
+      background-color: gray !important;
+      color: white !important;
+      text-decoration: none;
+    }
+
+    .niceCountryInputMenuFilter {
+      width: 820%;
+      border-top: 0;
+      border-bottom: 0;
+      margin-top: 8px;
+      margin-left: -6px;
+    }
+
+    .niceCountryInputMenuFilter input {
+      /* width: 100%;*/
+      width: calc(100% - 10px);
+      /*  margin: 4px;*/
+      padding: 2px;
+    }
+
+    .niceCountryInputMenuCountryFlag {
+      /*border: 1px solid #d3d3d3;*/
+      /*width: 33px;*/
+      height: 18px;
+      /*margin-left: 5px;*/
+      /* margin-right: 5px;*/
+    }
+
+    .niceCountryInputMenuCountryNoFlag {
+      display: inline-block;
+      border: 1px solid black;
+      background: white;
+      color: black;
+      line-height: 15px;
+      text-align: center;
+      width: 22px;
+      margin-left: 5px;
+      margin-right: 5px;
+      font-size: 13px;
+    }
+
+    .change::-webkit-input-placeholder {
+      /* WebKit, Blink, Edge */
+      color: black;
+    }
+
+    .change:-moz-placeholder {
+      /* Mozilla Firefox 4 to 18 */
+      color: black;
+      opacity: 1;
+    }
+
+    .change::-moz-placeholder {
+      /* Mozilla Firefox 19+ */
+      color: black;
+      opacity: 1;
+    }
+
+    .change:-ms-input-placeholder {
+      /* Internet Explorer 10-11 */
+      color: black;
+    }
+
+    /*srikanth*/
+  </style>
+
+  <link rel="stylesheet" href="https://cdn.lineicons.com/2.0/LineIcons.css"
+    integrity="sha256-BMbIwxfA6YQ+aTUfZh5VdHVj3GFRbY5HJZ/ZgnckZZI=" crossorigin="anonymous">
+
+  <style>
+    #imgDiv {
+      top: 0px;
+      left: 0px;
+      height: 100vh;
+      background: #0129ac 0% 0% no-repeat padding-box;
+      opacity: 1;
+    }
+
+    .form-group {
+      text-align: -webkit-center;
+    }
+
+    .form-control {
+      width: 76%;
+      font-size: 14px;
+      height: 46px;
+    }
+
+    #hrLine {
+      margin-top: 9%;
+    }
+
+    #officeDiv {
+      float: right;
+      margin-right: 12%;
+    }
+
+    #gSignInWrapper {
+      float: left;
+      margin-left: 7%;
+    }
+
+    #login_SkyDrive {
+      background-color: #fff;
+      display: inline-block;
+      background: white;
+      width: 170px;
+      height: 46px;
+      border-radius: 4px;
+      border: thin solid #ccc;
+      white-space: nowrap;
+      text-align: center;
+    }
+
+    #imgDiv {
+      display: block;
+    }
+
+    #signupForFree {
+      margin-left: 40%;
+    }
+
+    @media (max-width: 1024px) {
+      #hrLine {
+        margin-top: 0%;
+      }
+
+      #officeDiv {
+        float: none;
+        margin-left: 15%;
+      }
+
+      #gSignInWrapper {
+        float: none;
+        margin-left: 7%;
+      }
+
+      #login_SkyDrive {
+        width: 180px;
+      }
+
+      #customBtn {
+        width: 180px;
+      }
+
+      #googleLink {
+        margin-bottom: 4%;
+      }
+
+      #signupForFree {
+        margin-left: 22%;
+      }
+    }
+
+    @media (max-width: 320px) {
+      #hrLine {
+        margin-top: -7%;
+      }
+
+      #officeDiv {
+        margin-left: 6%;
+      }
+
+      #gSignInWrapper {
+        margin-left: -2%;
+      }
+    }
+
+    @media (min-width: 375px) and (max-width: 450px) {
+      #copyRight {
+        margin-right: 27%;
+        margin-left: 13%;
+      }
+    }
+
+    @media (max-width: 375px) {
+      #copyRight {
+        margin-right: 27%;
+        margin-left: 7%;
+      }
+    }
+
+    .iti--allow-dropdown {
+      width: 100%;
+    }
+
+    .iti__country-list {
+      position: fixed;
+    }
+
+    @media (max-width: 767.98px) {
+      #imgDiv {
+        display: none;
+      }
+    }
+
+    @media screen and (max-width: 1080px) and (max-width: 1920px) {
+      #contentDiv {
+        margin-top: 10%;
+      }
+    }
+
+    @media screen and (max-width: 1040px) {
+      #listitems {
+        margin-left: -6px !important;
+      }
+    }
+
+    .popupBadDomain {
+      top: 50%;
+      left: 50%;
+      width: 400px;
+      height: 150px;
+      display: flex;
+      flex-wrap: wrap;
+      border-radius: 5px;
+      position: absolute;
+      background-color: #fff;
+      transform: translate(-50%, -50%);
+      box-shadow: 0px 1px 4px 1px rgb(0 0 0 / 10%);
+    }
+
+    .popupBadDomain-Parent {
+      top: 50%;
+      left: 50%;
+      width: 100%;
+      height: 100vh;
+      display: none;
+      flex-wrap: wrap;
+      border-radius: 5px;
+      position: absolute;
+      align-items: center;
+      justify-content: center;
+      background-color: rgb(0 0 0 / 10%);
+      transform: translate(-50%, -50%);
+    }
+
+    .popupBadDomain-Title {
+      width: 100%;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      padding: 0px 10px;
+      justify-content: space-between;
+      background-color: #fff;
+      border-top-left-radius: 5px;
+      border-top-right-radius: 5px;
+      border-bottom: 1px solid #f2f2f2;
+    }
+
+    .popupBadDomain-Body {
+      width: 100%;
+      padding: 0 10px;
+      height: calc(100% - 40px);
+    }
+
+    .popupBadDomain-Body p {
+      font-size: 18px;
+      line-height: 24px;
+    }
+
+    .login_Google {
+      width: 190px;
+      height: 50px;
+      display: flex;
+      cursor: pointer;
+      align-items: center;
+      background-color: #4285f4;
+      transition: all 0.2s linear;
+      box-shadow: 0 2px 4px 0 rgb(0 0 0 / 25%);
+      text-align: center;
+      margin-left: 14%;
+      margin-top: -1px;
+      border-radius: 3px;
+    }
+
+    .login_Google:hover {
+      box-shadow: 0 0 3px 3px rgb(66 133 244 / 30%);
+    }
+
+    .login_Google p {
+      font-size: 15px !important;
+      width: 100%;
+      font-size: 14px;
+      color: #ffffff;
+      text-align: center;
+      margin: 0 !important;
+    }
+
+    .login_Google img {
+      height: 96%;
+      margin-left: 1px;
+      background-color: #fff;
+      /* box-shadow: 0 0 3px 3px rgb(66 133 244 / 30%)/; */
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container-fluid">
+    <div class="row">
+      <div id="imgDiv" class="col-sm-7" style="position: relative">
+        <img height="20" clip-path="url(#myCircle)" src="../img/whitecoloricon.png"
+          style="width: 14%; margin-top: 9%; margin-left: 7%; height: 6%" />
+
+        <!-- <svg xmlns="http://www.w3.org/2000/svg" style="width: 52%;margin-top: 32%;margin-left: 57%;height: 41%;" viewBox="0 0 728.763 563.92"><defs><style>.a{opacity:0.2;}.b{fill:#93c1f9;}</style></defs><g class="a" transform="translate(53.296 -47.794)"><path class="b" d="M76,181.061a41.811,41.811,0,0,1,55.722-27.715,41.8,41.8,0,0,1,70.352-27.84,41.81,41.81,0,0,1,77.257,20.144,41.856,41.856,0,0,1,33.134,35.411Z" transform="translate(205.988 40.354)"></path><path class="b" d="M76,181.061a41.811,41.811,0,0,1,55.722-27.715,41.8,41.8,0,0,1,70.352-27.84,41.81,41.81,0,0,1,77.257,20.144,41.856,41.856,0,0,1,33.134,35.411Z" transform="translate(50.201 203)"></path></g></svg> -->
+        <div style="position: absolute; top: 22%; color: #fff; left: 5%">
+          <p style="font-size: 1.3rem; margin-left: 4%">
+            Get Started with CloudFuze
+          </p>
+          <p style="
+                font-size: 1.55rem;
+                margin-left: 4%;
+                margin-right: 14%;
+                margin-bottom: 4%;
+              ">
+            Start migrating your files from one cloud to another today and
+            save time and money.
+          </p>
+          <ul id="listitems" style="margin-left: 4px">
+            <li style="margin-bottom: -1%; font-size: 15px">
+              &nbsp;Migrate data between cloud storage services quickly
+            </li>
+            <br />
+            <li style="margin-bottom: -1%; font-size: 15px">
+              &nbsp;Complete protection to your data with RSA-2048 encryption
+            </li>
+            <br />
+            <li style="margin-bottom: -1%; font-size: 15px">
+              &nbsp;Proven priority support via phone, email and chat
+            </li>
+          </ul>
+          <br />
+          <!-- <p style="font-weight:300;margin-top: 1rem;">Take charge of all your content,</p> -->
+          <!-- <p style="font-weight:300;margin-top:-2%;">no matter where it is stored.</p> -->
+          <!--<svg xmlns="http://www.w3.org/2000/svg" width="65%" height="75.007" viewBox="0 0 424.947 75.007">
+  <defs>
+    <style>
+      .cls-1 {
+        opacity: 0.9;
+      }
+
+      .cls-2, .cls-3, .cls-5 {
+        fill: #fff;
+      }
+
+      .cls-3 {
+        opacity: 0.1;
+      }
+
+      .cls-4 {
+        fill: none;
+      }
+
+      .cls-4, .cls-5 {
+        fill-rule: evenodd;
+      }
+    </style>
+  </defs>
+  <g id="Group_354" data-name="Group 354" transform="translate(-141 -577)">
+    <g id="Group_251" data-name="Group 251" class="cls-1" transform="translate(-24 2)">
+      <g id="Group_211" data-name="Group 211" transform="translate(468.667 575.75)">
+        <path id="dropbox-1" class="cls-2" d="M7.311,1.7,0,6.39l7.311,4.621L14.623,6.39Zm14.623,0L14.623,6.39l7.311,4.621L29.246,6.39ZM0,15.7l7.311,4.69,7.311-4.69-7.311-4.69Zm21.934-4.69L14.623,15.7l7.311,4.69,7.312-4.69ZM7.311,21.91l7.311,4.69,7.311-4.69-7.311-4.621Z" transform="translate(0 -1.7)"></path>
+      </g>
+      <g id="Group_213" data-name="Group 213" transform="translate(411.674 575.75)">
+        <g id="share_1_" data-name="share (1)" transform="translate(0 0)">
+          <g id="Group_186" data-name="Group 186" transform="translate(0 0)">
+            <path id="Path_288" data-name="Path 288" class="cls-2" d="M0,20.941l14.772,3.821V.554L0,4.377Zm7.536-7.169a4.288,4.288,0,0,1-2.708-4.06c0-2.345,1.405-4.14,3.734-4.14a4.646,4.646,0,0,1,2.519.694l-.5,2.508a3.667,3.667,0,0,0-2.065-.652A1.294,1.294,0,0,0,7.082,9.449c0,.877.557,1.264,1.83,1.937a4.22,4.22,0,0,1,2.562,4.1c0,2.3-1.271,4.261-3.981,4.261a5,5,0,0,1-2.8-.835l.454-2.569a4.49,4.49,0,0,0,2.476.854,1.4,1.4,0,0,0,1.566-1.489C9.189,14.853,8.721,14.361,7.536,13.772Z" transform="translate(0 -0.554)"></path>
+            <path id="Path_289" data-name="Path 289" class="cls-2" d="M17.275,8.147a3.186,3.186,0,0,0-1.471.371L13.846,6.556A3.187,3.187,0,0,0,10.965,2.24V8.659a3.29,3.29,0,0,0,.974-.2l2.2,2.2a3.1,3.1,0,0,0,.7,2.787l-1.908,1.908a2.93,2.93,0,0,0-1.961-.326V21.38a3.06,3.06,0,0,0,.482.048,3.22,3.22,0,0,0,3.22-3.22,3.153,3.153,0,0,0-.079-.7l2.945-2.945a3.214,3.214,0,0,0-.258-6.419Z" transform="translate(5.358 0.27)"></path>
+          </g>
+        </g>
+      </g>
+      <g id="Group_212" data-name="Group 212" transform="translate(223.447 578)">
+        <path id="Icon_material-cloud-queue" data-name="Icon material-cloud-queue" class="cls-2" d="M25.018,13.809a9.687,9.687,0,0,0-18.1-2.586,7.754,7.754,0,0,0,.84,15.463H24.565a6.446,6.446,0,0,0,.453-12.877ZM24.565,24.1H7.757a5.172,5.172,0,1,1,0-10.343h.918A7.11,7.11,0,0,1,22.626,15.7v.646h1.939a3.879,3.879,0,0,1,0,7.757Z" transform="translate(0 -6)"></path>
+      </g>
+      <g id="Group_216" data-name="Group 216" transform="translate(285.689 578)">
+        <g id="box" transform="translate(0 0)">
+          <path id="Path_281" data-name="Path 281" class="cls-2" d="M20.4,6.18A7.37,7.37,0,0,0,13.884,10.1,7.372,7.372,0,0,0,2.95,7.654V1.444h0A1.475,1.475,0,0,0,0,1.444H0v12.23H0a7.37,7.37,0,0,0,13.881,3.333A7.372,7.372,0,1,0,20.4,6.18ZM7.372,17.974a4.422,4.422,0,1,1,4.422-4.422A4.422,4.422,0,0,1,7.372,17.974Zm13.025,0a4.422,4.422,0,1,1,4.422-4.422A4.422,4.422,0,0,1,20.4,17.974Z"></path>
+          <path id="Path_282" data-name="Path 282" class="cls-2" d="M318.253,84.794l-3.775-5.046,3.775-5.047h0a1.475,1.475,0,0,0-2.358-1.771h0l-3.259,4.356-3.258-4.356h0A1.474,1.474,0,0,0,307.02,74.7h0l3.775,5.047-3.775,5.046h0a1.475,1.475,0,0,0,2.357,1.771h0l3.258-4.356,3.259,4.356h0a1.475,1.475,0,0,0,2.358-1.771Z" transform="translate(-280.569 -66.19)"></path>
+        </g>
+      </g>
+      <g id="Group_215" data-name="Group 215" transform="translate(165 576.5)">
+        <g id="google-drive-1" transform="translate(0 0)">
+          <path id="Path_290" data-name="Path 290" class="cls-2" d="M83.3,0h9.258l8.707,15.011H91.986Z" transform="translate(-74.635)"></path>
+          <path id="Path_291" data-name="Path 291" class="cls-2" d="M66.412,144.3l-4.64,8.021H44.4l4.65-8.021Z" transform="translate(-39.781 -129.289)"></path>
+          <path id="Path_292" data-name="Path 292" class="cls-2" d="M4.619,23.032,0,15.011,8.665,0l4.65,8.041Z"></path>
+          <path id="Path_293" data-name="Path 293" class="cls-3" d="M44.4,23.032l8.645-8.021H49.05Zm22.012-8.021H57.143L55.1,11.5ZM48.447,0,51.12,11.443l1.977-3.4Z" transform="translate(-39.781)"></path>
+        </g>
+      </g>
+      <g id="Group_217" data-name="Group 217" transform="translate(483.706 575)">
+        <g id="egnyte-logo-a" transform="translate(0 0)">
+          <path id="Path_283" data-name="Path 283" class="cls-4" d="M0,0H106.241V27.011H0Z"></path>
+          <path id="Path_285" data-name="Path 285" class="cls-4" d="M241.473,32.455l-1.939-3.382a.267.267,0,0,0-.355-.095l-8.727,5.037-8.608-5.061a.267.267,0,0,0-.355.095L219.5,32.431a.267.267,0,0,0,.095.355l8.7,5.108v10.24a.262.262,0,0,0,.26.26h3.855a.262.262,0,0,0,.26-.26V37.847l8.7-5.037A.247.247,0,0,0,241.473,32.455Z" transform="translate(-167.565 -22.081)"></path>
+          <path id="Path_286" data-name="Path 286" class="cls-5" d="M221.293,20.849a.29.29,0,0,0-.378-.095L215.1,24.207a.29.29,0,0,0-.095.378L215.83,26a.29.29,0,0,0,.378.095l5.818-3.453a.29.29,0,0,0,.095-.378Zm6.645-15.987-1.916.024c-.071,0-.118.047-.118.142l.024,7.024c0,.071.047.118.142.118h1.916c.071,0,.118-.047.118-.142L228.081,5A.153.153,0,0,0,227.939,4.862Zm11.068,18.967L232.882,20.4c-.071-.024-.142-.024-.166.047l-.946,1.679c-.024.071-.024.142.047.166l6.125,3.429c.071.024.142.024.165-.047l.946-1.679A.1.1,0,0,0,239.007,23.829Z" transform="translate(-164.129 -3.712)"></path>
+          <path id="Path_287" data-name="Path 287" class="cls-5" d="M241.473,32.055l-1.939-3.382a.267.267,0,0,0-.355-.095l-8.727,5.037-8.608-5.061a.267.267,0,0,0-.355.095L219.5,32.031a.267.267,0,0,0,.095.355l8.7,5.108v10.24a.262.262,0,0,0,.26.26h3.855a.263.263,0,0,0,.26-.26V37.447l8.7-5.037A.267.267,0,0,0,241.473,32.055Z" transform="translate(-167.565 -21.776)"></path>
+        </g>
+      </g>
+      <g id="Group_218" data-name="Group 218" transform="translate(354.681 578)">
+        <path id="azure-1" class="cls-2" d="M14.278,0l-7.7,6.681L0,18.481H5.928ZM15.3,1.563,12.015,10.83l6.3,7.921-12.23,2.1H26.134Z" transform="translate(0 0)"></path>
+      </g>
+    </g>
+    <g id="Group_250" data-name="Group 250" class="cls-1" transform="translate(-26)">
+      <g id="Group_214" data-name="Group 214" transform="translate(167 628.291)">
+        <g id="amazon-web-services-1" transform="translate(0 0)">
+          <path id="Path_298" data-name="Path 298" class="cls-5" d="M7.424,20.336,4.262,19.2V14.567l3.162,1.077v4.692m.58,0L11.166,19.2V14.567L8,15.644v4.692M4.587,14.22l3.2-.9,2.967.957L7.788,15.284l-3.2-1.063m-.928-.359L.5,12.727V8.092L3.66,9.17v4.692m.58,0L7.4,12.727V8.092L4.24,9.17v4.692M.823,7.745l3.2-.9L6.991,7.8,4.023,8.809.823,7.746m10.215,6.116L7.876,12.727V8.092L11.038,9.17v4.692m.58,0,3.162-1.134V8.092L11.618,9.17v4.692M8.2,7.745l3.2-.9,2.967.957L11.4,8.809,8.2,7.746m6.6-.359L11.64,6.252V1.618L14.8,2.695V7.386m.58,0,3.162-1.134V1.618L15.382,2.695V7.386M11.966,1.271l3.2-.9,2.967.957L15.166,2.334l-3.2-1.063M22.181,7.386,19.019,6.252V1.618l3.162,1.077V7.386m.58,0,3.162-1.134V1.618L22.761,2.695V7.386M19.344,1.271l3.2-.9,2.967.957L22.544,2.334l-3.2-1.063" transform="translate(-0.498 -0.37)"></path>
+        </g>
+      </g>
+      <path id="G_Suite-Logo.wine" class="cls-2" d="M13.785,5.263a6.579,6.579,0,0,0-1.89-1.37,5.9,5.9,0,0,0-2.5-.469,5.971,5.971,0,0,0-2.232.418A5.522,5.522,0,0,0,5.339,5.022,5.44,5.44,0,0,0,4.083,6.874a6.135,6.135,0,0,0-.456,2.41,6.135,6.135,0,0,0,.456,2.41,5.385,5.385,0,0,0,1.256,1.839,5.8,5.8,0,0,0,1.852,1.192,6.053,6.053,0,0,0,2.257.418,6.292,6.292,0,0,0,2.232-.355,5.247,5.247,0,0,0,1.636-.976,4.509,4.509,0,0,0,.824-1.027,5.855,5.855,0,0,0,.571-1.382H9.346V8.357H18.1a6.465,6.465,0,0,1,.127.748,6.858,6.858,0,0,1,.051.875,9.775,9.775,0,0,1-.533,3.3,7.678,7.678,0,0,1-1.611,2.651,8.257,8.257,0,0,1-2.866,1.966,9.822,9.822,0,0,1-3.83.7,9.546,9.546,0,0,1-6.658-2.638,9.4,9.4,0,0,1-2.029-2.93A9.029,9.029,0,0,1,0,9.3,9.278,9.278,0,0,1,.748,5.567,8.91,8.91,0,0,1,2.777,2.625,9.257,9.257,0,0,1,5.783.7,9.6,9.6,0,0,1,9.435,0a9.456,9.456,0,0,1,3.906.761,8.972,8.972,0,0,1,2.93,2.093ZM36.27,13.43A4.661,4.661,0,0,1,34.558,17.2a6.54,6.54,0,0,1-4.223,1.395A6.266,6.266,0,0,1,26.429,17.3,6.613,6.613,0,0,1,24.1,13.772l2.181-.9a5.725,5.725,0,0,0,.621,1.446,4.65,4.65,0,0,0,.926,1.1A4.341,4.341,0,0,0,29,16.144a3.56,3.56,0,0,0,1.37.266,3.9,3.9,0,0,0,2.562-.812,2.624,2.624,0,0,0,.989-2.143A2.582,2.582,0,0,0,33.1,11.54a7.839,7.839,0,0,0-2.879-1.5C28.8,9.537,27.913,9.182,27.557,9a4.56,4.56,0,0,1-2.828-4.248,4.327,4.327,0,0,1,1.56-3.348A5.736,5.736,0,0,1,30.2.013a5.967,5.967,0,0,1,3.526,1.04,4.934,4.934,0,0,1,1.991,2.562l-2.118.875a3.18,3.18,0,0,0-1.179-1.649,3.795,3.795,0,0,0-4.4.089,2.156,2.156,0,0,0-.913,1.8,2.091,2.091,0,0,0,.723,1.585A12.56,12.56,0,0,0,31.273,7.9a8.82,8.82,0,0,1,3.868,2.257A4.909,4.909,0,0,1,36.27,13.43Zm12.669,4.756H46.758V16.5h-.1a4.157,4.157,0,0,1-1.6,1.5,4.648,4.648,0,0,1-2.245.6,4.486,4.486,0,0,1-3.437-1.281,5.122,5.122,0,0,1-1.2-3.64V6.011h2.283v7.508c.051,1.991,1.053,2.98,3.006,2.98a2.845,2.845,0,0,0,2.283-1.1,4.031,4.031,0,0,0,.913-2.651V6.011h2.283ZM54.151,1.813a1.551,1.551,0,0,1-.469,1.141,1.622,1.622,0,0,1-2.283,0,1.551,1.551,0,0,1-.469-1.141A1.551,1.551,0,0,1,51.4.672a1.622,1.622,0,0,1,2.283,0,1.551,1.551,0,0,1,.469,1.141Zm-.469,4.2V18.186H51.4V6.011Zm7.013,12.377a3.507,3.507,0,0,1-2.473-.913,3.379,3.379,0,0,1-1-2.562V8.1H55.077V6.011h2.131V2.283H59.49V6.011h2.98V8.1H59.49v6.062a2.208,2.208,0,0,0,.469,1.649,1.528,1.528,0,0,0,1.065.431,2.557,2.557,0,0,0,.533-.063,2.7,2.7,0,0,0,.482-.165l.723,2.042a5.887,5.887,0,0,1-2.067.33Zm8.548.19a5.827,5.827,0,0,1-4.426-1.839A6.523,6.523,0,0,1,63.079,12.1,6.588,6.588,0,0,1,64.766,7.47a6.078,6.078,0,0,1,8.636-.1A7.014,7.014,0,0,1,75,12.276l-.025.254H65.413A3.973,3.973,0,0,0,66.6,15.408,3.842,3.842,0,0,0,69.344,16.5a3.786,3.786,0,0,0,3.424-2.181l2.042.989a6.111,6.111,0,0,1-2.27,2.41,6.428,6.428,0,0,1-3.3.862ZM65.59,10.627h6.988a3.024,3.024,0,0,0-1.027-2.105,3.607,3.607,0,0,0-2.5-.837,3.291,3.291,0,0,0-2.219.8A3.856,3.856,0,0,0,65.59,10.627Z" transform="translate(222 628)"></path>
+      <path id="wasabi-icon" class="cls-2" d="M22.653,3.845a13.3,13.3,0,1,0,0,18.808,13.3,13.3,0,0,0,0-18.808Zm1.437,8.2-5.727-5.2L12.5,12.379,9.428,15.272V10.959l4.664-4.432,3.484-3.292a10.937,10.937,0,0,1,6.515,8.806Zm-.1,3.137a10.839,10.839,0,0,1-1.145,3.266l-3.263-2.976V11.154ZM14.917,2.464,12.452,4.793,9.42,7.669V3.033a10.926,10.926,0,0,1,5.5-.569ZM7.034,15.35l-4.52-4.058A10.839,10.839,0,0,1,3.7,7.973l3.333,2.992Zm0-11.061V7.754L5.093,6.013A10.943,10.943,0,0,1,7.034,4.289ZM2.4,14.394l5.858,5.254,8.93-8.4v4.238L8.948,23.274A10.933,10.933,0,0,1,2.4,14.394Zm9.214,9.645,5.575-5.272v4.658a10.847,10.847,0,0,1-3.937.735,11.027,11.027,0,0,1-1.641-.121Zm7.963-1.9V18.691l1.9,1.721a11.037,11.037,0,0,1-1.9,1.725Z" transform="translate(327.051 624.051)"></path>
+      <g id="protocol" transform="translate(382.996 622)">
+        <path id="Path_360" data-name="Path 360" class="cls-2" d="M30.011,12.19A6.978,6.978,0,0,0,22.13,5.273a7.446,7.446,0,0,0-14.245,0A6.976,6.976,0,0,0,5.22,18.94v5.644a2.767,2.767,0,0,0-1.731,1.731H.883a.879.879,0,0,0,0,1.758h2.6A2.723,2.723,0,0,0,8.06,29.157a2.778,2.778,0,0,0-1.082-4.574V19.164H23.036A6.982,6.982,0,0,0,30.011,12.19ZM6.1,28.248a1.054,1.054,0,0,1-1-1.055,1,1,0,1,1,1.993,0A1.054,1.054,0,0,1,6.1,28.248ZM23.036,17.406H6.978V12.659a.879.879,0,0,0-1.758,0V17.1a5.217,5.217,0,0,1,3.1-9.953.879.879,0,0,0,1.091-.7,5.687,5.687,0,0,1,11.019-.728A6.936,6.936,0,0,0,18.1,7.259.879.879,0,0,0,19.348,8.5a5.216,5.216,0,1,1,3.688,8.9Z"></path>
+        <path id="Path_361" data-name="Path 361" class="cls-2" d="M188.688,369h-2.805a.879.879,0,0,0-.879.879V376.5a.879.879,0,1,0,1.758,0V374.04h1.465a.879.879,0,1,0,0-1.758h-1.465v-1.524h1.926a.879.879,0,1,0,0-1.758Z" transform="translate(-174.158 -347.374)"></path>
+        <path id="Path_362" data-name="Path 362" class="cls-2" d="M293.634,369h-3.751a.879.879,0,1,0,0,1.758h1V376.5a.879.879,0,1,0,1.758,0v-5.743h1a.879.879,0,0,0,0-1.758Z" transform="translate(-272.063 -347.374)"></path>
+        <path id="Path_363" data-name="Path 363" class="cls-2" d="M419.758,368.958c-2.036,0-1.981-.023-2.213.067a.88.88,0,0,0-.542.812v6.623a.879.879,0,1,0,1.758,0v-1.969l1,0a2.765,2.765,0,1,0,0-5.529Zm0,3.771-.988,0c0-.733,0-1.045-.005-2.016h.994a1.007,1.007,0,1,1,0,2.012Z" transform="translate(-392.561 -347.332)"></path>
+      </g>
+    </g>
+  </g>
+</svg>-->
+          <div class="row" style="
+                margin-left: 4%;
+                margin-top: 6%;
+                width: 100%;
+                padding-left: 1px;
+              ">
+            <div class="column" style="/* margin-right: 1%; */ margin-right: 2%">
+              <img src="../img/gdrive.png" style="width: 70%" />
+            </div>
+            <div class="column" style="
+                  margin-right: -1%;
+                  margin-right: 0%; /* margin-top: 0%; */
+                ">
+              <img src="../img/box.png" style="width: 70%" />
+            </div>
+            <div class="column" style="margin-top: 0.5%; margin-right: 2%">
+              <img src="../img/dropbox.png" style="width: 70%" />
+            </div>
+            <div class="column" style="margin-right: 2%">
+              <img src="../img/azure2.png" style="width: 70%" />
+            </div>
+            <div class="column" style="margin-right: 2%">
+              <img src="../img/egnyt.png" style="width: 70%" />
+            </div>
+            <div class="column" style="margin-top: 0.5%; margin-right: 0%">
+              <img src="../img/gsuite.png" style="width: 70%" />
+            </div>
+            <div class="column">
+              <img src="../img/sharepoint.png" style="width: 70%; margin-right: 2%" />
+            </div>
+          </div>
+          <img src="../img/Group119937.png" style="
+                width: 20%;
+                margin-top: 0%;
+                margin-bottom: 2%;
+                margin-left: 60%;
+                height: 19%;
+              " />
+        </div>
+        <div style="
+              position: absolute;
+              top: 94%;
+              color: #fff;
+              font-weight: 300;
+              margin-left: 7%; /*left: 15%;*/
+            ">
+          <p id="copyRight" style="
+                text-align: center;
+                letter-spacing: 0px;
+                opacity: 0.9;
+                font-size: 12px;
+              ">
+            CloudFuze © <span id="cfCopyYear"></span>. All rights reserved
+            <a href="https://www.cloudfuze.com/terms-of-use" target="_blank" style="color: #ffffff">Terms of
+              Use</a>&nbsp;&nbsp;|&nbsp;&nbsp;<a href="https://www.cloudfuze.com/privacy-policy" target="_blank"
+              style="color: #ffffff">Privacy Policy</a>&nbsp;&nbsp;|&nbsp;&nbsp;<a href="https://help.cloudfuze.com/"
+              target="_blank" style="color: #ffffff">Help</a>
+          </p>
+        </div>
+      </div>
+
+      <div id="contentDiv" class="col-sm-5 login-wrapper" style="padding-top: 3%; max-width: 540px; margin: 2% auto">
+        <div style="text-align: center">
+          <!--<img id="login_logo" src="../img/cloudfuzeLogo.png">-->
+          <svg xmlns="http://www.w3.org/2000/svg" width="100" height="60.667" viewBox="0 0 104 60.667">
+            <defs>
+              <style>
+                .cfa,
+                .cfb {
+                  fill: #0129ac;
+                }
+
+                .cfb {
+                  font-size: 21px;
+                  font-family: "Poppins", sans-serif;
+                  font-weight: 700;
+                  letter-spacing: -0.02em;
+                }
+              </style>
+            </defs>
+            <g transform="translate(-2.258 0)">
+              <g transform="translate(8.384 0)">
+                <g transform="translate(22.093 0)">
+                  <path class="cfa"
+                    d="M1938.279,743.2c.172-.733,1-4.042,1.826-2.344-.026-.027,2.217,3.076.657,11.293.026-.087-1.172,3.449-1.925,1.11.026.087-.559-1.549-.559-1.549s-.417-.408-.464.439c-.022-.058,1.636,10.154,3.777,5.529,0,.031,1.172-1.549,1.385-7.109.072.057.585-8.167-.829-12.406,0,.031-1.315-4.507-2.849-1.756a10.3,10.3,0,0,0-1.293,4.446,21.337,21.337,0,0,0-.194,2.344C1937.8,743.17,1938.109,743.935,1938.279,743.2Z"
+                    transform="translate(-1937.811 -729.327)"></path>
+                  <path class="cfa"
+                    d="M1938.352,745.258c.2-.929,1.142-5.125,2.091-2.972-.03-.033,2.539,3.9.753,14.321.029-.106-1.338,4.368-2.2,1.407.029.107-.639-1.964-.639-1.964s-.477-.518-.533.556c-.025-.072,1.874,12.875,4.325,7.01,0,.039,1.342-1.964,1.59-9.014.083.072.669-10.354-.949-15.729,0,.04-1.506-5.714-3.263-2.226a14.042,14.042,0,0,0-1.48,5.636,29.721,29.721,0,0,0-.222,2.971C1937.8,745.218,1938.15,746.187,1938.352,745.258Z"
+                    transform="translate(-1928.32 -732.455)"></path>
+                  <path class="cfa"
+                    d="M0,5.807S1.1-.476,4.176.029c-.439-.021,1.882-.46,3.6,7.891a50.659,50.659,0,0,1,.379,14.49c-.075-.107-.32,5.841-2.566,9.473,0,.031-2.571,4.049-4.922-2.237A19.458,19.458,0,0,1,0,27.663s2.387,2.569,3.562,0c.019.036,1.83-3.1,2.007-9.329.016.076.28-9.969-2.092-12.99a2.292,2.292,0,0,0-3.229.887A4.837,4.837,0,0,1,0,5.807Z"
+                    transform="translate(17.304 0.145) rotate(-0.974)"></path>
+                </g>
+                <g transform="translate(0 2.07)">
+                  <path class="cfa"
+                    d="M2153.049,1317.03s-2.963-1.032-2.344-5.333c.036-.3,1.26-3.669,5.677-2.079-.107,0,2.3-3.214,5.374-3.179.025,0,3.523-.213,4.709,4.085-.065.062,4.506-3.729,7.916,1.448.01.015.009,2.325,0,1.746v1.26s-.174,2.006-3.382,2.051h-.19C2169.063,1317,2153.049,1317.03,2153.049,1317.03Z"
+                    transform="translate(-2096.88 -1292.689)"></path>
+                  <path class="cfa"
+                    d="M3223.612,214.114c-.036.023,5.149,0,5.149,0a5.69,5.69,0,0,1-.911-7.083c.065-.065,1.536-2.972,5.771-1.78-.019-.087,3.015-3.649,6.25-3.343a5.3,5.3,0,0,1,5.2,3.772c-.084-.065,3.985-2.9,7.3,1.6.043.022-.852-6.992-7.927-5.374a8.158,8.158,0,0,0-7.617-4.46,9.182,9.182,0,0,0-6.013,3.6c.088-.065-4.06-1.043-6.208,1.184a47.162,47.162,0,0,1-.32,7.107C3224.314,209.277,3223.653,214.091,3223.612,214.114Z"
+                    transform="translate(-3174.835 -189.896)"></path>
+                  <path class="cfa"
+                    d="M3219.661,431.3a24.667,24.667,0,0,1,1.524,7.138,5.888,5.888,0,0,1,5.744-1.492c.1,0,7.546-8.621,15.064.915.085.032,5.686-1.172,7.29,4.247-.069,0,1.065-9.638-11.868-9.848-.037.073-4.867-9.163-14.089-1.715a4.261,4.261,0,0,0-3.664.758Z"
+                    transform="translate(-3171.644 -427.646)"></path>
+                  <path class="cfa"
+                    d="M3163.059,784.41a8.485,8.485,0,0,1,4.084-1.3,34.113,34.113,0,0,1,.256,18.626c.026.073-4.143,0-4.143,0s1.113-8.843,0-15.8Z"
+                    transform="translate(-3124.682 -777.93)"></path>
+                  <path class="cfa"
+                    d="M3107.209,813.114l3.452-.262a9.826,9.826,0,0,1,1.5-2.557c.022,0,2.221,4.646,0,12.963a3.917,3.917,0,0,1-1.5-2.639c0-.063-3.6,0-3.6,0l.151-1.261s3.129.378,2.918-.671c-.019-.022.185-.967-2.755-.605v-1.133s2.916.639,2.923-.861c0-.022.141-1.624-2.923-1.007A19.28,19.28,0,0,0,3107.209,813.114Z"
+                    transform="translate(-3078.64 -800.846)"></path>
+                  <path class="cfa"
+                    d="M2935.351,831.574l24.023-1.79a4.755,4.755,0,0,1,.28,1.693C2959.674,831.506,2935.351,831.574,2935.351,831.574Z"
+                    transform="translate(-2935.351 -817.265)"></path>
+                  <path class="cfa"
+                    d="M2954.381,855.189l21.295-1.072a2.166,2.166,0,0,1-.176.959C2975.487,855.11,2954.381,855.189,2954.381,855.189Z"
+                    transform="translate(-2951.392 -837.771)"></path>
+                  <path class="cfa" d="M2994.271,870.478l14.8-.978-.262,1.082Z"
+                    transform="translate(-2985.001 -850.735)"></path>
+                </g>
+              </g>
+              <text class="cfb" transform="translate(1 54.667)">
+                <tspan x="0" y="0">CloudFuze</tspan>
+              </text>
+            </g>
+          </svg>
+          <h5 id="loginHeading" style="
+                text-align: center;
+                margin-top: 2%;
+                font-weight: 600;
+                color: black;
+              ">
+            Login to your account
+          </h5>
+          <p id="welcome" style="
+                text-align: center;
+                color: #707070;
+                margin-top: 3%;
+                font-size: 16px;
+              ">
+            Welcome back!
+          </p>
+          <p id="loginNote" style="
+                text-align: center;
+                margin-top: -2%;
+                color: #707070;
+                font-size: 16px;
+              ">
+            Please login to gain access to CloudFuze
+          </p>
+        </div>
+        <div id="login-manager">
+          <div id="login" class="login-wrapper animated">
+            <!-- <form> -->
+            <input type="hidden" name="csrf_token" id="csrfTokenInput" value="">
+            <div class="form-group">
+              <input type="email" class="form-control loginEmail" id="email" placeholder="Enter Email *" name="email"
+                class="loginEmail" autocomplete="off" />
+              <p class="statusMesg" style="
+                      color: red;
+                      text-align: left;
+                      line-height: 12px;
+                      margin-top: 2%;
+                      margin-left: 12%;
+                    "></p>
+            </div>
+            <div class="form-group">
+              <input type="password" class="form-control" id="safariChange" placeholder="Enter Password *" name="pwd"
+                autocomplete="off" />
+              <p class="statusMesg1" style="
+                      color: red;
+                      text-align: left;
+                      line-height: 12px;
+                      margin-top: 2%;
+                      margin-left: 12%;
+                    "></p>
+            </div>
+            <div style="padding-right: 12%; margin-bottom: 5%">
+              <a id="forgot-link" style="
+                      text-decoration: underline;
+                      float: right;
+                      font-size: 13px;
+                      font-weight: 600;
+                      color: #0129ac;
+                      cursor: pointer;
+                    ">Forgot password ?</a>
+            </div>
+            <br />
+            <div style="text-align: -webkit-center">
+              <div style="display: none" class="g-recaptcha" data-sitekey="6LdmMjErAAAAAOdMs07aLZNH9SLAoeL6WIMFT8A0"
+                data-callback="recaptchaCallback"></div>
+              <button id="login-submit" class="btn btn-default login-button" style="
+                      width: 76%;
+                      height: 46px;
+                      background: #0129ac 0% 0% no-repeat padding-box;
+                      color: #fff;
+                      border-radius: 4px;
+                      font-weight: 500;
+                      font-size: 14px;
+                    ">
+                Login<i class="lni lni-arrow-right" style="float: right; margin-top: 1%"></i>
+              </button>
+            </div>
+            <!-- </form> -->
+          </div>
+          <div id="register" class="login-wrapper animated" style="padding-top: 2%; display: none">
+            <!-- <form> -->
+            <input type="hidden" name="csrf_token" id="csrfTokenInput_1" value="">
+            <div class="form-group">
+              <input type="text" class="form-control" id="name" placeholder="Enter Name *" name="name" />
+              <p class="statusMesg1" style="
+                      color: red;
+                      text-align: left;
+                      line-height: 5px;
+                      margin-left: 12%;
+                      margin-top: 2%;
+                    "></p>
+              <p class="statusMesg6" style="
+                      color: red;
+                      text-align: left;
+                      line-height: 5px;
+                      margin-left: 12%;
+                      margin-top: 2%;
+                    "></p>
+            </div>
+            <div class="form-group">
+              <input type="email" class="form-control" id="email" placeholder="Enter Email *" name="email"
+                autocomplete="off" />
+              <p class="statusMesg2" style="
+                      color: red;
+                      text-align: left;
+                      line-height: 5px;
+                      margin-left: 12%;
+                      margin-top: 2%;
+                    "></p>
+              <p class="statusMesg4" style="
+                      color: red;
+                      text-align: left;
+                      line-height: 15px;
+                      margin-left: 12%;
+                      margin-top: 2%;
+                    "></p>
+            </div>
+            <div class="form-group">
+              <div style="
+                      border-radius: 0.25rem;
+                      border: 1px solid #ced4da;
+                      width: 76%;
+                      height: 42px;
+                      margin-bottom: 12px;
+                    ">
+                <div style="display: inline">
+                  <div>
+                    <div class="niceCountryInputSelector" id="drop" style="width: 15%; float: left; margin-top: 12px"
+                      data-selectedcountry="US" data-showspecial="false" data-showflags="true"
+                      data-i18nall="All selected" data-i18nnofilter="No selection" data-i18nfilter="Filter"
+                      data-onchangecallback="onChangeCallback" />
+                  </div>
+                </div>
+                <input type="text" id="phone" placeholder="Enter Phone Number" style="
+                        outline: 0;
+                        border-width: 0 0 0px;
+                        height: 100%;
+                        width: 78%;
+                        padding-left: 3%;
+                      " />
+              </div>
+            </div>
+            <input type="password" class="form-control" id="pwd" placeholder="Enter Password *" name="pwd"
+              autocomplete="off" />
+            <p class="statusMesg3" style="
+                    color: red;
+                    text-align: left;
+                    line-height: 5px;
+                    margin-left: 12%;
+                    margin-top: 2%;
+                  "></p>
+            <p class="statusMesg5" style="
+                    color: red;
+                    text-align: left;
+                    line-height: 5px;
+                    margin-left: 12%;
+                    margin-top: 2%;
+                  "></p>
+
+            <div style="text-align: -webkit-center">
+              <button id="register-submit" class="btn btn-default" style="
+                      width: 76%;
+                      height: 46px;
+                      background: #0129ac 0% 0% no-repeat padding-box;
+                      color: #fff;
+                      border-radius: 4px;
+                      font-weight: 500;
+                      font-size: 14px;
+                      margin-top: 10px;
+                    ">
+                Sign Up<i class="lni lni-arrow-right" style="float: right; margin-top: 1%"></i>
+              </button>
+              <p class="statusMesg" style="
+                      color: red;
+                      text-align: left;
+                      line-height: 5px;
+                      margin-left: 12%;
+                      margin-top: 1%;
+                      margin-bottom: 1%;
+                    "></p>
+            </div>
+            <div style="font-size: 12px; text-align: center; margin-top: 3%">
+              <span style="color: black">By signing up, You agree to our </span><a
+                href="https://www.cloudfuze.com/terms-of-use" target="_blank" style="
+                      text-decoration: none;
+                      color: #0129ac;
+                      font-weight: 600;
+                    ">Terms of Use </a><span style="color: black">and</span><a
+                href="https://www.cloudfuze.com/privacy-policy" target="_blank" style="
+                      color: #0129ac;
+                      font-weight: 600;
+                      text-decoration: none;
+                    ">
+                Privacy Policy</a>
+            </div>
+            <!-- </form> -->
+          </div>
+          <div id="forgot" class="login-wrapper animated" style="padding-top: 2%; display: none">
+            <!-- <form> -->
+            <div class="form-group">
+              <!--  <input type="email" class="form-control" id="email_reset" placeholder="Enter email *" name="email">
+    <p class="statusMesg"  style="color:red;text-align: left;line-height: 12px;margin-top: 2%;margin-left: 12%;"></p>-->
+              <p>
+                We are sorry for the inconvenience caused. There is some
+                technical work going on. Please contact support to recover
+                your password.
+              </p>
+            </div>
+            <div style="text-align: -webkit-center">
+              <!--  <a class="btn btn-default" href="mailto:support@cloudfuze.com" target="_blank" style="width:76%;height:46px;background: #0062FF 0% 0% no-repeat padding-box;
+;color:#fff;border-radius:4px;font-weight: 500;font-size:14px;">Contact Support<i class="lni lni-arrow-right" style="float:right;margin-top: 1%;"></i></a> -->
+              <a href="mailto:support@cloudfuze.com" target="_blank" class="btn btn-default" style="
+                      width: 76%;
+                      height: 46px;
+                      background: #0129ac 0% 0% no-repeat padding-box;
+                      color: #fff;
+                      border-radius: 4px;
+                      font-weight: 500;
+                      font-size: 14px;
+                      padding: 2%;
+                    ">Contact Support<i class="lni lni-arrow-right" style="float: right; margin-top: 1%"></i></a>
+            </div>
+            <!-- </form> -->
+          </div>
+          <div id="confmsg" class="login-wrapper animated" style="display: none">
+            <form id="resetsuccess">
+              <input type="hidden" name="csrf_token" id="csrfTokenInput_3" value="">
+              <div id="index-msg" style="
+                    margin-top: 3%;
+                    padding-bottom: 35px;
+                    font-size: 14px;
+                    color: #000;
+                  "></div>
+              <!-- </form> -->
+          </div>
+
+          <div class="underscoreDiv">
+            <div class="lineDiv"></div>
+            <div class="loginWith">OR LOGIN WITH</div>
+            <div class="lineDiv"></div>
+          </div>
+        </div>
+        <div id="socialLogin">
+          <ul>
+            <li id="googleLink" style="list-style-type: none; margin-left: -8%">
+              <div id="gSignInWrapper">
+                <div id="customBtn" class="login_Google">
+                  <img src="../images/google_login.png" alt="Gooogle" />
+                  <p>Sign in with Google</p>
+                </div>
+              </div>
+            </li>
+            <li id="officeLink" style="list-style-type: none; margin-right: 2%">
+              <div id="officeDiv">
+                <div class="login-btn--o365" id="login_SkyDrive" style="
+                      background-color: #fff;
+                      border: 1px solid #ccc;
+                      border-radius: 4px;
+                      height: 46px;
+                      cursor: pointer;
+                    ">
+                  <span class="login-btn--o365__label" style="
+                        display: inline-block;
+                        vertical-align: middle;
+                        font-size: 14px;
+                        font-weight: 500;
+                        color: #1f2129;
+                        padding-top: 2%;
+                      ">Office 365</span>
+
+                  <span class="login-btn--o365__icon">
+                    <svg svg-inline="" focusable="false" role="presentation" aria-hidden="true" width="48" height="42"
+                      viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg"
+                      class="d-svg d-svg__native dt-svg--logoO365Glyph" style="margin-left: -4%">
+                      <g fill="none" fill-rule="evenodd">
+                        <path fill="#FFF" d="M0 0h48v48H0z"></path>
+                        <path
+                          d="M16.372 29.965v-11.75l10.395-3.842 5.649 1.808v15.818l-5.65 1.703-10.394-3.737 10.395 1.251v-13.68l-6.78 1.583v9.265z"
+                          fill="#EB3C00" fill-rule="nonzero"></path>
+                      </g>
+                    </svg>
+                  </span>
+                </div>
+              </div>
+            </li>
+          </ul>
+        </div>
+        <br />
+        <hr id="hrLine" style="
+              width: 76%;
+              border-top: 1px solid rgba(var(--b38, 219, 219, 219), 1);
+              display: none;
+            " />
+        <div id="loginType" style="text-align: center; display: none">
+          <span id="expiredAccount" style="display: none; color: red; font-size: 12px">Your subscription with Office365
+            is no longer active Please login
+            with other Email-Id</span>
+          <span id="changeSpan" style="color: black">Create an account for free ?
+          </span>
+          <a id="changeLink" style="
+                color: #0129ac;
+                font-weight: bold;
+                cursor: pointer;
+                text-decoration: none;
+              ">Sign up</a>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="popupBadDomain-Parent">
+    <div class="popupBadDomain">
+      <div class="popupBadDomain-Title">
+        <span>Note</span>
+        <span style="cursor: pointer"><i class="fa fa-times"></i></span>
+      </div>
+      <div class="popupBadDomain-Body">
+        <p>
+          The e-mail domain you tried to signup is restricted, please contact
+          <a href="mailto:bizsupport@cloudfuze.com">CloudFuze support</a>
+        </p>
+      </div>
+    </div>
+  </div>
+  <div id="login_error" class="span7" style="
+        background: rgba(255, 255, 255, 0.9);
+        text-align: center;
+        padding: 100px;
+        display: none;
+        position: absolute;
+        z-index: 99999;
+        top: 10%;
+        left: 15%;
+        max-height: 500px;
+        height: 500px;
+      ">
+    <i class="lni lni-cross-circle" id="" style="font-size: 25px; position: absolute; left: 95%"></i>
+    <div style="text-shadow: 1px 1px 1px; margin-top: 10%">
+      <h1>Oops! You caught us doing maintanance.</h1>
+      <h3>Our site is undergoing a brief bit of maintenance.</h3>
+      <h3>
+        Apologies for any inconvenience, we'll have things back in working
+        order ASAP.
+      </h3>
+    </div>
+  </div>
+
+  <script nonce="hcfTSS7mzeBJdDMWCfSOjg==">
+    (function (h, o, t, j, a, r) {
+      h.hj =
+        h.hj ||
+        function () {
+          (h.hj.q = h.hj.q || []).push(arguments);
+        };
+      h._hjSettings = { hjid: 252069, hjsv: 5 };
+      a = o.getElementsByTagName("head")[0];
+      r = o.createElement("script");
+      r.async = 1;
+      r.src = t + h._hjSettings.hjid + j + h._hjSettings.hjsv;
+      a.appendChild(r);
+    })(window, document, "//static.hotjar.com/c/hotjar-", ".js?sv=");
+  </script>
+  <script src="https://apis.google.com/js/platform.js?onload=renderButton"
+     crossorigin="anonymous" async defer></script>
+  <!--  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.0/jquery.min.js"></script>-->
+
+  <script src="https://apis.google.com/js/api:client.js" crossorigin="anonymous"></script>
+
+  <!--Core Components-->
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"
+    integrity="sha256-9/aliU8dGd2tb6OSsuzixeV4y/faTqgFtohetphbbj0=" crossorigin="anonymous"></script>
+
+  <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.0/js/bootstrap.min.js"
+    integrity="sha256-OFRAJNoaD8L3Br5lglV7VyLRf0itmoBzWUoM+Sji4/8=" crossorigin="anonymous"></script>
+
+  <!--Plugins-->
+  <script src="../javascripts/security/md5.js" type="text/javascript"></script>
+  <script src="../javascripts/security/webtoolkit.base64.js" type="text/javascript"></script>
+
+  <!--Theme Specific-->
+  <script src="../javascripts/loginNew.js?ver=1028" type="text/javascript"></script>
+
+  <!--Static Variables-->
+  <script src="../ajaxcalls/config.js?ver=1028" type="text/javascript"></script>
+  <!-- <script src="../ajaxcalls/niceCountryInput.js"></script> -->
+
+  <!--Module Specific-->
+  <script src="../javascripts/cfvalidations.js"></script>
+  <script src="../ajaxcalls/loginflow.js?ver=1028" type="text/javascript"></script>
+  <script nonce="hcfTSS7mzeBJdDMWCfSOjg==">
+    $("#cfCopyYear").text(new Date().getFullYear());
+    var googleUser = {};
+    var startApp = function () {
+      gapi.load("auth2", function () {
+        auth2 = gapi.auth2.init({
+          client_id:
+            "483376530012-36iglcsbhbmbbtq905llaqedgmv4n2ov.apps.googleusercontent.com",
+          cookiepolicy: "single_host_origin",
+        });
+        attachSignin(document.getElementById("customBtn"));
+      });
+    };
+
+    function attachSignin(element) {
+      auth2.attachClickHandler(
+        element,
+        {},
+        function (googleUser) {
+          var name = googleUser.getBasicProfile().getName();
+          idg_token = googleUser.getAuthResponse().id_token;
+          localStorage.setItem("storageVal", true);
+          localStorage.setItem("socialLogin", "gloginSoc");
+
+          var form = new FormData();
+          form.append("idToken", idg_token);
+          form.append("authType", "SOCIAL_GMAIL");
+          form.append("genPassword", CryptoJS.MD5(generatedPassword));
+          form.append("domainUrl", domainUrl);
+          outlook(form);
+        },
+        function (error) { }
+      );
+    }
+  </script>
+  <script nonce="hcfTSS7mzeBJdDMWCfSOjg==">
+    startApp();
+  </script>
+  <script type="text/javascript" nonce="hcfTSS7mzeBJdDMWCfSOjg==">
+    var _googleCode;
+    $(document).ready(function () {
+      if (window.location.href.includes("signup") == true) {
+        localStorage.setItem("signUp", true);
+      }
+      const uA = navigator.userAgent;
+      const vendor = navigator.vendor;
+      if (
+        /Safari/i.test(uA) &&
+        /Apple Computer/.test(vendor) &&
+        !/Mobi|Android/i.test(uA)
+      ) {
+        $("#email").attr("placeholder", "Enter email*");
+        $("#safariChange").attr("placeholder", "Enter password*");
+        $("#name").attr("placeholder", "Enter name*");
+        $(".getemail").attr("placeholder", "Enter email*");
+        $("#pwd").attr("placeholder", "Enter password*");
+      }
+      if (localStorage.getItem("UserId")) {
+        window.location.href = "/pages/cloudmanager.html?ver=1028";
+        return false;
+      }
+      $("#host").text(window.location.hostname);
+      $("#enterprise_login").on("click", function () {
+        var url =
+          "https://" + $("#company").val() + "." + window.location.hostname;
+        window.location.href = url;
+      });
+      var isiDevice = false; // /ipad|iphone|ipod/i.test(navigator.userAgent.toLowerCase());
+      var isAndroid = false; // /android/i.test(navigator.userAgent.toLowerCase());
+      var iphone =
+        '<div id="iphone" class="SmallBox" style="background:#2bb5d8;top:0;height:30px;text-align: center"><i class="cf-cross22" id="close_float_window"></i><div class="textoFull"><span>Download iOS App</span></div><div style="display: block;width:93%;float: left;font-size: 14px"><a href="https://itunes.apple.com/app/cloudfuze/id694718661?mt=8" style="color:#fff">Click Here</a></div></div>';
+      var android =
+        '<div id="android" class="SmallBox" style="background:#2bb5d8;top:0;height:30px;text-align: center"><i class="cf-cross22" id="close_float_window"></i><div class="textoFull"><span>Download Android App</span></div><div style="display: block;width:93%;float: left;font-size: 14px"><a href="https://play.google.com/store/apps/details?id=com.cloudfuze.main" style="color:#fff">Click Here</a></div></div>';
+      if (isiDevice) {
+        $("body").prepend(iphone);
+        $("#close_float_window").on("click", function () {
+          $(this).closest(".SmallBox").remove();
+        });
+      } else if (isAndroid) {
+        $("body").prepend(android);
+        $("#close_float_window").on("click", function () {
+          $(this).closest(".SmallBox").remove();
+        });
+      }
+
+      $("#phone").val("+1");
+      var urlParams;
+      (window.onpopstate = function () {
+        var match,
+          pl = /\+/g,
+          search = /([^&=]+)=?([^&]*)/g,
+          decode = function (s) {
+            return decodeURIComponent(s.replace(pl, " "));
+          },
+          query = window.location.search.substring(1);
+        urlParams = {};
+        while ((match = search.exec(query)))
+          urlParams[decode(match[1])] = decode(match[2]);
+      })();
+      _googleCode = urlParams["code"];
+      var signup = urlParams["signup"];
+      if (_googleCode !== undefined) {
+        getToken_gmail(_googleCode);
+      }
+    });
+    $("#forgot-submit").click(function () {
+      var urlParams;
+      (window.onpopstate = function () {
+        var match,
+          pl = /\+/g,
+          search = /([^&=]+)=?([^&]*)/g,
+          decode = function (s) {
+            return decodeURIComponent(s.replace(pl, " "));
+          },
+          query = window.location.search.substring(1);
+        urlParams = {};
+        while ((match = search.exec(query)))
+          urlParams[decode(match[1])] = decode(match[2]);
+      })();
+      var upgrade = urlParams["upgrade"];
+      if (upgrade) {
+        localStorage.setItem("oldUser", 1);
+      }
+    });
+    $("#close_login_error").on("click", function () {
+      $("#login_error").fadeOut();
+    });
+    $("#register-submit").click(function () {
+      localStorage.setItem("storageVal", true);
+    });
+  </script>
+  <!-- <script src="../build/js/intlTelInput.js"></script>
+  <script nonce="hcfTSS7mzeBJdDMWCfSOjg==">
+    var input = document.querySelector("#phone");
+    window.intlTelInput(input, {
+      utilsScript: "../build/js/utils.js",
+    });
+  </script>-->
+  <script nonce="hcfTSS7mzeBJdDMWCfSOjg==">
+    function generateCSRFToken() {
+      return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    }
+    $('meta[name="csrf-token"]').attr('content', generateCSRFToken());
+    document.addEventListener("DOMContentLoaded", function () {
+      document.getElementById("csrfTokenInput").value = generateCSRFToken();
+      document.getElementById("csrfTokenInput_1").value = generateCSRFToken();
+      // document.getElementById("csrfTokenInput_2").value = generateCSRFToken();
+      document.getElementById("csrfTokenInput_3").value = generateCSRFToken();
+    });
+
+    /*Login With Google */
+    var idg_token;
+    var authLogin = " ";
+
+    function onSuccess(googleUser) {
+      //console.log('Logged in as: ' + googleUser.getBasicProfile().getName());
+    }
+    function onFailure(error) {
+      //console.log(error);
+    }
+    function renderButton() {
+      gapi.signin2.render("my-signin2", {
+        scope: "profile email",
+        width: 100,
+        height: 50,
+        longtitle: true,
+        theme: "dark",
+        onsuccess: onSuccess,
+        onfailure: onFailure,
+      });
+    }
+    /*Login With Google completed */
+
+    function generatePassword() {
+      var length = 12,
+        charset =
+          "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+        retVal = "";
+      for (var i = 0, n = charset.length; i < length; ++i) {
+        retVal += charset.charAt(Math.floor(Math.random() * n));
+      }
+      return retVal;
+    }
+    var generatedPassword = generatePassword();
+
+    function BasicAuth(a, b) {
+      var c = a + ":" + b;
+      c = Base64.encode(c);
+      return "Basic " + c;
+    }
+
+    function refreshcloud(a, auth, uid) {
+      var apiUrl =
+        apicallurl + "/filefolder/refresh/cache/user/" + uid + "/cloud/" + a;
+      $.ajax({
+        type: "post",
+        url: apiUrl,
+        async: true,
+        headers: {
+          Authorization: auth,
+        },
+        success: function (data) { },
+      });
+    }
+
+    var _clientId;
+    $("#login_SkyDrive").click(function (oneUser) {
+      authLogin = "OfficeLogin";
+      /*createContact()*/
+      localStorage.setItem("storageVal", true);
+      localStorage.setItem("socialLogin", "loginSoc");
+
+      callClient();
+      function callClient() {
+        $.ajax({
+          method: "GET",
+          async: false,
+          url:
+            window.location.origin +
+            "/proxyservices/v1/auth/oauthkeys?cloudName=SOCIAL_OUTLOOK",
+          success: function (data) {
+            //console.log(data);
+            _clientId = data[0].clientId;
+          },
+          error: function (data) {
+            //console.log(data);
+          },
+        });
+      }
+
+      window.open(
+        "https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id= " +
+        _clientId +
+        " &response_type=id_token&redirect_uri=" +
+        window.location.origin +
+        "/pages/index.html&response_mode=fragment&scope=openid profile email offline_access&state=1234&nonce=678910&prompt=select_account",
+        "_self",
+        "width=500px,height=500px,scrollbars=1"
+      );
+    });
+
+    $(document).ready(function () {
+      $(".iti__flag-container").css("left", "12%");
+      var urlParams;
+      (function () {
+        var match,
+          pl = /\+/g, // Regex for replacing addition symbol with a space
+          search = /([^&=]+)=?([^&]*)/g,
+          decode = function (s) {
+            return decodeURIComponent(s.replace(pl, " "));
+          },
+          query = window.location.hash;
+        urlParams = {};
+        while ((match = search.exec(query))) {
+          urlParams[decode(match[1])] = decode(match[2]);
+        }
+      })();
+      var idToken = urlParams["#id_token"];
+      var form = new FormData();
+      form.append("idToken", idToken);
+      form.append("authType", "SOCIAL_OUTLOOK");
+      form.append("genPassword", CryptoJS.MD5(generatedPassword));
+      form.append("domainUrl", domainUrl);
+      //form.append("signUp",true);
+      if (idToken !== undefined) {
+        outlook(form);
+      }
+
+      //  outlook(form);
+      //  parent.window.close();
+    });
+    function outlook(form) {
+      if (
+        localStorage.getItem("signUp") == undefined ||
+        localStorage.getItem("signUp") == "true"
+      ) {
+        form.append("signUp", true);
+      }
+      $.ajax({
+        url:
+          window.location.origin +
+          "/proxyservices/v1/auth/add/SocialMailUser",
+        method: "POST",
+        processData: false,
+        contentType: false,
+        data: form,
+        success: function (data) {
+          if (data != null) {
+            if (sessionStorage != undefined && sessionStorage != null) {
+              sessionStorage.setItem("CFUser", JSON.stringify(data));
+            }
+            var passwordStoredIs = data.signUp;
+            if (passwordStoredIs === null) {
+              localStorage.setItem(
+                "UserAuthDetails",
+                BasicAuth(data.id, CryptoJS.MD5(generatedPassword))
+              );
+            } else {
+              localStorage.setItem(
+                "UserAuthDetails",
+                BasicAuth(data.id, passwordStoredIs)
+              );
+            }
+            var userDetails = JSON.parse(sessionStorage.getItem("CFUser"));
+            localStorage.setItem("UserName", userDetails.lastName);
+            localStorage.setItem("CFUser", sessionStorage.getItem("CFUser"));
+            sessionStorage.removeItem("CFUser");
+            if (userDetails.enabled == true) {
+              var passwordStored = userDetails.signUp;
+              if (passwordStored === null) {
+                var _data = {
+                  name: userDetails.lastName,
+                  email: userDetails.primaryEmail,
+                };
+                /*  activecampaign.createContact(_data);*/
+                if (userDetails.socialAuth !== null) {
+                  if (userDetails.socialAuth.authtype == "SOCIAL_GMAIL") {
+                    activecampaign.eventTrack(
+                      "Login with Google",
+                      userDetails.primaryEmail,
+                      "clicked"
+                    );
+                  } else if (
+                    userDetails.socialAuth.authtype == "SOCIAL_OUTLOOK"
+                  ) {
+                    activecampaign.eventTrack(
+                      "Login with Office 365",
+                      userDetails.primaryEmail,
+                      "clicked"
+                    );
+                  }
+                }
+                sendPageView(window.location.pathname + "?signedup=true");
+
+                localStorage.setItem(
+                  "UserAuthDetails",
+                  BasicAuth(userDetails.id, CryptoJS.MD5(generatedPassword))
+                );
+              } else {
+                activecampaign.getContact(
+                  userDetails.primaryEmail,
+                  "loggedIn"
+                );
+                if (userDetails.socialAuth !== null) {
+                  if (userDetails.socialAuth.authtype == "SOCIAL_GMAIL") {
+                    activecampaign.eventTrack(
+                      "Login with Google",
+                      userDetails.primaryEmail,
+                      "clicked"
+                    );
+                  } else if (
+                    userDetails.socialAuth.authtype == "SOCIAL_OUTLOOK"
+                  ) {
+                    activecampaign.eventTrack(
+                      "Login with Office 365",
+                      userDetails.primaryEmail,
+                      "clicked"
+                    );
+                  }
+                }
+                localStorage.setItem(
+                  "UserAuthDetails",
+                  BasicAuth(userDetails.id, passwordStored)
+                );
+              }
+              localStorage.setItem("UserId", userDetails.id);
+              if (passwordStored === null) {
+                refreshcloud(
+                  "all",
+                  BasicAuth(userDetails.id, CryptoJS.MD5(generatedPassword)),
+                  userDetails.id
+                );
+              } else {
+                refreshcloud(
+                  "all",
+                  BasicAuth(userDetails.id, passwordStored),
+                  userDetails.id
+                );
+              }
+
+              var serverDate = userDetails.createdDate;
+              var expiresIn = userDetails.expiresIn;
+              var url = sessionStorage.getItem("url");
+              var url1 = sessionStorage.getItem("url1");
+              var pmnt = sessionStorage.getItem("pmnt");
+              if (pmnt != null) {
+                window.location.href = pmnt;
+              } else if (url != null) {
+                window.location.href = url;
+              } else if (url1 != null) {
+                window.location.href = url1;
+              } else if (expiresIn < serverDate) {
+                var isCusUser = checkIsaCustomUserForLogin(userDetails.id);
+                if (serverDate - expiresIn > 3 * 24 * 60 * 60 * 1000) {
+                  //alert("Expired user");
+                  if (isCusUser == true) {
+                    window.location.href = "cloudmanager.html?ver=1028";
+                  } else {
+                    window.location.href = "settings.html#price?pinfo=true";
+                  }
+                } else {
+                  window.location.href = "cloudmanager.html?ver=1028";
+                }
+              } else {
+                window.location.href = "cloudmanager.html?ver=1028";
+              }
+              return false;
+            } else {
+              wrapper = $("#login-manager  .login-wrapper");
+              wrapper.addClass("wobble");
+              $("#login-submit").text("Login");
+              $("#login-manager .statusMesg").html(
+                "<p>Please confirm your email address to activate your account</p>"
+              );
+              $("#login-manager i#resend-link").text(
+                "Resend confirmation link"
+              );
+              return wrapper.bind(
+                "webkitAnimationEnd animationEnd mozAnimationEnd",
+                function () {
+                  wrapper.off("webkitAnimationEnd");
+                  return wrapper.removeClass("wobble");
+                }
+              );
+            }
+          }
+          //console.log(data);
+        },
+        error: function (xhr) {
+          if (xhr.status === 404) {
+            var test = xhr.getResponseHeader("exception");
+            if (test === "EmailId is empty in IdToken") {
+              $("#expiredAccount").css("display", "");
+            }
+          } else if (xhr.status === 409) {
+            //alert("This emailid is already registered with us. Please use a different email id to create an account.");
+            alert(
+              "Your email ID is not registered with us. Please contact sales to create an account"
+            );
+          } else if (xhr.status === 401) {
+            wrapper = $("#login-manager .login-wrapper");
+            $("#login-submit").text("Login");
+            wrapper.addClass("wobble");
+            $("#login-manager .statusMesg1").css("display", "");
+            $("#login-manager .statusMesg1").text(
+              "*Password  you entered is incorrect. Please try again!"
+            );
+            $("#login-manager #email").focusout();
+            $("#login-manager #safariChange").focus();
+            return wrapper.bind(
+              "webkitAnimationEnd animationEnd mozAnimationEnd",
+              function () {
+                wrapper.off("webkitAnimationEnd");
+                return wrapper.removeClass("wobble");
+              }
+            );
+          }
+        },
+      });
+    }
+    function recaptchaCallback() {
+      $("#login-submit").attr("disabled", false);
+      //localStorage.setItem("tryLimit", 0);
+    }
+  </script>
+  <script type="text/javascript" nonce="hcfTSS7mzeBJdDMWCfSOjg==">
+    (function (e, t, o, n, p, r, i) {
+      e.visitorGlobalObjectAlias = n;
+      e[e.visitorGlobalObjectAlias] =
+        e[e.visitorGlobalObjectAlias] ||
+        function () {
+          (e[e.visitorGlobalObjectAlias].q =
+            e[e.visitorGlobalObjectAlias].q || []).push(arguments);
+        };
+      e[e.visitorGlobalObjectAlias].l = new Date().getTime();
+      r = t.createElement("script");
+      r.src = o;
+      r.async = true;
+      i = t.getElementsByTagName("script")[0];
+      i.parentNode.insertBefore(r, i);
+    })(
+      window,
+      document,
+      "https://diffuser-cdn.app-us1.com/diffuser/diffuser.js",
+      "vgo"
+    );
+    vgo("setAccount", "649987855");
+    vgo("setTrackByDefault", true);
+
+    vgo("process");
+  </script>
+</body>
+
+</html>
