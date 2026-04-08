@@ -861,6 +861,7 @@ const ReportsPanel=({onClose,refreshKey=0})=>{
   const fmtDate=ts=>{try{const d=new Date(ts);return d.toLocaleDateString()+' '+d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'})}catch{return ts}};
   const fmtDur=(s,e)=>{try{const sec=Math.round((new Date(e)-new Date(s))/1000);return sec<60?`${sec}s`:`${Math.floor(sec/60)}m ${sec%60}s`}catch{return ''}};
   const statusStyle=(r)=>{
+    if(r.status==='running')return{bg:'#EFF6FF',color:'#1D4ED8',label:'In Progress'};
     if(r.dryRun)return{bg:'#FEF3C7',color:'#92400E',label:'Dry Run'};
     if(r.status==='failed')return{bg:'#FEE2E2',color:'#991B1B',label:'Failed'};
     if(r.totalErrors>0)return{bg:'#FEF3C7',color:'#92400E',label:'Partial'};
@@ -916,9 +917,10 @@ const ReportsPanel=({onClose,refreshKey=0})=>{
                       {r.endTime&&<span>⏱ {fmtDur(r.startTime,r.endTime)}</span>}
                     </div>
                   </div>
-                  <div style={{display:'flex',gap:6,flexShrink:0,marginLeft:8}}>
-                    {!r.dryRun&&<button onClick={()=>dlBatch(r._id)} title="Download CSV" style={{display:'flex',alignItems:'center',gap:4,padding:'5px 9px',borderRadius:6,border:`1px solid ${C.primary}`,background:'white',fontSize:11,color:C.primary,cursor:'pointer',fontFamily:'inherit',fontWeight:500}} onMouseEnter={e=>e.currentTarget.style.background=C.tint} onMouseLeave={e=>e.currentTarget.style.background='white'}><IcoDownload s={11} c={C.primary}/> CSV</button>}
-                    <button onClick={()=>dlBatchJson(r._id)} title="Download JSON" style={{display:'flex',alignItems:'center',gap:4,padding:'5px 9px',borderRadius:6,border:`1px solid ${C.border}`,background:'white',fontSize:11,color:C.muted,cursor:'pointer',fontFamily:'inherit',fontWeight:500}} onMouseEnter={e=>e.currentTarget.style.background=C.bg} onMouseLeave={e=>e.currentTarget.style.background='white'}><IcoDownload s={11}/> JSON</button>
+                  <div style={{display:'flex',gap:6,flexShrink:0,marginLeft:8,alignItems:'center'}}>
+                    {r.status==='running'&&<span style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:'#1D4ED8'}}><Spinner s={12}/>Running...</span>}
+                    {r.status!=='running'&&!r.dryRun&&<button onClick={()=>dlBatch(r._id)} title="Download CSV" style={{display:'flex',alignItems:'center',gap:4,padding:'5px 9px',borderRadius:6,border:`1px solid ${C.primary}`,background:'white',fontSize:11,color:C.primary,cursor:'pointer',fontFamily:'inherit',fontWeight:500}} onMouseEnter={e=>e.currentTarget.style.background=C.tint} onMouseLeave={e=>e.currentTarget.style.background='white'}><IcoDownload s={11} c={C.primary}/> CSV</button>}
+                    {r.status!=='running'&&<button onClick={()=>dlBatchJson(r._id)} title="Download JSON" style={{display:'flex',alignItems:'center',gap:4,padding:'5px 9px',borderRadius:6,border:`1px solid ${C.border}`,background:'white',fontSize:11,color:C.muted,cursor:'pointer',fontFamily:'inherit',fontWeight:500}} onMouseEnter={e=>e.currentTarget.style.background=C.bg} onMouseLeave={e=>e.currentTarget.style.background='white'}><IcoDownload s={11}/> JSON</button>}
                   </div>
                 </div>
 
