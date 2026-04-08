@@ -836,6 +836,9 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
     const creator = new PagesCreator(tenant_id, customer_name);
     const checkpoint = new CheckpointManager(batchId);
 
+    // Live progress counters — written to DB after each user
+    let progressUsers = 0, progressPages = 0, progressErrors = 0;
+
     await withConcurrency(users, 5, async (u) => {
       const googleEmail = u.email;
       const m365Email = user_mappings[googleEmail] || googleEmail;
@@ -854,7 +857,7 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
           try {
             let convWithResponses;
             if (skip_ai_response) {
-              convWithResponses = conv; // use original conversations without AI responses
+              convWithResponses = conv;
             } else {
               convWithResponses = await generator.generate(conv, skip_followups);
             }
@@ -880,8 +883,16 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
       } catch (err) {
         emit('error', `Fatal error for ${googleEmail}: ${err.message}`);
         report.addUserResult({ email: m365Email, conversations: 0, pagesCreated: 0, visualAssetsFlagged: 0, errors: [{ error: err.message }] });
+        progressErrors++;
       } finally {
+        progressUsers++;
+        progressPages += pagesCreated;
         conversations = null;
+        // Write live progress to DB so Reports panel can poll it
+        db().collection('reportsWorkspace').updateOne(
+          { _id: batchId },
+          { $set: { progressUsers, progressPages, progressErrors, totalUsers: users.length } }
+        ).catch(() => {});
       }
     });
 

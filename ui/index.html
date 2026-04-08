@@ -820,15 +820,15 @@ const LogFeed=({logs,live})=>{
 /* ══════════════════════════════ */
 /* ═══     REPORTS PANEL      ═══ */
 /* ══════════════════════════════ */
-const ReportsPanel=({onClose,refreshKey=0})=>{
+const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive=false})=>{
   const [reports,setReports]=useState([]);
   const [loading,setLoading]=useState(true);
   const [agg,setAgg]=useState(null);
   const [expanded,setExpanded]=useState({});
   const [batchDetails,setBatchDetails]=useState({});
+  const pollRef=useRef(null);
 
   const loadReports=useCallback(()=>{
-    setLoading(true);
     Promise.all([
       fetch('/api/reports').then(r=>r.json()).catch(()=>[]),
       fetch('/api/reports/aggregate').then(r=>r.json()).catch(()=>null)
@@ -840,7 +840,18 @@ const ReportsPanel=({onClose,refreshKey=0})=>{
   },[]);
 
   // Re-fetch whenever panel opens (refreshKey changes) or migration completes
-  useEffect(()=>{ loadReports(); },[refreshKey]);
+  useEffect(()=>{ setLoading(true); loadReports(); },[refreshKey]);
+
+  // Auto-poll every 3s while any batch is running
+  useEffect(()=>{
+    const hasRunning=reports.some(r=>r.status==='running')||isLive;
+    if(hasRunning){
+      pollRef.current=setInterval(loadReports,3000);
+    } else {
+      clearInterval(pollRef.current);
+    }
+    return()=>clearInterval(pollRef.current);
+  },[reports,isLive,loadReports]);
 
   const toggleDetail=async(id)=>{
     setExpanded(p=>({...p,[id]:!p[id]}));
@@ -926,14 +937,26 @@ const ReportsPanel=({onClose,refreshKey=0})=>{
 
                 <div style={{display:'flex',gap:16,borderTop:`1px solid ${C.bg}`,paddingTop:8,marginTop:4,justifyContent:'space-between',alignItems:'flex-end'}}>
                   <div style={{display:'flex',gap:16}}>
-                    {[['Users',r.totalUsers],['Pages',r.migratedConversations],['Errors',r.totalErrors]].map(([lbl,val],j)=>(
-                      <div key={j} style={{textAlign:'center'}}>
-                        <div style={{fontSize:16,fontWeight:700,color:lbl==='Errors'&&val>0?C.error:C.primary}}>{val??0}</div>
-                        <div style={{fontSize:10,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{lbl}</div>
-                      </div>
-                    ))}
+                    {(()=>{
+                      const isRunningBatch=r.status==='running';
+                      const live=isRunningBatch&&liveStats&&r._id===liveBatchId;
+                      const doneUsers=live?liveStats.users:(isRunningBatch?r.progressUsers:r.totalUsers);
+                      const donePages=live?liveStats.pages:(isRunningBatch?r.progressPages:r.migratedConversations);
+                      const doneErrors=live?liveStats.errors:(isRunningBatch?r.progressErrors:r.totalErrors);
+                      const totalUsers=r.totalUsers||0;
+                      return[
+                        ['Users',isRunningBatch?`${doneUsers??0}/${totalUsers}`:doneUsers,false],
+                        ['Pages',donePages,false],
+                        ['Errors',doneErrors,doneErrors>0]
+                      ].map(([lbl,val,isErr],j)=>(
+                        <div key={j} style={{textAlign:'center'}}>
+                          <div style={{fontSize:16,fontWeight:700,color:isErr?C.error:C.primary}}>{val??0}</div>
+                          <div style={{fontSize:10,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{lbl}</div>
+                        </div>
+                      ));
+                    })()}
                   </div>
-                  {!r.dryRun&&<button onClick={()=>toggleDetail(r._id)} style={{fontSize:11,color:C.primaryL,background:'none',border:'none',cursor:'pointer',fontFamily:'inherit',padding:'0 4px'}}>{isExp?'▲ Hide Details':'▼ View Details'}</button>}
+                  {!r.dryRun&&r.status!=='running'&&<button onClick={()=>toggleDetail(r._id)} style={{fontSize:11,color:C.primaryL,background:'none',border:'none',cursor:'pointer',fontFamily:'inherit',padding:'0 4px'}}>{isExp?'▲ Hide Details':'▼ View Details'}</button>}
                 </div>
 
                 {/* Per-user detail expand */}
@@ -1258,7 +1281,7 @@ function App(){
       </div>
 
       {/* Reports side panel */}
-      {showReports&&<ReportsPanel onClose={()=>setShowReports(false)} refreshKey={reportRefreshKey}/>}
+      {showReports&&<ReportsPanel onClose={()=>setShowReports(false)} refreshKey={reportRefreshKey} liveStats={stats} liveBatchId={currentBatchId} isLive={live}/>}
 
       {/* Toast notification */}
       {toast&&<Toast message={toast.message} type={toast.type} onHide={()=>setToast(null)}/>}
