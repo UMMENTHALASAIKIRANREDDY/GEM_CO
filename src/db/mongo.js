@@ -11,14 +11,23 @@ let _db = null;
  * Connect to MongoDB and ensure all collections + indexes exist.
  * Call once on startup before app.listen().
  */
-export async function connectMongo() {
+export async function connectMongo(retries = 5, delayMs = 3000) {
   const uri = process.env.MONGO_URI;
   if (!uri) throw new Error('MONGO_URI not set in .env');
 
-  _client = new MongoClient(uri);
-  await _client.connect();
-  _db = _client.db(process.env.MONGO_DATABASE || 'gemco');
-  logger.info('MongoDB connected');
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      _client = new MongoClient(uri);
+      await _client.connect();
+      _db = _client.db(process.env.MONGO_DATABASE || 'gemco');
+      logger.info('MongoDB connected');
+      break;
+    } catch (err) {
+      logger.warn(`MongoDB connect attempt ${attempt}/${retries} failed: ${err.message}`);
+      if (attempt === retries) throw err;
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
 
   await ensureCollections();
 }
