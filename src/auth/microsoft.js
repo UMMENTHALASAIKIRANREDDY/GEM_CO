@@ -71,7 +71,7 @@ export async function acquireTokenByCode(tenantId, code) {
   _delegatedToken = result.accessToken;
   _delegatedTokenExpiry = Date.now() + (result.expiresOn?.getTime() - Date.now()) || 3600000;
   logger.info(`Delegated token acquired — expires: ${result.expiresOn}`);
-  return result.accessToken;
+  return result;
 }
 
 /**

@@ -549,6 +549,7 @@ const Step3=({options,setOptions,config,setConfig,msAuthed,onRun,onBack})=>{
         <div style={{fontSize:13,fontWeight:600,marginBottom:4,color:C.dark}}>Behavior</div>
         <Chk label="Dry run (preview only — no pages created)" hint="Recommended before first live migration" checked={options.dryRun} onChange={e=>setOptions(p=>({...p,dryRun:e.target.checked}))}/>
         <Chk label="Skip follow-up messages" hint="Only migrate the first message of each conversation thread" checked={options.skipFollowups} onChange={e=>setOptions(p=>({...p,skipFollowups:e.target.checked}))}/>
+        <Chk label="Disable Azure OpenAI (GPT-4o) responses" hint="Skip AI-generated Copilot responses — migrate Gemini content only. Faster and avoids OpenAI costs." checked={options.skipAiResponse} onChange={e=>setOptions(p=>({...p,skipAiResponse:e.target.checked}))}/>
       </Card>
 
       <Card style={{marginBottom:20}}>
@@ -818,7 +819,7 @@ function App(){
   const [config,setConfig]=useState(()=>{const s=lsGet(LS.config,{});return{fileName:s.fileName||s.customerName||'',tenantId:s.tenantId||'807d6772-847c-40e2-9bec-e2c930b3a42e'}});
   const [mappings,setMappings]=useState(()=>lsGet(LS.mappings,{}));
   const [selectedUsers,setSelectedUsers]=useState(()=>{const s=lsGet(LS.selUsers,null);return s?new Set(s):new Set()});
-  const [options,setOptions]=useState({dryRun:true,skipFollowups:false,fromDate:'',toDate:''});
+  const [options,setOptions]=useState({dryRun:true,skipFollowups:false,skipAiResponse:false,fromDate:'',toDate:''});
   const [googleAuthed,setGoogleAuthed]=useState(()=>lsGet(LS.authG,{signedIn:false}).signedIn||false);
   const [msAuthed,setMsAuthed]=useState(()=>lsGet(LS.authMs,{signedIn:false}).signedIn||false);
   const [googleUsers,setGoogleUsers]=useState([]);
@@ -916,7 +917,7 @@ function App(){
 
     const fm={};const keys=selectedUsers.size>0?[...selectedUsers]:Object.keys(mappings);
     keys.forEach(k=>{if(mappings[k]!==undefined)fm[k]=mappings[k]});
-    const payload={extract_path:uploadData.extract_path,tenant_id:config.tenantId,customer_name:config.fileName||'Gemini',user_mappings:fm,dry_run:isDry,skip_followups:options.skipFollowups,from_date:options.fromDate||null,to_date:options.toDate||null};
+    const payload={extract_path:uploadData.extract_path,tenant_id:config.tenantId,customer_name:config.fileName||'Gemini',user_mappings:fm,dry_run:isDry,skip_followups:options.skipFollowups,skip_ai_response:options.skipAiResponse,from_date:options.fromDate||null,to_date:options.toDate||null};
     try{
       const res=await fetch('/api/migrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       if(!res.ok){const d=await res.json();addLog('error',d.error);setLive(false)}

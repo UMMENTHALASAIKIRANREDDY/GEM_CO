@@ -18,6 +18,7 @@ import { PagesCreator } from './src/modules/pagesCreator.js';
 import { ReportWriter } from './src/modules/reportWriter.js';
 import { CheckpointManager } from './src/utils/checkpoint.js';
 import { AgentDeployer } from './src/agent/agentDeployer.js';
+import { connectMongo, getDb } from './src/db/mongo.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -35,25 +36,10 @@ const reportsDir   = path.join(__dirname, 'uploads', 'reports');
 fs.mkdirSync(uploadsDir, { recursive: true });
 fs.mkdirSync(reportsDir, { recursive: true });
 
-// ─── Upload metadata helpers ──────────────────────────────────────────────────
-const uploadsMetaPath = path.join(uploadsDir, 'uploads_meta.json');
-
-function readUploadsMeta() {
-  try { return JSON.parse(fs.readFileSync(uploadsMetaPath, 'utf8')); } catch { return { uploads: [] }; }
-}
-function saveUploadsMeta(meta) {
-  fs.writeFileSync(uploadsMetaPath, JSON.stringify(meta, null, 2));
-}
-
-// ─── Batch reports index helpers ─────────────────────────────────────────────
-const reportsIndexPath = path.join(reportsDir, 'index.json');
-
-function readReportsIndex() {
-  try { return JSON.parse(fs.readFileSync(reportsIndexPath, 'utf8')); } catch { return []; }
-}
-function saveReportsIndex(index) {
-  fs.writeFileSync(reportsIndexPath, JSON.stringify(index, null, 2));
-}
+// ─── MongoDB helpers ─────────────────────────────────────────────────────────
+import { getLogger } from './src/utils/logger.js';
+const dbLog = getLogger('db:ops');
+function db() { return getDb(); }
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'ui')));
@@ -90,7 +76,18 @@ app.get('/auth/callback', async (req, res) => {
     }
     if (!code) return res.status(400).send('No authorization code received');
 
-    await acquireTokenByCode(currentTenantId, code);
+    const msResult = await acquireTokenByCode(currentTenantId, code);
+
+    // Record login in MongoDB
+    try {
+      const msEmail = msResult?.account?.username || 'unknown';
+      await db().collection('users').updateOne(
+        { email: msEmail, provider: 'microsoft' },
+        { $set: { displayName: msResult?.account?.name || '', tenantId: currentTenantId, lastLogin: new Date() } },
+        { upsert: true }
+      );
+      dbLog.info(`users.upsert — ${msEmail} (microsoft)`);
+    } catch (e) { dbLog.warn(`users.upsert failed: ${e.message}`); }
 
     // Close the popup and notify the parent window
     res.send(`
@@ -133,6 +130,19 @@ app.get('/auth/google/callback', async (req, res) => {
     if (!code) return res.status(400).send('No authorization code received');
 
     await acquireGoogleTokenByCode(code);
+
+    // Record Google login in MongoDB
+    try {
+      const auth = getGoogleOAuth2Client();
+      const oauth2 = google.oauth2({ version: 'v2', auth });
+      const { data: profile } = await oauth2.userinfo.get();
+      await db().collection('users').updateOne(
+        { email: profile.email, provider: 'google' },
+        { $set: { displayName: profile.name || '', lastLogin: new Date() } },
+        { upsert: true }
+      );
+      dbLog.info(`users.upsert — ${profile.email} (google)`);
+    } catch (e) { dbLog.warn(`users.upsert failed: ${e.message}`); }
 
     res.send(`
       <html><body>
@@ -188,6 +198,21 @@ app.get('/api/google/users', async (_req, res) => {
       pageToken = resp.data.nextPageToken;
     } while (pageToken);
 
+    // Persist to cloudMembers
+    try {
+      if (users.length > 0) {
+        const ops = users.map(u => ({
+          updateOne: {
+            filter: { email: u.email, source: 'google' },
+            update: { $set: { displayName: u.name, discoveredAt: new Date() } },
+            upsert: true
+          }
+        }));
+        await db().collection('cloudMembers').bulkWrite(ops, { ordered: false });
+        dbLog.info(`cloudMembers.bulkWrite — ${users.length} google users`);
+      }
+    } catch (e) { dbLog.warn(`cloudMembers.bulkWrite failed: ${e.message}`); }
+
     res.json({ total: users.length, users });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -219,6 +244,14 @@ app.post('/api/google/vault-export', async (req, res) => {
       userEmails: user_emails,
       exporter,
     };
+
+    // Persist to vaultExports
+    await db().collection('vaultExports').updateOne(
+      { exportId: exportData.id },
+      { $set: { matterId: matter.matterId, userEmails: user_emails, status: 'IN_PROGRESS', requestedAt: new Date() } },
+      { upsert: true }
+    );
+    dbLog.info(`vaultExports.upsert — export ${exportData.id} (${user_emails.length} users)`);
 
     res.json({ matter_id: matter.matterId, export_id: exportData.id });
   } catch (err) {
@@ -278,6 +311,13 @@ app.get('/api/google/vault-export/status', async (_req, res) => {
 
       console.log(`[${new Date().toISOString()}] Parsed ${users.length} users from export`);
 
+      // Update vaultExports in MongoDB
+      await db().collection('vaultExports').updateOne(
+        { exportId },
+        { $set: { status: 'COMPLETED', completedAt: new Date() } }
+      );
+      dbLog.info(`vaultExports.update — export ${exportId} COMPLETED`);
+
       activeExport = null;
 
       return res.json({
@@ -296,6 +336,11 @@ app.get('/api/google/vault-export/status', async (_req, res) => {
 
     if (status === 'FAILED') {
       console.log(`[${new Date().toISOString()}] Export FAILED`);
+      await db().collection('vaultExports').updateOne(
+        { exportId },
+        { $set: { status: 'FAILED', completedAt: new Date(), error: 'Vault export failed' } }
+      );
+      dbLog.info(`vaultExports.update — export ${exportId} FAILED`);
       activeExport = null;
       return res.json({ status, error: 'Vault export failed' });
     }
@@ -321,6 +366,22 @@ app.get('/api/ms/users', async (req, res) => {
       users = users.concat(data.value || []);
       url = data['@odata.nextLink'] || null;
     }
+
+    // Persist to cloudMembers
+    try {
+      if (users.length > 0) {
+        const ops = users.map(u => ({
+          updateOne: {
+            filter: { email: u.mail || u.userPrincipalName, source: 'microsoft' },
+            update: { $set: { displayName: u.displayName, tenantId: req.query.tenant_id || null, discoveredAt: new Date() } },
+            upsert: true
+          }
+        }));
+        await db().collection('cloudMembers').bulkWrite(ops, { ordered: false });
+        dbLog.info(`cloudMembers.bulkWrite — ${users.length} microsoft users`);
+      }
+    } catch (e) { dbLog.warn(`cloudMembers.bulkWrite failed: ${e.message}`); }
+
     res.json({ users });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -353,22 +414,36 @@ app.post('/api/upload', upload.single('vault_zip'), async (req, res) => {
       return res.status(400).json({ error: 'No users found in Vault export XML files.' });
     }
 
-    const uploadEntry = {
-      id: req.file.filename,
-      original_name: req.file.originalname || 'vault_export.zip',
-      upload_time: new Date().toISOString(),
-      extract_path: extractTo,
-      total_users: users.length,
-      total_conversations: users.reduce((s, u) => s + u.conversationCount, 0),
+    const usersArr = users.map(u => ({
+      email: u.email,
+      displayName: u.displayName,
+      conversationCount: u.conversationCount
+    }));
+
+    const uploadDoc = {
+      _id: req.file.filename,
+      originalName: req.file.originalname || 'vault_export.zip',
+      uploadTime: new Date(),
+      extractPath: extractTo,
+      totalUsers: users.length,
+      totalConversations: users.reduce((s, u) => s + u.conversationCount, 0),
+      users: usersArr,
     };
-    const meta = readUploadsMeta();
-    // Remove duplicates by id, keep newest first
-    meta.uploads = [uploadEntry, ...meta.uploads.filter(u => u.id !== uploadEntry.id)].slice(0, 20);
-    saveUploadsMeta(meta);
+    await db().collection('uploads').updateOne(
+      { _id: uploadDoc._id },
+      { $set: uploadDoc },
+      { upsert: true }
+    );
+    dbLog.info(`uploads.upsert — ${uploadDoc.originalName} (${uploadDoc.totalUsers} users, ${uploadDoc.totalConversations} conversations)`);
 
     res.json({
-      ...uploadEntry,
-      users: users.map(u => ({
+      id: uploadDoc._id,
+      original_name: uploadDoc.originalName,
+      upload_time: uploadDoc.uploadTime.toISOString(),
+      extract_path: extractTo,
+      total_users: uploadDoc.totalUsers,
+      total_conversations: uploadDoc.totalConversations,
+      users: usersArr.map(u => ({
         email: u.email,
         display_name: u.displayName,
         conversation_count: u.conversationCount
@@ -380,43 +455,73 @@ app.post('/api/upload', upload.single('vault_zip'), async (req, res) => {
 });
 
 // ─── Upload Management ────────────────────────────────────────────────────────
-app.get('/api/uploads', (_req, res) => {
-  res.json(readUploadsMeta());
+app.get('/api/uploads', async (_req, res) => {
+  const uploads = await db().collection('uploads').find().sort({ uploadTime: -1 }).toArray();
+  res.json({ uploads });
 });
 
-app.delete('/api/uploads/:id', (req, res) => {
+app.delete('/api/uploads/:id', async (req, res) => {
   const { id } = req.params;
-  const meta = readUploadsMeta();
-  const idx = meta.uploads.findIndex(u => u.id === id);
-  if (idx === -1) return res.status(404).json({ error: 'Upload not found' });
-  const entry = meta.uploads[idx];
-  try { fs.rmSync(entry.extract_path, { recursive: true, force: true }); } catch {}
-  meta.uploads.splice(idx, 1);
-  saveUploadsMeta(meta);
+  const entry = await db().collection('uploads').findOne({ _id: id });
+  if (!entry) return res.status(404).json({ error: 'Upload not found' });
+  try { fs.rmSync(entry.extractPath, { recursive: true, force: true }); } catch {}
+  await db().collection('uploads').deleteOne({ _id: id });
+  dbLog.info(`uploads.delete — ${id}`);
   res.json({ ok: true });
 });
 
 // ─── Report Downloads ─────────────────────────────────────────────────────────
 
-// List all batch reports
-app.get('/api/reports', (_req, res) => {
-  res.json(readReportsIndex());
+// List all batch reports (without full report body for performance)
+app.get('/api/reports', async (_req, res) => {
+  const reports = await db().collection('reportsWorkspace')
+    .find({}, { projection: { report: 0 } })
+    .sort({ startTime: -1 })
+    .toArray();
+  res.json(reports);
 });
 
 // Download a specific batch report by id
-app.get('/api/reports/:id', (req, res) => {
+app.get('/api/reports/:id', async (req, res) => {
   const { id } = req.params;
   // Legacy alias
   if (id === 'migration') {
-    const p = path.join(uploadsDir, 'migration_report.json');
-    if (!fs.existsSync(p)) return res.status(404).json({ error: 'No report yet' });
-    return res.sendFile(p);
+    const latest = await db().collection('reportsWorkspace').findOne({}, { sort: { startTime: -1 } });
+    if (!latest) return res.status(404).json({ error: 'No report yet' });
+    res.setHeader('Content-Type', 'application/json');
+    return res.json(latest.report || latest);
   }
-  const p = path.join(reportsDir, `batch_${id}.json`);
-  if (!fs.existsSync(p)) return res.status(404).json({ error: 'Batch report not found' });
+  const doc = await db().collection('reportsWorkspace').findOne({ _id: id });
+  if (!doc) return res.status(404).json({ error: 'Batch report not found' });
   res.setHeader('Content-Disposition', `attachment; filename="migration_report_${id}.json"`);
   res.setHeader('Content-Type', 'application/json');
-  fs.createReadStream(p).pipe(res);
+  res.json(doc.report || doc);
+});
+
+// ─── User Mappings ───────────────────────────────────────────────────────────
+app.get('/api/user-mappings/latest', async (_req, res) => {
+  const doc = await db().collection('userMappings').findOne({ batchId: 'latest' });
+  res.json(doc || null);
+});
+
+app.post('/api/user-mappings', async (req, res) => {
+  const { customerName, mappings, selectedUsers } = req.body;
+  await db().collection('userMappings').updateOne(
+    { batchId: 'latest' },
+    { $set: { customerName, mappings, selectedUsers, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+    { upsert: true }
+  );
+  dbLog.info(`userMappings.upsert — ${Object.keys(mappings || {}).length} mappings, ${(selectedUsers || []).length} selected`);
+  res.json({ ok: true });
+});
+
+// ─── Migration Logs (historical) ────────────────────────────────────────────
+app.get('/api/migration-logs/:batchId', async (req, res) => {
+  const logs = await db().collection('migrationLogs')
+    .find({ batchId: req.params.batchId })
+    .sort({ ts: 1 })
+    .toArray();
+  res.json(logs);
 });
 
 // ─── SSE — live log stream ────────────────────────────────────────────────────
@@ -435,10 +540,18 @@ app.get('/api/migration-log', (req, res) => {
   req.on('close', () => migrationEvents.off('log', onLog));
 });
 
+let currentBatchId = null;
+
 function emit(type, message, extra = {}) {
   const entry = { type, message, ts: new Date().toISOString(), ...extra };
   logBuffer.push(entry);
   migrationEvents.emit('log', entry);
+  // Persist to MongoDB (fire-and-forget)
+  if (currentBatchId) {
+    db().collection('migrationLogs').insertOne({
+      batchId: currentBatchId, type, message, ts: new Date(), extra
+    }).catch(() => {});
+  }
 }
 
 // ─── Start Migration ──────────────────────────────────────────────────────────
@@ -450,6 +563,7 @@ app.post('/api/migrate', async (req, res) => {
     user_mappings = {},
     dry_run = false,
     skip_followups = false,
+    skip_ai_response = false,
     from_date = null,
     to_date = null
   } = req.body;
@@ -464,7 +578,7 @@ app.post('/api/migrate', async (req, res) => {
 
   const batch_id = Date.now().toString();
   res.json({ started: true, batch_id });
-  runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, from_date, to_date, batch_id });
+  runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id });
 });
 
 async function withConcurrency(items, limit, fn) {
@@ -479,12 +593,31 @@ async function withConcurrency(items, limit, fn) {
   return Promise.all(executing);
 }
 
-async function runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, from_date, to_date, batch_id }) {
+async function runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id }) {
   logBuffer.length = 0; // clear previous run's logs
   const batchId = batch_id || Date.now().toString();
+  currentBatchId = batchId;
   const startTime = new Date();
+
+  // Save user mappings snapshot for this batch
+  await db().collection('userMappings').updateOne(
+    { batchId },
+    { $set: { customerName: customer_name, mappings: user_mappings, createdAt: startTime } },
+    { upsert: true }
+  );
+  dbLog.info(`userMappings.upsert — batch ${batchId} (${Object.keys(user_mappings).length} mappings)`);
+
+  // Create reportsWorkspace doc
+  await db().collection('reportsWorkspace').updateOne(
+    { _id: batchId },
+    { $set: { customerName: customer_name, tenantId: tenant_id, startTime, status: 'running', dryRun: dry_run } },
+    { upsert: true }
+  );
+  dbLog.info(`reportsWorkspace.insert — batch ${batchId} status=running`);
+
   await new Promise(r => setTimeout(r, 200));
   emit('info', '━━━ Migration started ━━━');
+  if (skip_ai_response) emit('info', 'Azure OpenAI disabled — migrating original Gemini responses only');
 
   try {
     const reader = new VaultReader(extract_path);
@@ -498,12 +631,17 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
         emit('user', `${u.email} → ${m365Email} (${u.conversationCount} conversations)`);
       }
       const total = users.reduce((s, u) => s + u.conversationCount, 0);
-      // Save dry-run batch to index
-      const idx = readReportsIndex();
-      idx.unshift({ id: batchId, timestamp: startTime.toISOString(), customer_name, dry_run: true,
-        summary: { total_users: users.length, total_conversations: total, total_pages_created: 0, total_errors: 0 }});
-      saveReportsIndex(idx);
+      await db().collection('reportsWorkspace').updateOne(
+        { _id: batchId },
+        { $set: {
+          status: 'completed', endTime: new Date(), dryRun: true,
+          totalUsers: users.length, totalConversations: total,
+          migratedUsers: 0, migratedConversations: 0, failedUsers: 0,
+          report: { summary: { total_users: users.length, total_conversations: total, total_pages_created: 0, total_errors: 0 } }
+        }}
+      );
       emit('done', `DRY RUN complete — ${users.length} users, ${total} conversations. No API calls made.`, { batch_id: batchId });
+      currentBatchId = null;
       return;
     }
 
@@ -521,7 +659,7 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
     const report = new ReportWriter();
     const generator = new ResponseGenerator();
     const creator = new PagesCreator(tenant_id, customer_name);
-    const checkpoint = new CheckpointManager(path.join(extract_path, '..', 'checkpoint.json'));
+    const checkpoint = new CheckpointManager(batchId);
 
     await withConcurrency(users, 5, async (u) => {
       const googleEmail = u.email;
@@ -539,7 +677,12 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
 
         for (const conv of conversations) {
           try {
-            const convWithResponses = await generator.generate(conv, skip_followups);
+            let convWithResponses;
+            if (skip_ai_response) {
+              convWithResponses = conv; // use original conversations without AI responses
+            } else {
+              convWithResponses = await generator.generate(conv, skip_followups);
+            }
             await creator.createPage(m365Email, convWithResponses, visualReports[googleEmail] || []);
             pagesCreated++;
             emit('success', `  Page created: ${conv.title?.slice(0, 60)}`);
@@ -557,7 +700,7 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
           errors
         });
 
-        checkpoint.markComplete(googleEmail);
+        await checkpoint.markComplete(googleEmail);
         emit('success', `  Done: ${pagesCreated}/${conversations.length} pages created for ${m365Email}`);
       } catch (err) {
         emit('error', `Fatal error for ${googleEmail}: ${err.message}`);
@@ -567,16 +710,21 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
       }
     });
 
+    // Write report to file (legacy) and MongoDB
     const reportPath = path.join(uploadsDir, 'migration_report.json');
     report.write(reportPath);
-    // Also save per-batch copy
-    const batchReportPath = path.join(reportsDir, `batch_${batchId}.json`);
-    fs.copyFileSync(reportPath, batchReportPath);
-    // Update reports index
     const fullReport = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
-    const idx = readReportsIndex();
-    idx.unshift({ id: batchId, timestamp: startTime.toISOString(), customer_name, dry_run: false, summary: fullReport.summary });
-    saveReportsIndex(idx);
+
+    const reportUpdate = {
+      status: 'completed',
+      endTime: new Date(),
+      totalUsers: fullReport.summary?.total_users || users.length,
+      migratedUsers: fullReport.summary?.total_users || 0,
+      failedUsers: fullReport.summary?.total_errors > 0 ? 1 : 0,
+      totalConversations: fullReport.summary?.total_conversations || 0,
+      migratedConversations: fullReport.summary?.total_pages_created || 0,
+      report: fullReport,
+    };
 
     // Auto-deploy Copilot Declarative Agent after migration
     if (!dry_run) {
@@ -589,18 +737,37 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
         if (appInfo.failedEmails?.length > 0) {
           emit('warn', `Could not auto-install for: ${appInfo.failedEmails.join(', ')} — install manually from Teams Admin Center → Manage Apps`);
         }
+        // Persist agent deployment
+        reportUpdate.agentDeployment = { installed: appInfo.installed, failed: appInfo.failed, failedEmails: appInfo.failedEmails, totalUsers: appInfo.totalUsers };
+        await db().collection('agentDeployments').insertOne({
+          batchId, agentName: `${customer_name} Conversation Agent`,
+          catalogId: appInfo.id, installed: targetEmails.filter(e => !appInfo.failedEmails?.includes(e)),
+          failed: appInfo.failedEmails || [], totalUsers: appInfo.totalUsers, deployedAt: new Date()
+        });
+        dbLog.info(`agentDeployments.insert — batch ${batchId} (${appInfo.installed}/${appInfo.totalUsers} installed)`);
       } catch (err) {
         emit('warn', `Agent deployment failed (can be done manually): ${err.message}`);
       }
     }
 
+    await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: reportUpdate });
+    dbLog.info(`reportsWorkspace.update — batch ${batchId} status=completed (${reportUpdate.migratedConversations} pages, ${reportUpdate.totalUsers} users)`);
     emit('done', `━━━ Migration complete! Reports saved. ━━━`, { batch_id: batchId });
+    currentBatchId = null;
   } catch (err) {
     emit('error', `Migration failed: ${err.message}`);
+    await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: { status: 'failed', endTime: new Date(), error: err.message } }).catch(() => {});
+    dbLog.info(`reportsWorkspace.update — batch ${batchId} status=failed`);
+    currentBatchId = null;
   }
 }
 
-app.listen(PORT, () => {
-  console.log(`\nGemini → Copilot Migration UI`);
-  console.log(`Open: http://localhost:${PORT}\n`);
+connectMongo().then(() => {
+  app.listen(PORT, () => {
+    console.log(`\nGemini → Copilot Migration UI`);
+    console.log(`Open: http://localhost:${PORT}\n`);
+  });
+}).catch(err => {
+  console.error('Failed to connect to MongoDB:', err.message);
+  process.exit(1);
 });
