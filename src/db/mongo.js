@@ -46,13 +46,16 @@ export function getDb() {
 async function ensureCollections() {
   const existing = new Set(await _db.listCollections().toArray().then(cs => cs.map(c => c.name)));
 
-  // 1. users
-  if (!existing.has('users')) await _db.createCollection('users');
-  await _db.collection('users').createIndex({ email: 1, provider: 1 }, { unique: true });
+  // 1. authSessions — OAuth tokens per user+provider
+  // Fields: appUserId, email, provider, displayName, tenantId, refreshToken, accessToken, tokenExpiry, msalCache, connectedAt, lastRefreshed
+  if (!existing.has('authSessions')) await _db.createCollection('authSessions');
+  await _db.collection('authSessions').createIndex({ appUserId: 1, provider: 1 }, { unique: true });
 
   // 2. cloudMembers
   if (!existing.has('cloudMembers')) await _db.createCollection('cloudMembers');
-  await _db.collection('cloudMembers').createIndex({ email: 1, source: 1 }, { unique: true });
+  // Drop stale indexes from pre-multitenant schema
+  try { await _db.collection('cloudMembers').dropIndex('email_1_source_1'); } catch {}
+  await _db.collection('cloudMembers').createIndex({ appUserId: 1, googleEmail: 1, msEmail: 1, email: 1, source: 1 }, { unique: true });
 
   // 3. uploads
   if (!existing.has('uploads')) await _db.createCollection('uploads');
@@ -71,19 +74,21 @@ async function ensureCollections() {
 
   // 7. migrationLogs
   if (!existing.has('migrationLogs')) await _db.createCollection('migrationLogs');
-  await _db.collection('migrationLogs').createIndex({ batchId: 1, ts: 1 });
+  await _db.collection('migrationLogs').createIndex({ appUserId: 1, batchId: 1, ts: 1 });
 
   // 8. vaultExports
   if (!existing.has('vaultExports')) await _db.createCollection('vaultExports');
-  await _db.collection('vaultExports').createIndex({ exportId: 1 }, { unique: true });
+  await _db.collection('vaultExports').createIndex({ appUserId: 1, googleEmail: 1, exportId: 1 }, { unique: true });
 
   // 9. agentDeployments
   if (!existing.has('agentDeployments')) await _db.createCollection('agentDeployments');
-  await _db.collection('agentDeployments').createIndex({ batchId: 1 });
+  await _db.collection('agentDeployments').createIndex({ appUserId: 1, batchId: 1 });
 
   // 10. userWorkspace (per-user UI state — cross-device persistence)
   if (!existing.has('userWorkspace')) await _db.createCollection('userWorkspace');
-  await _db.collection('userWorkspace').createIndex({ userId: 1 }, { unique: true });
+  // Drop stale single-field index from pre-multitenant schema
+  try { await _db.collection('userWorkspace').dropIndex('userId_1'); } catch {}
+  await _db.collection('userWorkspace').createIndex({ userId: 1, googleEmail: 1, msEmail: 1 }, { unique: true });
 
   // 11. appUsers (login credentials)
   if (!existing.has('appUsers')) await _db.createCollection('appUsers');
@@ -101,5 +106,5 @@ async function ensureCollections() {
     logger.info('Seeded 3 default app users');
   }
 
-  logger.info('All 11 collections verified with indexes');
+  logger.info('All 11 collections verified with indexes (multi-tenant scoped)');
 }

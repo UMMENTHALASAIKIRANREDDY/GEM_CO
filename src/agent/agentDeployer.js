@@ -1,5 +1,5 @@
 import AdmZip from 'adm-zip';
-import { getDelegatedToken, getGraphToken } from '../auth/microsoft.js';
+import { getValidToken } from '../auth/microsoft.js';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('agent:deployer');
@@ -24,76 +24,71 @@ export class AgentDeployer {
    * @param {string} [options.sectionName] — OneNote section name (default: "{customerName} Conversations")
    * @param {string} [options.driveFolder] — OneDrive folder path (default: "Migrated from Google Drive")
    */
-  constructor(customerName, tenantId, options = {}) {
+  constructor(customerName, tenantId, options = {}, appUserId = null) {
     this.customerName = customerName;
     this.tenantId = tenantId;
-    this.agentName = `${customerName} Conversation Agent`;
+    this.appUserId = appUserId;
+    this.agentName = 'Gemini Conversation Agent';
     this.appId = this._generateGuid();
     this.notebookName = options.notebookName || customerName;
     this.sectionName = options.sectionName || `${customerName} Conversations`;
     this.driveFolder = options.driveFolder || 'Migrated from Google Drive';
   }
 
-  _headers() {
-    return { 'Authorization': `Bearer ${getDelegatedToken()}` };
+  async _headers() {
+    return { 'Authorization': `Bearer ${await getValidToken(this.appUserId)}` };
   }
 
   /**
-   * Build the agent app package, publish to catalog, and pin for all users.
-   * Called automatically after migration completes.
+   * Deploy the agent to the org catalog (once per tenant).
+   * If "Gemini Conversation Agent" already exists, reuse it — no duplicate publish.
+   * Auto-install is NOT performed; users must install manually from Teams.
    */
-  /**
-   * @param {string[]} userEmails — list of migrated user emails to install the agent for
-   */
-  /**
-   * @param {string[]} targetEmails — only the mapped M365 user emails from the UI
-   */
-  async deployAgent(targetEmails = []) {
-    logger.info(`Building agent: "${this.agentName}"`);
+  async deployAgent() {
+    logger.info(`Checking catalog for existing agent: "${this.agentName}"`);
 
-    // Step 1: Build ZIP package
+    // Step 1: Check if agent already published
+    const existing = await this._findInCatalog();
+    if (existing) {
+      logger.info(`Agent already exists in catalog (id=${existing.id}) — skipping publish`);
+      return {
+        id: existing.id,
+        alreadyExisted: true,
+        installInstructions: this._installInstructions(),
+      };
+    }
+
+    // Step 2: Build and publish
+    logger.info(`Publishing agent: "${this.agentName}"`);
     const zipBuffer = this._buildAppPackage();
-
-    // Step 2: Publish to org catalog
     const appInfo = await this._publishToCatalog(zipBuffer);
     logger.info(`Agent published to catalog: ${appInfo.id}`);
 
-    // Step 3: Install for mapped target users
-    // Uses app-only token — works for users whose policy allows custom apps
-    // For users with restrictive policies, falls back to delegated admin token
-    let installed = 0;
-    let failed = 0;
-    const failedEmails = [];
+    return {
+      ...appInfo,
+      alreadyExisted: false,
+      installInstructions: this._installInstructions(),
+    };
+  }
 
-    for (const email of targetEmails) {
-      try {
-        await this._installForUser(appInfo.id, email);
-        installed++;
-        logger.info(`Agent installed for: ${email}`);
-      } catch (err) {
-        if (err.message.includes('409')) {
-          installed++;
-        } else {
-          // App-only failed (policy blocked) — try with delegated admin token
-          try {
-            await this._installForUserDelegated(appInfo.id, email);
-            installed++;
-            logger.info(`Agent installed for: ${email} (via admin)`);
-          } catch (err2) {
-            if (err2.message.includes('409')) {
-              installed++;
-            } else {
-              failed++;
-              failedEmails.push(email);
-              logger.warn(`Could not install for ${email}: ${err2.message}`);
-            }
-          }
-        }
-      }
+  /**
+   * Check if "Gemini Conversation Agent" already exists in the org catalog.
+   * Returns the app object if found, null otherwise.
+   */
+  async _findInCatalog() {
+    const headers = await this._headers();
+    const url = `${GRAPH_V1}/appCatalogs/teamsApps?$filter=displayName eq '${encodeURIComponent(this.agentName)}'&distributionMethod=organization`;
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+      logger.warn(`Catalog check failed: ${response.status}`);
+      return null;
     }
-    logger.info(`Agent installed for ${installed}/${targetEmails.length} users (${failed} failed)`);
+    const data = await response.json();
+    return data?.value?.[0] || null;
+  }
 
-    return { ...appInfo, installed, failed, failedEmails, totalUsers: targetEmails.length };
+  _installInstructions() {
+    return `The "${this.agentName}" has been published to your organization's Teams app catalog.\n\nTo use it:\n1. Open Microsoft Teams\n2. Click "Apps" in the left sidebar\n3. Search for "${this.agentName}"\n4. Click "Add" to install it\n5. Right-click the agent in your app list and select "Pin" for quick access\n\nShare these steps with your users so they can find and pin the agent in Teams.`;
   }
 
   _buildInstructions() {
@@ -250,7 +245,7 @@ Never make up information. Only answer based on the actual migrated conversation
    * POST /appCatalogs/teamsApps with Content-Type: application/zip
    */
   async _publishToCatalog(zipBuffer) {
-    const headers = this._headers();
+    const headers = await this._headers();
 
     const response = await fetch(`${GRAPH_V1}/appCatalogs/teamsApps`, {
       method: 'POST',
@@ -267,56 +262,6 @@ Never make up information. Only answer based on the actual migrated conversation
     }
 
     return await response.json();
-  }
-
-  /**
-   * Install the agent into a specific user's personal scope.
-   * Uses APP-ONLY token (not delegated) with TeamsAppInstallation.ReadWriteForUser.All
-   * application permission — this allows installing apps for other users.
-   */
-  async _installForUser(teamsAppId, userEmail) {
-    const appToken = await getGraphToken(this.tenantId);
-
-    const response = await fetch(
-      `${GRAPH_V1}/users/${userEmail}/teamwork/installedApps`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${appToken}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          'teamsApp@odata.bind': `${GRAPH_V1}/appCatalogs/teamsApps/${teamsAppId}`
-        })
-      }
-    );
-
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`Install failed ${response.status}: ${body.slice(0, 200)}`);
-    }
-  }
-
-  /**
-   * Fallback: Install using admin's delegated token.
-   * Works when app-only token is blocked by user's app permission policy.
-   */
-  async _installForUserDelegated(teamsAppId, userEmail) {
-    const response = await fetch(
-      `${GRAPH_V1}/users/${userEmail}/teamwork/installedApps`,
-      {
-        method: 'POST',
-        headers: { ...this._headers(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          'teamsApp@odata.bind': `${GRAPH_V1}/appCatalogs/teamsApps/${teamsAppId}`
-        })
-      }
-    );
-
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`Install (delegated) failed ${response.status}: ${body.slice(0, 200)}`);
-    }
   }
 
   _generateGuid() {

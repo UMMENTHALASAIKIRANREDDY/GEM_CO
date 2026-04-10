@@ -13,3 +13,13 @@ uploads/
 
 # Node
 node_modules/
+
+# Test/dev artifacts
+*.zip
+*.csv
+*.md.bak
+filename_resolution_plan.md
+Files_testing-result-counts.csv
+
+# Claude Code session files
+.claude/

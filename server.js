@@ -7,14 +7,18 @@ import { fileURLToPath } from 'url';
 import AdmZip from 'adm-zip';
 import { EventEmitter } from 'events';
 
-import { getAuthUrl, acquireTokenByCode, isAuthenticated, getDelegatedToken, clearMsToken } from './src/auth/microsoft.js';
-import { getGoogleAuthUrl, acquireGoogleTokenByCode, isGoogleAuthenticated, getGoogleOAuth2Client, clearGoogleToken } from './src/auth/googleOAuth.js';
+import { getAuthUrl, acquireTokenByCode, isAuthenticated, getValidToken, clearMsToken, restoreMsSessions } from './src/auth/microsoft.js';
+import { getGoogleAuthUrl, acquireGoogleTokenByCode, isGoogleAuthenticated, getGoogleOAuth2Client, clearGoogleToken, restoreGoogleSessions } from './src/auth/googleOAuth.js';
 import { google } from 'googleapis';
 import { VaultReader } from './src/modules/vaultReader.js';
 import { VaultExporter } from './src/modules/vaultExporter.js';
 import { AssetScanner } from './src/modules/assetScanner.js';
 import { ResponseGenerator } from './src/modules/responseGenerator.js';
 import { PagesCreator } from './src/modules/pagesCreator.js';
+import { DriveFileMatcher } from './src/modules/driveFileMatcher.js';
+import { FileCorrelator } from './src/modules/fileCorrelator.js';
+import { AuditLogClient } from './src/modules/auditLogClient.js';
+import { checkPermissions } from './src/modules/permissionsChecker.js';
 import { ReportWriter } from './src/modules/reportWriter.js';
 import { CheckpointManager } from './src/utils/checkpoint.js';
 import { AgentDeployer } from './src/agent/agentDeployer.js';
@@ -27,7 +31,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 const migrationEvents = new EventEmitter();
-const logBuffer = []; // replay buffer for late SSE clients
+const logBuffers = new Map(); // appUserId → log entries array
 
 // Store tenant ID for auth flow
 let currentTenantId = null;
@@ -57,6 +61,60 @@ function requireAuth(req, res, next) {
   res.status(401).json({ error: 'Not logged in' });
 }
 
+function getWorkspaceContext(req) {
+  const appUserId = req.session.appUser?._id?.toString() || null;
+  const googleEmail = req.session.googleEmail || null;
+  const msEmail = req.session.msEmail || null;
+  return { appUserId, googleEmail, msEmail };
+}
+
+/**
+ * Returns the full workspace filter for DB queries.
+ * Returns null if Google or MS is not connected (data should not be shown).
+ */
+function getWorkspaceFilter(req) {
+  const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
+  if (!appUserId || !googleEmail || !msEmail) return null;
+  return { appUserId, googleEmail, msEmail };
+}
+
+/**
+ * Middleware: require Google to be signed in.
+ * Google is required for all file/vault operations — files come from Drive.
+ */
+function requireGoogleAuth(req, res, next) {
+  const { appUserId, googleEmail } = getWorkspaceContext(req);
+  if (!appUserId || !isGoogleAuthenticated(appUserId) || !googleEmail) {
+    return res.status(401).json({ error: 'Google account not connected. Please sign in with Google first.' });
+  }
+  next();
+}
+
+/**
+ * Middleware: require Microsoft to be signed in.
+ */
+function requireMsAuth(req, res, next) {
+  const { appUserId, msEmail } = getWorkspaceContext(req);
+  if (!appUserId || !isAuthenticated(appUserId) || !msEmail) {
+    return res.status(401).json({ error: 'Microsoft account not connected. Please sign in with Microsoft first.' });
+  }
+  next();
+}
+
+/**
+ * Middleware: require both Google AND Microsoft to be signed in (workspace ready).
+ */
+function requireWorkspace(req, res, next) {
+  const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
+  if (!appUserId || !isGoogleAuthenticated(appUserId) || !googleEmail) {
+    return res.status(401).json({ error: 'Google account not connected. Please sign in with Google first.' });
+  }
+  if (!isAuthenticated(appUserId) || !msEmail) {
+    return res.status(401).json({ error: 'Microsoft account not connected. Please sign in with Microsoft first.' });
+  }
+  next();
+}
+
 // Serve login page for unauthenticated users at root
 app.get('/', (req, res) => {
   if (req.session?.appUser) {
@@ -77,8 +135,75 @@ app.post('/api/login', async (req, res) => {
   if (!user) return res.status(401).json({ error: 'Invalid email or password' });
   const valid = await bcrypt.compare(password, user.password);
   if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
-  req.session.appUser = { _id: user._id.toString(), email: user.email, name: user.name, role: user.role };
+  const appUserId = user._id.toString();
+  req.session.appUser = { _id: appUserId, email: user.email, name: user.name, role: user.role };
+
+  // Restore cloud account emails from DB so workspace context is immediately available
+  try {
+    const googleSession = await db().collection('authSessions').findOne({ appUserId, provider: 'google' });
+    const msSession = await db().collection('authSessions').findOne({ appUserId, provider: 'microsoft' });
+    if (googleSession?.email) req.session.googleEmail = googleSession.email;
+    if (msSession?.email) req.session.msEmail = msSession.email;
+  } catch {}
+
   res.json({ ok: true, user: { email: user.email, name: user.name, role: user.role } });
+});
+
+// GET /api/diagnose-audit?email=user@domain.com&start=ISO&end=ISO
+// Diagnoses Reports API — tries userKey=email and userKey='all'
+app.get('/api/diagnose-audit', async (req, res) => {
+  const { email, start, end } = req.query;
+  if (!email) return res.status(400).json({ error: 'email required' });
+  const startTime = start ? new Date(start) : new Date(Date.now() - 3 * 60 * 60 * 1000);
+  const endTime   = end   ? new Date(end)   : new Date();
+  try {
+    const { appUserId } = getWorkspaceContext(req);
+    const auth = getGoogleOAuth2Client(appUserId);
+    const client = new AuditLogClient(auth);
+    const result = await client.testQuery(email, startTime, endTime);
+    res.json({ email, startTime, endTime, ...result });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/test/drive-transfer
+// Body: { fileId, fileName, mimeType, ownerEmail, targetEmail }
+// Tests Drive export → OneDrive upload in isolation without a full migration
+app.get('/api/test/drive-files', async (req, res) => {
+  const { ownerEmail } = req.query;
+  try {
+    const { google } = await import('googleapis');
+    const { appUserId } = getWorkspaceContext(req);
+    const auth = getGoogleOAuth2Client(appUserId);
+    const drive = google.drive({ version: 'v3', auth });
+    const r = await drive.files.list({
+      q: `'${ownerEmail}' in owners and trashed = false`,
+      fields: 'files(id, name, mimeType)',
+      pageSize: 30, orderBy: 'modifiedTime desc',
+    });
+    res.json({ files: r.data.files || [] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/test/drive-transfer', async (req, res) => {
+  const { fileId, fileName, mimeType, ownerEmail, targetEmail } = req.body;
+  if (!fileId || !fileName || !ownerEmail || !targetEmail) {
+    return res.status(400).json({ error: 'fileId, fileName, ownerEmail, targetEmail are required' });
+  }
+  try {
+    const { appUserId } = getWorkspaceContext(req);
+    const googleClient = getGoogleOAuth2Client(appUserId);
+    const { DriveFileMatcher } = await import('./src/modules/driveFileMatcher.js');
+    const matcher = new DriveFileMatcher(googleClient, ownerEmail, appUserId);
+    const driveFile = { id: fileId, name: fileName, mimeType: mimeType || 'application/vnd.google-apps.document' };
+    const result = await matcher.uploadToOneDrive(driveFile, targetEmail);
+    if (result && !result.error) {
+      res.json({ success: true, oneDriveUrl: result, uploadedAs: fileName });
+    } else {
+      res.json({ success: false, error: result?.error || 'Upload returned null' });
+    }
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 app.get('/api/me', (req, res) => {
@@ -92,18 +217,18 @@ app.post('/api/logout', (req, res) => {
 
 // ─── User Workspace (cross-device state) ─────────────────────────────────────
 app.get('/api/workspace', async (req, res) => {
-  const userId = req.session.appUser._id;
-  const doc = await db().collection('userWorkspace').findOne({ userId });
+  const { appUserId: userId, googleEmail, msEmail } = getWorkspaceContext(req);
+  const doc = await db().collection('userWorkspace').findOne({ userId, googleEmail, msEmail });
   res.json(doc || null);
 });
 
 app.put('/api/workspace', async (req, res) => {
-  const userId = req.session.appUser._id;
+  const { appUserId: userId, googleEmail, msEmail } = getWorkspaceContext(req);
   const { step, uploadData, config, mappings, selectedUsers, options,
           migDone, stats, currentBatchId, lastRunWasDry } = req.body;
   await db().collection('userWorkspace').updateOne(
-    { userId },
-    { $set: { userId, step, uploadData, config, mappings, selectedUsers, options,
+    { userId, googleEmail, msEmail },
+    { $set: { userId, googleEmail, msEmail, step, uploadData, config, mappings, selectedUsers, options,
                migDone, stats, currentBatchId, lastRunWasDry, updatedAt: new Date() } },
     { upsert: true }
   );
@@ -159,7 +284,8 @@ app.get('/auth/login', async (req, res) => {
     const tenantId = req.query.tenant_id;
     if (!tenantId) return res.status(400).send('tenant_id query parameter required');
     currentTenantId = tenantId;
-    const authUrl = await getAuthUrl(tenantId);
+    const appUserId = req.session.appUser?._id?.toString();
+    const authUrl = await getAuthUrl(tenantId, appUserId);
     res.redirect(authUrl);
   } catch (err) {
     res.status(500).send(`Auth error: ${err.message}`);
@@ -169,24 +295,22 @@ app.get('/auth/login', async (req, res) => {
 // Step 2: Microsoft redirects here after admin signs in
 app.get('/auth/callback', async (req, res) => {
   try {
-    const { code, error, error_description } = req.query;
+    const { code, error, error_description, state } = req.query;
     if (error) {
       return res.send(`<html><body><h2>Auth failed</h2><p>${error_description || error}</p><script>window.close();</script></body></html>`);
     }
     if (!code) return res.status(400).send('No authorization code received');
 
-    const msResult = await acquireTokenByCode(currentTenantId, code);
+    const msResult = await acquireTokenByCode(code, state);
 
-    // Record login in MongoDB
-    try {
-      const msEmail = msResult?.account?.username || 'unknown';
-      await db().collection('users').updateOne(
-        { email: msEmail, provider: 'microsoft' },
-        { $set: { displayName: msResult?.account?.name || '', tenantId: currentTenantId, lastLogin: new Date() } },
-        { upsert: true }
-      );
-      dbLog.info(`users.upsert — ${msEmail} (microsoft)`);
-    } catch (e) { dbLog.warn(`users.upsert failed: ${e.message}`); }
+    // Store msEmail in session and force save before closing popup
+    const msEmail = msResult.email || msResult?.account?.username || null;
+    if (msEmail) {
+      req.session.msEmail = msEmail;
+      await new Promise((resolve, reject) => req.session.save(err => err ? reject(err) : resolve()));
+    }
+
+    dbLog.info(`authSessions.upsert — ${msEmail} (microsoft)`);
 
     // Close the popup and notify the parent window
     res.send(`
@@ -205,15 +329,24 @@ app.get('/auth/callback', async (req, res) => {
 });
 
 // Step 3: UI polls this to check auth status
-app.get('/auth/status', (_req, res) => {
-  res.json({ authenticated: isAuthenticated() });
+app.get('/auth/status', (req, res) => {
+  const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
+  res.json({
+    authenticated: isAuthenticated(appUserId),
+    googleConnected: isGoogleAuthenticated(appUserId),
+    msConnected: isAuthenticated(appUserId),
+    googleEmail: googleEmail || null,
+    msEmail: msEmail || null,
+    workspaceReady: !!(googleEmail && msEmail),
+  });
 });
 
 // ─── OAuth: Sign in with Google ──────────────────────────────────────────────
 
-app.get('/auth/google/login', (_req, res) => {
+app.get('/auth/google/login', (req, res) => {
   try {
-    const authUrl = getGoogleAuthUrl();
+    const appUserId = req.session.appUser?._id?.toString();
+    const authUrl = getGoogleAuthUrl(appUserId);
     res.redirect(authUrl);
   } catch (err) {
     res.status(500).send(`Google auth error: ${err.message}`);
@@ -222,26 +355,20 @@ app.get('/auth/google/login', (_req, res) => {
 
 app.get('/auth/google/callback', async (req, res) => {
   try {
-    const { code, error } = req.query;
+    const { code, error, state } = req.query;
     if (error) {
       return res.send(`<html><body><h2>Auth failed</h2><p>${error}</p><script>window.close();</script></body></html>`);
     }
     if (!code) return res.status(400).send('No authorization code received');
 
-    await acquireGoogleTokenByCode(code);
+    const { email } = await acquireGoogleTokenByCode(code, state);
 
-    // Record Google login in MongoDB
-    try {
-      const auth = getGoogleOAuth2Client();
-      const oauth2 = google.oauth2({ version: 'v2', auth });
-      const { data: profile } = await oauth2.userinfo.get();
-      await db().collection('users').updateOne(
-        { email: profile.email, provider: 'google' },
-        { $set: { displayName: profile.name || '', lastLogin: new Date() } },
-        { upsert: true }
-      );
-      dbLog.info(`users.upsert — ${profile.email} (google)`);
-    } catch (e) { dbLog.warn(`users.upsert failed: ${e.message}`); }
+    // Store googleEmail in session and force save before closing popup
+    if (email) {
+      req.session.googleEmail = email;
+      await new Promise((resolve, reject) => req.session.save(err => err ? reject(err) : resolve()));
+    }
+    dbLog.info(`authSessions.upsert — ${email} (google)`);
 
     res.send(`
       <html><body>
@@ -258,25 +385,50 @@ app.get('/auth/google/callback', async (req, res) => {
   }
 });
 
-app.get('/auth/google/status', (_req, res) => {
-  res.json({ authenticated: isGoogleAuthenticated() });
+app.get('/auth/google/status', (req, res) => {
+  const { appUserId } = getWorkspaceContext(req);
+  res.json({ authenticated: isGoogleAuthenticated(appUserId) });
 });
 
-app.post('/auth/google/logout', (_req, res) => {
-  clearGoogleToken();
+app.post('/auth/google/logout', (req, res) => {
+  const { appUserId } = getWorkspaceContext(req);
+  clearGoogleToken(appUserId);
+  delete req.session.googleEmail;
   res.json({ ok: true });
 });
 
-app.post('/auth/logout', (_req, res) => {
-  clearMsToken();
+app.post('/auth/logout', (req, res) => {
+  const { appUserId } = getWorkspaceContext(req);
+  clearMsToken(appUserId);
+  delete req.session.msEmail;
   res.json({ ok: true });
+});
+
+// ─── Permissions Check ───────────────────────────────────────────────────────
+
+app.get('/api/check-permissions', requireAuth, async (req, res) => {
+  try {
+    const { appUserId } = getWorkspaceContext(req);
+    const googleClient = getGoogleOAuth2Client(appUserId);
+    const result = await checkPermissions(googleClient);
+    res.json(result);
+  } catch (err) {
+    // Not authenticated with Google yet
+    res.status(401).json({
+      drive: false,
+      reports: false,
+      directory: false,
+      errors: { auth: err.message },
+    });
+  }
 });
 
 // ─── Google Users (Admin SDK) ────────────────────────────────────────────────
 
-app.get('/api/google/users', async (_req, res) => {
+app.get('/api/google/users', requireGoogleAuth, async (req, res) => {
   try {
-    const auth = getGoogleOAuth2Client();
+    const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
+    const auth = getGoogleOAuth2Client(appUserId);
     const admin = google.admin({ version: 'directory_v1', auth });
     const users = [];
     let pageToken = undefined;
@@ -302,8 +454,8 @@ app.get('/api/google/users', async (_req, res) => {
       if (users.length > 0) {
         const ops = users.map(u => ({
           updateOne: {
-            filter: { email: u.email, source: 'google' },
-            update: { $set: { displayName: u.name, discoveredAt: new Date() } },
+            filter: { email: u.email, source: 'google', appUserId, googleEmail, msEmail },
+            update: { $set: { appUserId, googleEmail, msEmail, displayName: u.name, discoveredAt: new Date() } },
             upsert: true
           }
         }));
@@ -323,14 +475,15 @@ app.get('/api/google/users', async (_req, res) => {
 // Active export tracking
 let activeExport = null;
 
-app.post('/api/google/vault-export', async (req, res) => {
+app.post('/api/google/vault-export', requireGoogleAuth, async (req, res) => {
   try {
     const { user_emails } = req.body;
     if (!user_emails || user_emails.length === 0) {
       return res.status(400).json({ error: 'user_emails array required' });
     }
 
-    const auth = getGoogleOAuth2Client();
+    const { appUserId, googleEmail } = getWorkspaceContext(req);
+    const auth = getGoogleOAuth2Client(appUserId);
     const exporter = new VaultExporter(auth);
 
     const matter = await exporter.createMatter(`GEM_CO Export ${new Date().toISOString()}`);
@@ -346,8 +499,8 @@ app.post('/api/google/vault-export', async (req, res) => {
 
     // Persist to vaultExports
     await db().collection('vaultExports').updateOne(
-      { exportId: exportData.id },
-      { $set: { matterId: matter.matterId, userEmails: user_emails, status: 'IN_PROGRESS', requestedAt: new Date() } },
+      { appUserId, googleEmail, exportId: exportData.id },
+      { $set: { appUserId, googleEmail, matterId: matter.matterId, userEmails: user_emails, status: 'IN_PROGRESS', requestedAt: new Date() } },
       { upsert: true }
     );
     dbLog.info(`vaultExports.upsert — export ${exportData.id} (${user_emails.length} users)`);
@@ -452,10 +605,11 @@ app.get('/api/google/vault-export/status', async (_req, res) => {
 });
 
 // ─── MS Users list (for CSV download) ────────────────────────────────────────
-app.get('/api/ms/users', async (req, res) => {
+app.get('/api/ms/users', requireMsAuth, async (req, res) => {
   try {
-    if (!isAuthenticated()) return res.status(401).json({ error: 'Not authenticated' });
-    const token = getDelegatedToken();
+    const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
+    if (!isAuthenticated(appUserId)) return res.status(401).json({ error: 'Not authenticated' });
+    const token = await getValidToken(appUserId);
     let users = [];
     let url = 'https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName&$top=999';
     while (url) {
@@ -471,8 +625,8 @@ app.get('/api/ms/users', async (req, res) => {
       if (users.length > 0) {
         const ops = users.map(u => ({
           updateOne: {
-            filter: { email: u.mail || u.userPrincipalName, source: 'microsoft' },
-            update: { $set: { displayName: u.displayName, tenantId: req.query.tenant_id || null, discoveredAt: new Date() } },
+            filter: { email: u.mail || u.userPrincipalName, source: 'microsoft', appUserId, googleEmail, msEmail },
+            update: { $set: { appUserId, googleEmail, msEmail, displayName: u.displayName, tenantId: req.query.tenant_id || null, discoveredAt: new Date() } },
             upsert: true
           }
         }));
@@ -488,7 +642,7 @@ app.get('/api/ms/users', async (req, res) => {
 });
 
 // ─── Upload ZIP ───────────────────────────────────────────────────────────────
-app.post('/api/upload', upload.single('vault_zip'), async (req, res) => {
+app.post('/api/upload', requireGoogleAuth, upload.single('vault_zip'), async (req, res) => {
   try {
     const zipPath = req.file.path;
     const extractTo = path.join(__dirname, 'uploads', `extracted_${req.file.filename}`);
@@ -519,6 +673,7 @@ app.post('/api/upload', upload.single('vault_zip'), async (req, res) => {
       conversationCount: u.conversationCount
     }));
 
+    const { appUserId: _appUserId, googleEmail: _googleEmail, msEmail: _msEmail } = getWorkspaceContext(req);
     const uploadDoc = {
       _id: req.file.filename,
       originalName: req.file.originalname || 'vault_export.zip',
@@ -527,7 +682,9 @@ app.post('/api/upload', upload.single('vault_zip'), async (req, res) => {
       totalUsers: users.length,
       totalConversations: users.reduce((s, u) => s + u.conversationCount, 0),
       users: usersArr,
-      appUserId: req.session.appUser?._id || null,
+      appUserId: _appUserId,
+      googleEmail: _googleEmail,
+      msEmail: _msEmail,
     };
     await db().collection('uploads').updateOne(
       { _id: uploadDoc._id },
@@ -556,8 +713,10 @@ app.post('/api/upload', upload.single('vault_zip'), async (req, res) => {
 
 // ─── Upload Management ────────────────────────────────────────────────────────
 app.get('/api/uploads', async (req, res) => {
-  const appUserId = req.session.appUser?._id || null;
-  const uploads = await db().collection('uploads').find({ appUserId }).sort({ uploadTime: -1 }).toArray();
+  const wsFilter = getWorkspaceFilter(req);
+  if (!wsFilter) return res.json({ uploads: [] });
+  // Match current workspace OR legacy uploads (no googleEmail/msEmail fields) for this appUser
+  const uploads = await db().collection('uploads').find({ $or: [wsFilter, { appUserId: wsFilter.appUserId, googleEmail: { $exists: false } }] }).sort({ uploadTime: -1 }).toArray();
   res.json({
     uploads: uploads.map(u => ({
       id: u._id,
@@ -585,9 +744,11 @@ app.delete('/api/uploads/:id', async (req, res) => {
 
 // List all batch reports (without full report body for performance)
 app.get('/api/reports', async (req, res) => {
-  const appUserId = req.session.appUser?._id || null;
+  const wsFilter = getWorkspaceFilter(req);
+  if (!wsFilter) return res.json([]);
+  // Match current workspace OR legacy reports (no googleEmail/msEmail fields) for this appUser
   const reports = await db().collection('reportsWorkspace')
-    .find({ appUserId }, { projection: { report: 0 } })
+    .find({ $or: [wsFilter, { appUserId: wsFilter.appUserId, googleEmail: { $exists: false } }] }, { projection: { report: 0 } })
     .sort({ startTime: -1 })
     .toArray();
   res.json(reports);
@@ -595,9 +756,10 @@ app.get('/api/reports', async (req, res) => {
 
 // Aggregate stats across all completed batches
 app.get('/api/reports/aggregate', async (req, res) => {
-  const appUserId = req.session.appUser?._id || null;
+  const wsFilter = getWorkspaceFilter(req);
+  if (!wsFilter) return res.json({ totalBatches: 0, totalUsers: 0, totalPages: 0, totalErrors: 0, liveBatches: 0 });
   const pipeline = [
-    { $match: { status: 'completed', appUserId } },
+    { $match: { status: 'completed', $or: [wsFilter, { appUserId: wsFilter.appUserId, googleEmail: { $exists: false } }] } },
     { $group: {
       _id: null,
       totalBatches: { $sum: 1 },
@@ -645,6 +807,19 @@ app.get('/api/reports/:id/csv', async (req, res) => {
   res.send(rows.join('\n'));
 });
 
+// Get categorized errors for a batch — used by smart retry panel
+app.get('/api/reports/:id/errors', async (req, res) => {
+  const doc = await db().collection('reportsWorkspace').findOne({ _id: req.params.id });
+  if (!doc) return res.status(404).json({ error: 'Batch not found' });
+  const errors = [];
+  for (const u of doc.report?.users || []) {
+    for (const e of u.errors || []) {
+      errors.push({ email: u.email, conversation: e.conversation, error: e.error_message || e.error || '' });
+    }
+  }
+  res.json({ errors });
+});
+
 // Get a specific batch report — JSON inline; ?download=true forces download, ?summary=true returns lightweight metadata
 app.get('/api/reports/:id', async (req, res) => {
   const { id } = req.params;
@@ -668,16 +843,19 @@ app.get('/api/reports/:id', async (req, res) => {
 });
 
 // ─── User Mappings ───────────────────────────────────────────────────────────
-app.get('/api/user-mappings/latest', async (_req, res) => {
-  const doc = await db().collection('userMappings').findOne({ batchId: 'latest' });
+app.get('/api/user-mappings/latest', async (req, res) => {
+  const wsFilter = getWorkspaceFilter(req);
+  if (!wsFilter) return res.json(null);
+  const doc = await db().collection('userMappings').findOne({ batchId: 'latest', ...wsFilter });
   res.json(doc || null);
 });
 
 app.post('/api/user-mappings', async (req, res) => {
   const { customerName, mappings, selectedUsers } = req.body;
+  const { googleEmail, msEmail } = getWorkspaceContext(req);
   await db().collection('userMappings').updateOne(
-    { batchId: 'latest' },
-    { $set: { customerName, mappings, selectedUsers, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+    { batchId: 'latest', googleEmail, msEmail },
+    { $set: { customerName, mappings, selectedUsers, googleEmail, msEmail, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
     { upsert: true }
   );
   dbLog.info(`userMappings.upsert — ${Object.keys(mappings || {}).length} mappings, ${(selectedUsers || []).length} selected`);
@@ -686,8 +864,11 @@ app.post('/api/user-mappings', async (req, res) => {
 
 // ─── Migration Logs (historical) ────────────────────────────────────────────
 app.get('/api/migration-logs/:batchId', async (req, res) => {
+  const wsFilter = getWorkspaceFilter(req);
+  const filter = { batchId: req.params.batchId };
+  if (wsFilter) filter.appUserId = wsFilter.appUserId;
   const logs = await db().collection('migrationLogs')
-    .find({ batchId: req.params.batchId })
+    .find(filter)
     .sort({ ts: 1 })
     .toArray();
   res.json(logs);
@@ -699,32 +880,45 @@ app.get('/api/migration-log', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
-  // Replay all buffered logs to late-joining clients
-  for (const entry of logBuffer) {
+  const appUserId = req.session?.appUser?._id?.toString() || null;
+
+  // Replay buffered logs for THIS user only
+  const userBuffer = logBuffers.get(appUserId) || [];
+  for (const entry of userBuffer) {
     res.write(`data: ${JSON.stringify(entry)}\n\n`);
   }
 
-  const onLog = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+  // Only forward live logs that belong to this user
+  const onLog = (data) => {
+    if (data._appUserId === appUserId || !data._appUserId) {
+      const { _appUserId, ...clean } = data;
+      res.write(`data: ${JSON.stringify(clean)}\n\n`);
+    }
+  };
   migrationEvents.on('log', onLog);
   req.on('close', () => migrationEvents.off('log', onLog));
 });
 
 let currentBatchId = null;
+let _currentAppUserId = null;
 
 function emit(type, message, extra = {}) {
   const entry = { type, message, ts: new Date().toISOString(), ...extra };
-  logBuffer.push(entry);
-  migrationEvents.emit('log', entry);
+  // Buffer per user
+  if (!logBuffers.has(_currentAppUserId)) logBuffers.set(_currentAppUserId, []);
+  logBuffers.get(_currentAppUserId).push(entry);
+  // Emit with appUserId tag for SSE filtering
+  migrationEvents.emit('log', { ...entry, _appUserId: _currentAppUserId });
   // Persist to MongoDB (fire-and-forget)
   if (currentBatchId) {
     db().collection('migrationLogs').insertOne({
-      batchId: currentBatchId, type, message, ts: new Date(), extra
+      batchId: currentBatchId, appUserId: _currentAppUserId, type, message, ts: new Date(), extra
     }).catch(() => {});
   }
 }
 
 // ─── Start Migration ──────────────────────────────────────────────────────────
-app.post('/api/migrate', async (req, res) => {
+app.post('/api/migrate', requireWorkspace, async (req, res) => {
   const {
     extract_path,
     tenant_id,
@@ -742,14 +936,14 @@ app.post('/api/migrate', async (req, res) => {
     return res.status(400).json({ error: 'extract_path and tenant_id are required' });
   }
 
-  if (!dry_run && !isAuthenticated()) {
+  const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
+  if (!dry_run && !isAuthenticated(appUserId)) {
     return res.status(401).json({ error: 'Admin not signed in. Click "Sign in with Microsoft" first.' });
   }
 
   const batch_id = Date.now().toString();
-  const appUserId = req.session.appUser?._id || null;
   res.json({ started: true, batch_id });
-  runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id, upload_id, appUserId });
+  runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id, upload_id, appUserId, googleEmail, msEmail });
 });
 
 async function withConcurrency(items, limit, fn) {
@@ -764,16 +958,17 @@ async function withConcurrency(items, limit, fn) {
   return Promise.all(executing);
 }
 
-async function runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id, upload_id, appUserId }) {
-  logBuffer.length = 0; // clear previous run's logs
+async function runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id, upload_id, appUserId, googleEmail, msEmail }) {
+  logBuffers.set(appUserId, []); // clear previous run's logs for this user
   const batchId = batch_id || Date.now().toString();
   currentBatchId = batchId;
+  _currentAppUserId = appUserId;
   const startTime = new Date();
 
   // Save user mappings snapshot for this batch
   await db().collection('userMappings').updateOne(
     { batchId },
-    { $set: { customerName: customer_name, mappings: user_mappings, createdAt: startTime, appUserId } },
+    { $set: { customerName: customer_name, mappings: user_mappings, createdAt: startTime, appUserId, googleEmail, msEmail } },
     { upsert: true }
   );
   dbLog.info(`userMappings.upsert — batch ${batchId} (${Object.keys(user_mappings).length} mappings)`);
@@ -781,7 +976,7 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
   // Create reportsWorkspace doc (include uploadId + appUserId for per-user filtering)
   await db().collection('reportsWorkspace').updateOne(
     { _id: batchId },
-    { $set: { customerName: customer_name, tenantId: tenant_id, startTime, status: 'running', dryRun: dry_run, uploadId: upload_id, appUserId } },
+    { $set: { customerName: customer_name, tenantId: tenant_id, startTime, status: 'running', dryRun: dry_run, uploadId: upload_id, appUserId, googleEmail, msEmail } },
     { upsert: true }
   );
   dbLog.info(`reportsWorkspace.insert — batch ${batchId} status=running`);
@@ -817,6 +1012,7 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
       );
       emit('done', `DRY RUN complete — ${users.length} users, ${total} conversations. No API calls made.`, { batch_id: batchId });
       currentBatchId = null;
+      _currentAppUserId = null;
       return;
     }
 
@@ -833,7 +1029,7 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
 
     const report = new ReportWriter();
     const generator = new ResponseGenerator();
-    const creator = new PagesCreator(tenant_id, customer_name);
+    const creator = new PagesCreator(tenant_id, customer_name, appUserId);
     const checkpoint = new CheckpointManager(batchId);
 
     // Live progress counters — written to DB after each user
@@ -853,7 +1049,37 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
         conversations = await reader.loadUserConversations(googleEmail, from_date, to_date);
         emit('info', `  Loaded ${conversations.length} conversations for ${googleEmail}`);
 
-        for (const conv of conversations) {
+        // Drive file resolution: try FileCorrelator (audit log) first, fall back to DriveFileMatcher
+        let googleClient = null;
+        let fileCorrelator = null;
+        let driveMatcher = null;
+        try {
+          googleClient = getGoogleOAuth2Client(appUserId);
+          fileCorrelator = new FileCorrelator(googleClient, googleEmail); // resolution only — no upload
+          driveMatcher = new DriveFileMatcher(googleClient, googleEmail, appUserId);
+          emit('info', `  Drive file resolution enabled for ${googleEmail}`);
+        } catch (_) {
+          emit('warn', `  Drive file resolution skipped for ${googleEmail} — Google not authenticated`);
+        }
+
+        // Pre-enrich all conversations via audit log before the per-conversation loop
+        let enrichedConversations = conversations;
+        if (fileCorrelator) {
+          try {
+            enrichedConversations = await fileCorrelator.enrichConversations(conversations);
+            const enrichedCount = enrichedConversations.filter(
+              c => c.turns?.some(t => t.driveFiles?.length > 0)
+            ).length;
+            if (enrichedCount > 0) {
+              emit('info', `  Audit log enriched ${enrichedCount} conversation(s) for ${googleEmail}`);
+            }
+          } catch (err) {
+            emit('warn', `  Audit log enrichment failed for ${googleEmail}: ${err.message} — file correlation skipped`);
+            enrichedConversations = conversations;
+          }
+        }
+
+        for (const conv of enrichedConversations) {
           try {
             let convWithResponses;
             if (skip_ai_response) {
@@ -861,11 +1087,55 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
             } else {
               convWithResponses = await generator.generate(conv, skip_followups);
             }
+
+            // Resolve Drive files for turns that reference uploaded files
+            if (driveMatcher) {
+              let totalDriveFiles = 0;
+              // Deduplicate uploads per conversation: same driveFileId → upload once, reuse URL
+              const uploadCache = new Map(); // driveFileId → oneDriveUrl or error
+              const resolvedTurns = await Promise.all(
+                (convWithResponses.turns || []).map(async (turn) => {
+                  if (!turn.hasFileRef) return turn;
+
+                  // FileCorrelator resolved files — upload now with fresh token
+                  if (turn.driveFiles && turn.driveFiles.length > 0) {
+                    const uploaded = await Promise.all(turn.driveFiles.map(async (f) => {
+                      const { _meta, ...rest } = f;
+                      // Reuse cached result if same file already uploaded in this conversation
+                      if (uploadCache.has(f.driveFileId)) {
+                        const cached = uploadCache.get(f.driveFileId);
+                        return { ...rest, ...(typeof cached === 'string' ? { oneDriveUrl: cached } : { oneDriveUrl: null, uploadError: cached?.error }) };
+                      }
+                      const result = await driveMatcher.uploadToOneDrive(f._meta, m365Email);
+                      uploadCache.set(f.driveFileId, result);
+                      if (result && typeof result === 'string') {
+                        totalDriveFiles++;
+                        emit('success', `    Drive file migrated: "${f.fileName}" → OneDrive`);
+                        return { ...rest, oneDriveUrl: result };
+                      } else {
+                        emit('warn', `    Drive file found but upload failed: "${f.fileName}" — ${result?.error || 'unknown'}`);
+                        return { ...rest, oneDriveUrl: null, uploadError: result?.error };
+                      }
+                    }));
+                    return { ...turn, driveFiles: uploaded };
+                  }
+
+                  // No files resolved from audit log for this turn — skip
+                  return turn;
+                })
+              );
+              if (totalDriveFiles > 0) {
+                emit('info', `  ${totalDriveFiles} Drive file(s) resolved for "${conv.title?.slice(0, 50)}"`);
+              }
+              convWithResponses = { ...convWithResponses, turns: resolvedTurns };
+            }
+
             await creator.createPage(m365Email, convWithResponses, visualReports[googleEmail] || []);
             pagesCreated++;
             emit('success', `  Page created: ${conv.title?.slice(0, 60)}`);
           } catch (err) {
             errors.push({ conversation: conv.title, error: err.message });
+            dbLog.error(`Page creation failed for "${conv.title}" → ${err.message}`);
             emit('error', `  Failed: ${conv.title?.slice(0, 40)} — ${err.message}`);
           }
         }
@@ -916,21 +1186,22 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
     if (!dry_run) {
       emit('info', '━━━ Deploying Copilot Agent ━━━');
       try {
-        const targetEmails = users.map(u => user_mappings[u.email] || u.email);
-        const deployer = new AgentDeployer(customer_name, tenant_id);
-        const appInfo = await deployer.deployAgent(targetEmails);
-        emit('success', `Agent "${customer_name} Conversation Agent" published & installed for ${appInfo.installed}/${appInfo.totalUsers} mapped users`);
-        if (appInfo.failedEmails?.length > 0) {
-          emit('warn', `Could not auto-install for: ${appInfo.failedEmails.join(', ')} — install manually from Teams Admin Center → Manage Apps`);
+        const deployer = new AgentDeployer(customer_name, tenant_id, {}, appUserId);
+        const appInfo = await deployer.deployAgent();
+        if (appInfo.alreadyExisted) {
+          emit('info', `Agent "Gemini Conversation Agent" already exists in catalog — skipping publish`);
+        } else {
+          emit('success', `Agent "Gemini Conversation Agent" published to Teams catalog (id: ${appInfo.id})`);
         }
+        emit('info', appInfo.installInstructions);
         // Persist agent deployment
-        reportUpdate.agentDeployment = { installed: appInfo.installed, failed: appInfo.failed, failedEmails: appInfo.failedEmails, totalUsers: appInfo.totalUsers };
-        await db().collection('agentDeployments').insertOne({
-          batchId, agentName: `${customer_name} Conversation Agent`,
-          catalogId: appInfo.id, installed: targetEmails.filter(e => !appInfo.failedEmails?.includes(e)),
-          failed: appInfo.failedEmails || [], totalUsers: appInfo.totalUsers, deployedAt: new Date()
-        });
-        dbLog.info(`agentDeployments.insert — batch ${batchId} (${appInfo.installed}/${appInfo.totalUsers} installed)`);
+        reportUpdate.agentDeployment = { catalogId: appInfo.id, alreadyExisted: appInfo.alreadyExisted };
+        await db().collection('agentDeployments').updateOne(
+          { appUserId, msEmail, agentName: 'Gemini Conversation Agent' },
+          { $set: { batchId, catalogId: appInfo.id, deployedAt: new Date() } },
+          { upsert: true }
+        );
+        dbLog.info(`agentDeployments.upsert — "Gemini Conversation Agent" (catalog id: ${appInfo.id})`);
       } catch (err) {
         emit('warn', `Agent deployment failed (can be done manually): ${err.message}`);
       }
@@ -940,19 +1211,22 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
     dbLog.info(`reportsWorkspace.update — batch ${batchId} status=completed (${reportUpdate.migratedConversations} pages, ${reportUpdate.totalUsers} users)`);
     emit('done', `━━━ Migration complete! Reports saved. ━━━`, { batch_id: batchId });
     currentBatchId = null;
+    _currentAppUserId = null;
   } catch (err) {
     emit('error', `Migration failed: ${err.message}`);
     await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: { status: 'failed', endTime: new Date(), error: err.message } }).catch(() => {});
     dbLog.info(`reportsWorkspace.update — batch ${batchId} status=failed`);
     currentBatchId = null;
+    _currentAppUserId = null;
   }
 }
 
 // ─── Retry Failed Conversations ───────────────────────────────────────────────
-app.post('/api/migrate/retry', async (req, res) => {
-  const { batchId } = req.body;
+app.post('/api/migrate/retry', requireWorkspace, async (req, res) => {
+  const { batchId, customer_name } = req.body;
   if (!batchId) return res.status(400).json({ error: 'batchId required' });
-  if (!isAuthenticated()) return res.status(401).json({ error: 'Not signed in. Click "Sign in with Microsoft" first.' });
+  const { appUserId } = getWorkspaceContext(req);
+  if (!isAuthenticated(appUserId)) return res.status(401).json({ error: 'Not signed in. Click "Sign in with Microsoft" first.' });
 
   const batchDoc = await db().collection('reportsWorkspace').findOne({ _id: batchId });
   if (!batchDoc) return res.status(404).json({ error: 'Batch not found' });
@@ -973,6 +1247,9 @@ app.post('/api/migrate/retry', async (req, res) => {
     return res.json({ started: false, message: 'No failed conversations to retry' });
   }
 
+  // Allow caller to override the customer_name (file path) for path-fix retries
+  const effectiveCustomerName = customer_name || batchDoc.customerName;
+
   const retryBatchId = `${batchId}_retry_${Date.now()}`;
   res.json({ started: true, batch_id: retryBatchId, targets: retryTargets });
 
@@ -981,22 +1258,24 @@ app.post('/api/migrate/retry', async (req, res) => {
     retryBatchId,
     extractPath: uploadDoc?.extractPath,
     tenantId: batchDoc.tenantId,
-    customerName: batchDoc.customerName,
+    customerName: effectiveCustomerName,
     userMappings: mappingDoc?.mappings || {},
     retryTargets,
+    appUserId,
   });
 });
 
-async function runRetry({ batchId, retryBatchId, extractPath, tenantId, customerName, userMappings, retryTargets }) {
-  logBuffer.length = 0;
+async function runRetry({ batchId, retryBatchId, extractPath, tenantId, customerName, userMappings, retryTargets, appUserId }) {
+  logBuffers.set(appUserId, []);
   currentBatchId = retryBatchId;
+  _currentAppUserId = appUserId;
 
   const totalFailed = Object.values(retryTargets).flat().length;
   emit('info', `━━━ Retrying ${totalFailed} failed conversation(s) ━━━`);
 
   const reader = new VaultReader(extractPath);
   const generator = new ResponseGenerator();
-  const creator = new PagesCreator(tenantId, customerName);
+  const creator = new PagesCreator(tenantId, customerName, appUserId);
   const report = new ReportWriter();
 
   // Reverse mapping: m365Email → googleEmail
@@ -1051,9 +1330,27 @@ async function runRetry({ batchId, retryBatchId, extractPath, tenantId, customer
   const stillFailing = retryReport.summary.total_errors;
   emit('done', `━━━ Retry complete — ${retried} recovered, ${stillFailing} still failing ━━━`, { batch_id: retryBatchId });
   currentBatchId = null;
+  _currentAppUserId = null;
 }
 
-connectMongo().then(() => {
+// ─── Auth Disconnect endpoints ────────────────────────────────────────────────
+app.post('/api/auth/google/disconnect', requireAuth, async (req, res) => {
+  const { appUserId } = getWorkspaceContext(req);
+  clearGoogleToken(appUserId);
+  delete req.session.googleEmail;
+  res.json({ success: true });
+});
+
+app.post('/api/auth/ms/disconnect', requireAuth, async (req, res) => {
+  const { appUserId } = getWorkspaceContext(req);
+  clearMsToken(appUserId);
+  delete req.session.msEmail;
+  res.json({ success: true });
+});
+
+connectMongo().then(async () => {
+  await restoreGoogleSessions();
+  await restoreMsSessions();
   app.listen(PORT, () => {
     console.log(`\nGemini → Copilot Migration UI`);
     console.log(`Open: http://localhost:${PORT}\n`);

@@ -117,13 +117,20 @@ export class VaultReader {
         if (toDate && d > new Date(toDate + 'T23:59:59Z')) continue;
       }
 
-      const normTurns = turns.map((turn, i) => ({
-        turn_id: turn.RequestId?.[0] || `turn_${i}`,
-        prompt: turn.Prompt?.[0]?.Text?.[0] || '',
-        response: turn.PrimaryResponse?.[0]?.Text?.[0] || '',
-        timestamp: turn.Timestamp?.[0] || null,
-        is_followup: i > 0
-      })).filter(t => t.prompt);
+      const normTurns = turns.map((turn, i) => {
+        const prompt = turn.Prompt?.[0]?.Text?.[0] || '';
+        const response = turn.PrimaryResponse?.[0]?.Text?.[0] || '';
+        // Detect if this turn references a file the user uploaded/shared
+        const hasFileRef = _hasFileReference(prompt, response);
+        return {
+          turn_id: turn.RequestId?.[0] || `turn_${i}`,
+          prompt,
+          response,
+          timestamp: turn.Timestamp?.[0] || null,
+          is_followup: i > 0,
+          hasFileRef,  // true if Drive file search should run for this turn
+        };
+      }).filter(t => t.prompt || t.hasFileRef);
 
       if (normTurns.length === 0) continue;
 
@@ -152,4 +159,21 @@ export class VaultReader {
     const convs = parsed?.GeminiUserConversationHistory?.Conversations?.[0]?.Conversation || [];
     return convs.length;
   }
+}
+
+/**
+ * Returns true if the prompt or response text indicates a Drive file was shared/referenced.
+ * Used to flag turns for Drive file resolution.
+ */
+function _hasFileReference(prompt, response) {
+  const combined = `${prompt} ${response}`;
+  // Uploaded/attached file signals
+  if (/\buploaded\b|\battached\b|\bprovided\b.*\bfile\b|\bfile\b.*\bprovided\b/i.test(combined)) return true;
+  // Bold filename pattern common in Gemini responses
+  if (/\*\*[^*]{2,80}\*\*/.test(response) && /file|document/i.test(response)) return true;
+  // Backtick filename
+  if (/`[^`]{2,80}`/.test(response) && /file|document/i.test(response)) return true;
+  // Explicit "the X file you" pattern
+  if (/the\s+\S[\s\S]{0,60}\s+file\s+(you|I|that)/i.test(response)) return true;
+  return false;
 }

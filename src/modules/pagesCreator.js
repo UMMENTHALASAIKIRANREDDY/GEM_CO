@@ -1,4 +1,4 @@
-import { getDelegatedToken } from '../auth/microsoft.js';
+import { getValidToken } from '../auth/microsoft.js';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('module:pagesCreator');
@@ -11,14 +11,16 @@ const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
  * Structure: {customerName} notebook → {customerName} Conversations section → pages
  */
 export class PagesCreator {
-  constructor(tenantId, customerName = 'Gemini') {
+  constructor(tenantId, customerName = 'Gemini', appUserId = null) {
     this.tenantId = tenantId;
     this.customerName = customerName;
-    this._sectionIds = {};  // cached per target email
+    this.appUserId = appUserId;
+    this._sectionIds = {};   // cached per target email
+    this._usedSectionNames = {};  // track used section names per target email to handle duplicates
   }
 
-  _headers() {
-    return { 'Authorization': `Bearer ${getDelegatedToken()}` };
+  async _headers() {
+    return { 'Authorization': `Bearer ${await getValidToken(this.appUserId)}` };
   }
 
   /**
@@ -28,9 +30,11 @@ export class PagesCreator {
   async _getOrCreateSection(targetEmail) {
     if (this._sectionIds[targetEmail]) return this._sectionIds[targetEmail];
 
-    const headers = this._headers();
+    const headers = await this._headers();
     const notebookName = this.customerName;
-    const sectionName = `${this.customerName} Conversations`;
+    // OneNote section names must be < 50 chars — truncate base and append suffix if needed
+    const sectionBase = `${this.customerName} Conversations`.slice(0, 46);
+    const sectionName = sectionBase;
 
     // 1. Find notebook by name using $filter (avoids listing all notebooks)
     const filterNb = encodeURIComponent(`displayName eq '${notebookName}'`);
@@ -113,7 +117,7 @@ export class PagesCreator {
       `${GRAPH_BASE}/users/${targetEmail}/onenote/sections/${sectionId}/pages`,
       {
         method: 'POST',
-        headers: { ...this._headers(), 'Content-Type': 'text/html' },
+        headers: { ...await this._headers(), 'Content-Type': 'text/html' },
         body: htmlContent
       }
     );
@@ -159,6 +163,22 @@ export class PagesCreator {
       const copilotResponse = esc(turn.copilotResponse || '').replace(/\n/g, '<br/>');
       const geminiResponse = esc(turn.response || '').replace(/\n/g, '<br/>');
 
+      // Render Drive files migrated for this turn
+      const driveFiles = turn.driveFiles || [];
+      const driveFilesHtml = driveFiles.length > 0 ? `
+        <tr>
+          <td style="padding:4px 0"><b style="color:#8764b8">📁 Migrated Files from Google Drive</b></td>
+        </tr>
+        <tr>
+          <td style="background:#f4f0fa;border:1px solid #c8b8e8;padding:12px 16px">
+            ${driveFiles.map(f => f.oneDriveUrl
+              ? `<a href="${esc(f.oneDriveUrl)}" style="color:#8764b8">${esc(f.fileName)}</a>`
+              : `<span style="color:#605e5c">${esc(f.fileName)} <i>(upload failed)</i></span>`
+            ).join('<br/>')}
+          </td>
+        </tr>
+        <tr><td style="padding:6px 0">&nbsp;</td></tr>` : '';
+
       return `
         <tr><td style="border-bottom:2px solid #0078d4;padding:16px 0 4px 0"><b style="font-size:16px;color:#0078d4">Prompt ${i + 1}</b></td></tr>
 
@@ -191,6 +211,7 @@ export class PagesCreator {
         </tr>
         <tr><td style="padding:6px 0">&nbsp;</td></tr>
 
+        ${driveFilesHtml}
         <tr>
           <td style="border:2px dashed #c8c6c4;padding:12px 16px">
             <b>📝 Notes</b><br/><br/>

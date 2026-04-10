@@ -195,8 +195,13 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
   useEffect(()=>{if(googleAuthed&&googleUsers.length===0)loadGoogleUsers()},[googleAuthed]);
   useEffect(()=>{if(msAuthed&&msUsers.length===0)loadMsUsers()},[msAuthed]);
 
-  const signInGoogle=()=>{window.open('/auth/google/login','googleauth','width=500,height=700,left=300,top=100');window.addEventListener('message',function h(e){if(e.data?.type==='google-auth-success'){window.removeEventListener('message',h);setGoogleAuthed(true);loadGoogleUsers()}})};
-  const signInMs=()=>{const url=`/auth/login${tenantId?`?tenant_id=${tenantId}`:''}`;window.open(url,'msauth','width=500,height=700,left=300,top=100');window.addEventListener('message',function h(e){if(e.data?.type==='auth-success'){window.removeEventListener('message',h);setMsAuthed(true);loadMsUsers()}})};
+  const signInGoogle=()=>{window.open('/auth/google/login','googleauth','width=500,height=700,left=300,top=100');window.addEventListener('message',function h(e){if(e.data?.type==='google-auth-success'){window.removeEventListener('message',h);
+    // Verify with server before setting state (small delay to allow session save)
+    setTimeout(()=>{fetch('/auth/google/status').then(r=>r.json()).then(d=>{if(d.authenticated){setGoogleAuthed(true);loadGoogleUsers();}else{setGoogleAuthed(true);loadGoogleUsers();/* trust postMessage */}}).catch(()=>{setGoogleAuthed(true);loadGoogleUsers();})},500);
+  }})};
+  const signInMs=()=>{const url=`/auth/login${tenantId?`?tenant_id=${tenantId}`:''}`;window.open(url,'msauth','width=500,height=700,left=300,top=100');window.addEventListener('message',function h(e){if(e.data?.type==='auth-success'){window.removeEventListener('message',h);
+    setTimeout(()=>{fetch('/auth/status').then(r=>r.json()).then(d=>{setMsAuthed(true);loadMsUsers();}).catch(()=>{setMsAuthed(true);loadMsUsers();})},500);
+  }})};
   const logoutGoogle=async()=>{await fetch('/auth/google/logout',{method:'POST'});setGoogleAuthed(false);setGoogleUsers([])};
   const logoutMs=async()=>{await fetch('/auth/logout',{method:'POST'});setMsAuthed(false);setMsUsers([])};
 
@@ -571,22 +576,34 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
 /* ══════════════════════════════ */
 /* ═══    STEP 3: OPTIONS     ═══ */
 /* ══════════════════════════════ */
-const Step3=({options,setOptions,config,setConfig,msAuthed,onRun,onBack})=>{
+const Step3=({options,setOptions,config,setConfig,msAuthed,googleAuthed,onRun,onBack,retryMode=false})=>{
+  const filePathRef=useRef(null);
   const Chk=({label,checked,onChange,hint})=>(
     <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer',padding:'8px 0'}}>
       <input type="checkbox" checked={checked} onChange={onChange} style={{accentColor:C.primary,width:16,height:16}}/>
       <div><span>{label}</span>{hint&&<div style={{fontSize:11,color:C.muted,marginTop:1}}>{hint}</div>}</div>
     </label>
   );
+  useEffect(()=>{
+    if(retryMode&&filePathRef.current){
+      setTimeout(()=>{filePathRef.current?.focus();filePathRef.current?.scrollIntoView({behavior:'smooth',block:'center'})},100);
+    }
+  },[retryMode]);
   return(
     <div className="fade-up">
       <div style={{marginBottom:20}}>
         <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Migration Options</div>
-        <div style={{fontSize:13,color:C.muted}}>Configure and start the migration.</div>
+        <div style={{fontSize:13,color:C.muted}}>{retryMode?'Update the file path below and retry the failed conversations.':'Configure and start the migration.'}</div>
       </div>
 
+      {retryMode&&(
+        <div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',background:'#FFF7ED',border:'1px solid #FDBA74',borderRadius:8,fontSize:12,color:'#9A3412',marginBottom:16}}>
+          <IcoWarn s={14}/>Retry mode — fix the File Path below, then click Retry Failed.
+        </div>
+      )}
+
       <Field label="File Path *" hint="OneNote path where migrated pages will be created (required)">
-        <Input value={config.filePath||''} onChange={e=>setConfig(p=>({...p,filePath:e.target.value}))} placeholder="e.g. /Sites/Migration/GeminiExports"/>
+        <input ref={filePathRef} type="text" value={config.filePath||''} onChange={e=>setConfig(p=>({...p,filePath:e.target.value}))} placeholder="e.g. /Sites/Migration/GeminiExports" style={{width:'100%',border:`2px solid ${retryMode?'#EA580C':C.border}`,borderRadius:6,padding:'9px 12px',fontSize:13,outline:'none',transition:'border .2s',boxSizing:'border-box'}} onFocus={e=>e.target.style.borderColor=retryMode?'#C2410C':C.primary} onBlur={e=>e.target.style.borderColor=retryMode?'#EA580C':C.border}/>
       </Field>
 
       <Card style={{marginBottom:16}}>
@@ -609,14 +626,19 @@ const Step3=({options,setOptions,config,setConfig,msAuthed,onRun,onBack})=>{
 
       {!options.dryRun&&!msAuthed&&(
         <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 16px',background:C.tint,border:`1px solid ${C.primary}30`,borderRadius:8,fontSize:13,color:C.primary,marginBottom:16}}>
-          <IcoWarn s={15}/>Live migration requires Microsoft sign-in (Step 1 — Add Clouds).
+          <IcoWarn s={15}/>Live migration requires Microsoft sign-in (Step 1 — Connect Clouds).
+        </div>
+      )}
+      {!options.dryRun&&!googleAuthed&&(
+        <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 16px',background:'#FFFBEB',border:'1px solid #FCD34D',borderRadius:8,fontSize:13,color:'#92400E',marginBottom:16}}>
+          <IcoInfo s={15}/>Google not connected — Drive files referenced in Gemini conversations will not be migrated. Go back to Connect Clouds to sign in with Google.
         </div>
       )}
 
       <div style={{display:'flex',gap:10}}>
         <Btn variant="ghost" onClick={onBack}>← Back</Btn>
         <Btn onClick={()=>onRun()} disabled={!config.filePath||(!options.dryRun&&!msAuthed)} style={{flex:1,justifyContent:'center'}}>
-          {options.dryRun?<><IcoSearch s={14}/>Start Dry Run</>:<><IcoRocket s={14}/>Start Migration</>}
+          {retryMode?<><IcoReset s={14}/>Retry Failed</>:options.dryRun?<><IcoSearch s={14}/>Start Dry Run</>:<><IcoRocket s={14}/>Start Migration</>}
         </Btn>
       </div>
     </div>
@@ -633,14 +655,26 @@ const MIG_ENTITIES=[
   {label:'Flagged',icon:<IcoFlag s={18}/>,  color:C.primaryL},
 ];
 
-const StepMigrate=({stats,done,lastRunWasDry,batchId,onStartLive,onRunAnother,onRetry,retrying,hasUploadData})=>{
+const StepMigrate=({stats,done,lastRunWasDry,batchId,onStartLive,onRunAnother,onRetry,retrying,hasUploadData,onGoToConnect,onRetryWithPath})=>{
   const [ring,setRing]=useState(0);
   const [batchUsers,setBatchUsers]=useState(null);
   const [showUserDetail,setShowUserDetail]=useState(false);
+  const [errorGroups,setErrorGroups]=useState(null);
   useEffect(()=>{if(!done){const t=setInterval(()=>setRing(r=>Math.min(r+2,95)),800);return()=>clearInterval(t)}else setRing(100)},[done]);
   useEffect(()=>{
     if(done&&batchId&&!lastRunWasDry){
       fetch(`/api/reports/${batchId}`).then(r=>r.ok?r.json():null).then(d=>{if(d?.users)setBatchUsers(d.users)}).catch(()=>{});
+      fetch(`/api/reports/${batchId}/errors`).then(r=>r.ok?r.json():null).then(d=>{
+        if(!d?.errors?.length)return;
+        const groups={path_conflict:[],auth_error:[],page_error:[]};
+        for(const e of d.errors){
+          const msg=(e.error||'').toLowerCase();
+          if(msg.includes('already exists')||msg.includes('20117'))groups.path_conflict.push(e);
+          else if(msg.includes('401')||msg.includes('not authenticated')||msg.includes('token'))groups.auth_error.push(e);
+          else groups.page_error.push(e);
+        }
+        setErrorGroups(groups);
+      }).catch(()=>{});
     }
   },[done,batchId,lastRunWasDry]);
   const vals=[stats.users,stats.pages,stats.errors,stats.flagged];
@@ -728,7 +762,49 @@ const StepMigrate=({stats,done,lastRunWasDry,batchId,onStartLive,onRunAnother,on
             <IcoDownload s={13} c={C.primary}/> Download Migration Report (CSV)
           </button>
 
-          {/* Retry failed conversations */}
+          {/* Smart error panel */}
+          {!lastRunWasDry&&stats.errors>0&&errorGroups&&(
+            <div style={{marginBottom:10}}>
+              {errorGroups.path_conflict.length>0&&(
+                <div style={{display:'flex',alignItems:'flex-start',gap:10,padding:'10px 14px',background:'#FFFBEB',border:'1px solid #FCD34D',borderRadius:8,fontSize:12,color:'#92400E',marginBottom:8}}>
+                  <IcoWarn s={14}/>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:600,marginBottom:2}}>Section already exists ({errorGroups.path_conflict.length} conversation{errorGroups.path_conflict.length>1?'s':''})</div>
+                    <div style={{color:'#B45309',marginBottom:6}}>This usually resolves automatically on retry — a fresh PagesCreator instance clears the section cache.</div>
+                    <button onClick={onRetry} disabled={retrying} style={{fontSize:11,fontWeight:600,padding:'4px 12px',borderRadius:4,border:'1px solid #F59E0B',background:'#FEF3C7',color:'#92400E',cursor:retrying?'not-allowed':'pointer',fontFamily:'inherit',opacity:retrying?0.6:1}}>
+                      {retrying?'Retrying…':'Retry Now'}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {errorGroups.auth_error.length>0&&(
+                <div style={{display:'flex',alignItems:'flex-start',gap:10,padding:'10px 14px',background:'#FEF2F2',border:`1px solid #FCA5A5`,borderRadius:8,fontSize:12,color:'#991B1B',marginBottom:8}}>
+                  <IcoError s={14}/>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:600,marginBottom:2}}>Microsoft token expired ({errorGroups.auth_error.length} conversation{errorGroups.auth_error.length>1?'s':''})</div>
+                    <div style={{color:'#B91C1C',marginBottom:6}}>Go back to Connect Clouds to re-authenticate with Microsoft.</div>
+                    <button onClick={onGoToConnect} style={{fontSize:11,fontWeight:600,padding:'4px 12px',borderRadius:4,border:`1px solid #FCA5A5`,background:'#FEF2F2',color:'#991B1B',cursor:'pointer',fontFamily:'inherit'}}>
+                      Go to Connect Clouds
+                    </button>
+                  </div>
+                </div>
+              )}
+              {errorGroups.page_error.length>0&&(
+                <div style={{display:'flex',alignItems:'flex-start',gap:10,padding:'10px 14px',background:'#FFF7ED',border:'1px solid #FDBA74',borderRadius:8,fontSize:12,color:'#9A3412',marginBottom:8}}>
+                  <IcoWarn s={14}/>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:600,marginBottom:2}}>{errorGroups.page_error.length} conversation{errorGroups.page_error.length>1?'s':''} failed to create pages</div>
+                    <div style={{color:'#C2410C',marginBottom:6}}>Check the file path is correct and the destination notebook exists.</div>
+                    <button onClick={onRetryWithPath} style={{fontSize:11,fontWeight:600,padding:'4px 12px',borderRadius:4,border:'1px solid #FDBA74',background:'#FEF3C7',color:'#9A3412',cursor:'pointer',fontFamily:'inherit'}}>
+                      Change Path &amp; Retry
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Retry failed conversations (generic fallback) */}
           {!lastRunWasDry&&stats.errors>0&&onRetry&&(
             <button onClick={onRetry} disabled={retrying} style={{width:'100%',display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'10px 16px',borderRadius:6,border:`1px solid #FF1F1F`,background:'white',fontSize:13,fontWeight:500,cursor:retrying?'not-allowed':'pointer',color:'#FF1F1F',fontFamily:'inherit',transition:'all .15s',marginBottom:10,opacity:retrying?0.6:1}} onMouseEnter={e=>{if(!retrying)e.currentTarget.style.background='#fff0f0'}} onMouseLeave={e=>e.currentTarget.style.background='white'}>
               <IcoReset s={13} c='#FF1F1F'/> {retrying?'Retrying…':`Retry Failed (${stats.errors})`}
@@ -1010,6 +1086,7 @@ function App(){
   const [lastRunWasDry,setLastRunWasDry]=useState(()=>lsGet(K.lastDry,false));
   const [currentBatchId,setCurrentBatchId]=useState(()=>lsGet(K.batchId,null));
   const [retrying,setRetrying]=useState(false);
+  const [retryMode,setRetryMode]=useState(false);
   const [toast,setToast]=useState(null); // {message, type}
   const [showReports,setShowReports]=useState(false);
   const [appUser,setAppUser]=useState(null);
@@ -1069,14 +1146,12 @@ function App(){
         }
         setWsLoaded(true);
 
-        // Validate cloud auth status
-        Promise.all([
-          fetch('/auth/google/status').then(r=>r.json()).then(d=>d.authenticated).catch(()=>false),
-          fetch('/auth/status').then(r=>r.json()).then(d=>d.authenticated).catch(()=>false),
-        ]).then(([gOk,mOk])=>{
-          if(!gOk&&googleAuthed)setGoogleAuthed(false);
-          if(!mOk&&msAuthed)setMsAuthed(false);
-        });
+        // Validate cloud auth status from server
+        fetch('/auth/status').then(r=>r.json()).then(d=>{
+          // Server is authoritative — sync UI state to match
+          if(d.googleConnected!==undefined){setGoogleAuthed(!!d.googleConnected);}
+          if(d.msConnected!==undefined){setMsAuthed(!!d.msConnected);}
+        }).catch(()=>{});
       }).catch(()=>setWsLoaded(true));
     }).catch(()=>{window.location.href='/login.html'});
   },[]);
@@ -1197,17 +1272,29 @@ function App(){
     }
   };
 
-  const retryFailed=async()=>{
+  const retryFailed=async(overrideCustomerName)=>{
     if(!currentBatchId||retrying)return;
     setRetrying(true);
     setMigDone(false);
+    setRetryMode(false);
     addLog('info',`Retrying ${stats.errors} failed conversation(s)...`);
     try{
-      const res=await fetch('/api/migrate/retry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({batchId:currentBatchId})});
+      const body={batchId:currentBatchId};
+      if(overrideCustomerName)body.customer_name=overrideCustomerName;
+      const res=await fetch('/api/migrate/retry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       const data=await res.json();
       if(!res.ok||!data.started){addLog('error',data.error||data.message||'Retry failed');setMigDone(true);setRetrying(false);}
       // SSE stream picks up logs automatically — retrying state cleared when 'done' event fires
     }catch(e){addLog('error','Retry request failed: '+e.message);setMigDone(true);setRetrying(false);}
+  };
+
+  const handleRetryWithPath=()=>{
+    setRetryMode(true);
+    setStep(3);
+  };
+
+  const handleGoToConnect=()=>{
+    setStep(0);
   };
 
   const resetSession=()=>{if(confirm('Reset all session data?')){lsClear(appUser?._id);location.reload()}};
@@ -1259,8 +1346,8 @@ function App(){
             {step===0&&<Step0 googleAuthed={googleAuthed} setGoogleAuthed={setGoogleAuthed} msAuthed={msAuthed} setMsAuthed={setMsAuthed} googleUsers={googleUsers} setGoogleUsers={setGoogleUsers} msUsers={msUsers} setMsUsers={setMsUsers} tenantId={config.tenantId} onComplete={()=>setStep(1)}/>}
             {step===1&&<Step1 googleUsers={googleUsers} googleAuthed={googleAuthed} onComplete={handleImportComplete} onBack={()=>setStep(0)} showToast={showToast} uploadData={uploadData}/>}
             {step===2&&<Step2 uploadData={uploadData} msUsers={msUsers} mappings={mappings} setMappings={setMappings} selectedUsers={selectedUsers} setSelectedUsers={setSelectedUsers} onNext={()=>{addLog('info',`User mappings ready — ${selectedUsers.size||Object.keys(mappings).length} users selected`);setStep(3)}} onBack={()=>setStep(1)} showToast={showToast}/>}
-            {step===3&&<Step3 options={options} setOptions={setOptions} config={config} setConfig={setConfig} msAuthed={msAuthed} onRun={runMigration} onBack={()=>setStep(2)}/>}
-            {(step===4||step===5)&&<StepMigrate stats={stats} done={migDone} lastRunWasDry={lastRunWasDry} batchId={currentBatchId} onStartLive={()=>runMigration(true)} onRunAnother={runAnotherBatch} onRetry={retryFailed} retrying={retrying} hasUploadData={!!uploadData}/>}
+            {step===3&&<Step3 options={options} setOptions={setOptions} config={config} setConfig={setConfig} msAuthed={msAuthed} googleAuthed={googleAuthed} onRun={retryMode?(()=>retryFailed(config.filePath||undefined)):runMigration} onBack={()=>{setRetryMode(false);setStep(retryMode?4:2)}} retryMode={retryMode}/>}
+            {(step===4||step===5)&&<StepMigrate stats={stats} done={migDone} lastRunWasDry={lastRunWasDry} batchId={currentBatchId} onStartLive={()=>runMigration(true)} onRunAnother={runAnotherBatch} onRetry={retryFailed} retrying={retrying} hasUploadData={!!uploadData} onGoToConnect={handleGoToConnect} onRetryWithPath={handleRetryWithPath}/>}
           </div>
         </div>
 
