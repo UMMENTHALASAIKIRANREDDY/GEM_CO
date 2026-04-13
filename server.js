@@ -385,7 +385,12 @@ app.get('/auth/google/callback', async (req, res) => {
 
 app.get('/auth/google/status', (req, res) => {
   const { appUserId } = getWorkspaceContext(req);
-  res.json({ authenticated: isGoogleAuthenticated(appUserId) });
+  const sa = validateServiceAccount();
+  res.json({
+    authenticated: isGoogleAuthenticated(appUserId),
+    serviceAccount: sa.ok,
+    serviceAccountError: sa.ok ? undefined : sa.error,
+  });
 });
 
 app.post('/auth/google/logout', (req, res) => {
