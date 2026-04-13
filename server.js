@@ -483,7 +483,7 @@ app.post('/api/google/vault-export', requireGoogleAuth, async (req, res) => {
     }
 
     const { appUserId, googleEmail } = getWorkspaceContext(req);
-    const auth = getGoogleOAuth2Client(appUserId);
+    const auth = getVaultAuthClient(googleEmail);
     const exporter = new VaultExporter(auth);
 
     const matter = await exporter.createMatter(`GEM_CO Export ${new Date().toISOString()}`);
