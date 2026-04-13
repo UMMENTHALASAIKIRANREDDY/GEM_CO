@@ -795,12 +795,14 @@ app.get('/api/reports/:id/csv', async (req, res) => {
   const doc = await db().collection('reportsWorkspace').findOne({ _id: req.params.id });
   if (!doc) return res.status(404).json({ error: 'Batch not found' });
   const users = doc.report?.users || [];
-  const rows = ['Email,Status,Pages Created,Conversations,Errors,Error Message'];
+  const customerName = doc.customerName || 'Gemini';
+  const destFor = (email) => `${email}/OneDrive/Notebooks/${customerName}/${customerName} Conversations`;
+  const rows = ['Email,Destination Path,Status,Pages Created,Conversations,Errors,Error Message'];
   users.forEach(u => {
     if (u.errors?.length > 0) {
-      u.errors.forEach(e => rows.push([u.email, u.status, u.pages_created, u.conversations_processed, u.error_count, e.error_message || ''].map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(',')));
+      u.errors.forEach(e => rows.push([u.email, destFor(u.email), u.status, u.pages_created, u.conversations_processed, u.error_count, e.error_message || ''].map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(',')));
     } else {
-      rows.push([u.email, u.status, u.pages_created, u.conversations_processed, u.error_count, ''].map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(','));
+      rows.push([u.email, destFor(u.email), u.status, u.pages_created, u.conversations_processed, u.error_count, ''].map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(','));
     }
   });
   res.setHeader('Content-Type', 'text/csv');
@@ -828,7 +830,8 @@ app.get('/api/reports/:id', async (req, res) => {
   if (id === 'migration') {
     const latest = await db().collection('reportsWorkspace').findOne({}, { sort: { startTime: -1 } });
     if (!latest) return res.status(404).json({ error: 'No report yet' });
-    return res.json(latest.report || latest);
+    const payload = latest.report || {};
+    return res.json({ ...payload, customerName: latest.customerName, tenantId: latest.tenantId, batchId: latest._id });
   }
   const doc = await db().collection('reportsWorkspace').findOne({ _id: id });
   if (!doc) return res.status(404).json({ error: 'Batch report not found' });
@@ -840,7 +843,10 @@ app.get('/api/reports/:id', async (req, res) => {
     const { report, ...meta } = doc;
     return res.json({ ...meta, summary: report?.summary || null });
   }
-  res.json(doc.report || doc);
+  // Merge outer metadata (customerName, tenantId, batchId) into the report payload
+  // so the client has access to the File Name used for this batch.
+  const payload = doc.report || {};
+  res.json({ ...payload, customerName: doc.customerName, tenantId: doc.tenantId, batchId: doc._id });
 });
 
 // ─── User Mappings ───────────────────────────────────────────────────────────
@@ -878,8 +884,9 @@ app.get('/api/migration-logs/:batchId', async (req, res) => {
 // ─── SSE — live log stream ────────────────────────────────────────────────────
 app.get('/api/migration-log', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // disable nginx proxy buffering
 
   const appUserId = req.session?.appUser?._id?.toString() || null;
 
@@ -888,12 +895,14 @@ app.get('/api/migration-log', (req, res) => {
   for (const entry of userBuffer) {
     res.write(`data: ${JSON.stringify(entry)}\n\n`);
   }
+  if (typeof res.flush === 'function') res.flush();
 
   // Only forward live logs that belong to this user
   const onLog = (data) => {
     if (data._appUserId === appUserId || !data._appUserId) {
       const { _appUserId, ...clean } = data;
       res.write(`data: ${JSON.stringify(clean)}\n\n`);
+      if (typeof res.flush === 'function') res.flush();
     }
   };
   migrationEvents.on('log', onLog);

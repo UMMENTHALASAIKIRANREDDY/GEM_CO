@@ -218,9 +218,9 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
           <GoogleIcon/>
           <div style={{flex:1}}>
             <div style={{fontSize:14,fontWeight:600}}>Google Workspace</div>
-            <div style={{fontSize:12,color:C.muted}}>Source — Gemini conversations <span style={{fontSize:11,color:C.primaryL}}>(optional — or use ZIP upload)</span></div>
+            <div style={{fontSize:12,color:C.muted}}>Source — Gemini conversations <span style={{fontSize:11,color:'#DC2626',fontWeight:600}}>(required)</span></div>
           </div>
-          {googleAuthed?<span style={{display:'inline-flex',alignItems:'center',gap:5,fontSize:12,padding:'4px 12px',borderRadius:20,background:C.tint,color:C.primary,fontWeight:600,flexShrink:0}}><Check s={12} c={C.primary}/>Connected</span>:<span style={{fontSize:12,padding:'4px 12px',borderRadius:20,background:'#f0f0f0',color:C.muted,flexShrink:0}}>Optional</span>}
+          {googleAuthed?<span style={{display:'inline-flex',alignItems:'center',gap:5,fontSize:12,padding:'4px 12px',borderRadius:20,background:C.tint,color:C.primary,fontWeight:600,flexShrink:0}}><Check s={12} c={C.primary}/>Connected</span>:<span style={{fontSize:12,padding:'4px 12px',borderRadius:20,background:'#FEF2F2',color:'#DC2626',fontWeight:600,flexShrink:0}}>Required</span>}
         </div>
         {!googleAuthed?(
           <button onClick={signInGoogle} style={{display:'inline-flex',alignItems:'center',gap:10,padding:'10px 16px',borderRadius:6,border:`1px solid ${C.border}`,background:'white',fontSize:13,fontWeight:500,cursor:'pointer',transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.background=C.bg} onMouseLeave={e=>e.currentTarget.style.background='white'}>Sign in with Google</button>
@@ -264,8 +264,8 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
       </Card>
 
       {!msAuthed&&<div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:8,fontSize:13,color:'#991B1B',marginBottom:16}}><IcoWarn s={14}/>Microsoft Teams connection is required to proceed.</div>}
-      {msAuthed&&!googleAuthed&&<div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',background:C.tint,border:`1px solid ${C.primary}30`,borderRadius:8,fontSize:13,color:C.primary,marginBottom:16}}><IcoInfo s={14}/>Google not connected — you can import data via ZIP file in the next step.</div>}
-      <Btn onClick={onComplete} disabled={!msAuthed} style={{width:'100%',justifyContent:'center'}}>Continue to Import Data →</Btn>
+      {!googleAuthed&&<div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:8,fontSize:13,color:'#991B1B',marginBottom:16}}><IcoWarn s={14}/>Google Workspace connection is required to proceed.</div>}
+      <Btn onClick={onComplete} disabled={!msAuthed||!googleAuthed} style={{width:'100%',justifyContent:'center'}}>Continue to Import Data →</Btn>
     </div>
   );
 };
@@ -601,11 +601,11 @@ const Step3=({options,setOptions,config,setConfig,msAuthed,googleAuthed,onRun,on
 
       {retryMode&&(
         <div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',background:'#FFF7ED',border:'1px solid #FDBA74',borderRadius:8,fontSize:12,color:'#9A3412',marginBottom:16}}>
-          <IcoWarn s={14}/>Retry mode — fix the File Path below, then click Retry Failed.
+          <IcoWarn s={14}/>Retry mode — fix the File Name below, then click Retry Failed.
         </div>
       )}
 
-      <Field label="File Path *" hint="OneNote path where migrated pages will be created (required)">
+      <Field label="File Name *" hint="OneNote path where migrated pages will be created (required)">
         <input ref={filePathRef} type="text" value={config.filePath||''} onChange={e=>setConfig(p=>({...p,filePath:e.target.value}))} placeholder="e.g. /Sites/Migration/GeminiExports" style={{width:'100%',border:`2px solid ${retryMode?'#EA580C':C.border}`,borderRadius:6,padding:'9px 12px',fontSize:13,outline:'none',transition:'border .2s',boxSizing:'border-box'}} onFocus={e=>e.target.style.borderColor=retryMode?'#C2410C':C.primary} onBlur={e=>e.target.style.borderColor=retryMode?'#EA580C':C.border}/>
       </Field>
 
@@ -628,19 +628,19 @@ const Step3=({options,setOptions,config,setConfig,msAuthed,googleAuthed,onRun,on
       </Card>
 
       {!options.dryRun&&!msAuthed&&(
-        <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 16px',background:C.tint,border:`1px solid ${C.primary}30`,borderRadius:8,fontSize:13,color:C.primary,marginBottom:16}}>
+        <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 16px',background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:8,fontSize:13,color:'#991B1B',marginBottom:16}}>
           <IcoWarn s={15}/>Live migration requires Microsoft sign-in (Step 1 — Connect Clouds).
         </div>
       )}
       {!options.dryRun&&!googleAuthed&&(
-        <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 16px',background:'#FFFBEB',border:'1px solid #FCD34D',borderRadius:8,fontSize:13,color:'#92400E',marginBottom:16}}>
-          <IcoInfo s={15}/>Google not connected — Drive files referenced in Gemini conversations will not be migrated. Go back to Connect Clouds to sign in with Google.
+        <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 16px',background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:8,fontSize:13,color:'#991B1B',marginBottom:16}}>
+          <IcoWarn s={15}/>Live migration requires Google sign-in (Step 1 — Connect Clouds).
         </div>
       )}
 
       <div style={{display:'flex',gap:10}}>
         <Btn variant="ghost" onClick={onBack}>← Back</Btn>
-        <Btn onClick={()=>onRun()} disabled={!config.filePath||(!options.dryRun&&!msAuthed)} style={{flex:1,justifyContent:'center'}}>
+        <Btn onClick={()=>onRun()} disabled={!config.filePath||(!options.dryRun&&(!msAuthed||!googleAuthed))} style={{flex:1,justifyContent:'center'}}>
           {retryMode?<><IcoReset s={14}/>Retry Failed</>:options.dryRun?<><IcoSearch s={14}/>Start Dry Run</>:<><IcoRocket s={14}/>Start Migration</>}
         </Btn>
       </div>
@@ -658,12 +658,12 @@ const MIG_ENTITIES=[
   {label:'Flagged',icon:<IcoFlag s={18}/>,  color:C.primaryL},
 ];
 
-const StepMigrate=({stats,done,lastRunWasDry,batchId,onStartLive,onRunAnother,onRetry,retrying,hasUploadData,onGoToConnect,onRetryWithPath})=>{
-  const [ring,setRing]=useState(0);
+const StepMigrate=({stats,done,lastRunWasDry,batchId,onStartLive,onRunAnother,onRetry,retrying,hasUploadData,onGoToConnect,onRetryWithPath,totalExpected=0})=>{
   const [batchUsers,setBatchUsers]=useState(null);
   const [showUserDetail,setShowUserDetail]=useState(false);
   const [errorGroups,setErrorGroups]=useState(null);
-  useEffect(()=>{if(!done){const t=setInterval(()=>setRing(r=>Math.min(r+2,95)),800);return()=>clearInterval(t)}else setRing(100)},[done]);
+  // Dynamic progress: pages migrated / total expected. Survives page refresh (stats is persisted).
+  const ring=done?100:(totalExpected>0?Math.min(Math.round(((stats.pages||0)+(stats.errors||0))/totalExpected*100),99):(stats.pages>0||stats.users>0?Math.min(5+(stats.pages||0),95):0));
   useEffect(()=>{
     if(done&&batchId&&!lastRunWasDry){
       fetch(`/api/reports/${batchId}`).then(r=>r.ok?r.json():null).then(d=>{if(d?.users)setBatchUsers(d.users)}).catch(()=>{});
@@ -689,24 +689,24 @@ const StepMigrate=({stats,done,lastRunWasDry,batchId,onStartLive,onRunAnother,on
       if(!res.ok)throw new Error('not found');
       const data=await res.json();
       const users=data.users||[];
+      const customerName=data.customerName||'Gemini';
+      const destFor=(email)=>`${email}/OneDrive/Notebooks/${customerName}/${customerName} Conversations`;
       // Flatten: one row per user, or one per error for failed users
       const rows=[];
       users.forEach(u=>{
         if(u.errors&&u.errors.length>0){
-          u.errors.forEach(e=>rows.push([u.email,u.status,u.pages_created,e.conversation||'',e.error_message||'']));
+          u.errors.forEach(e=>rows.push([u.email,destFor(u.email),u.status,u.pages_created,e.conversation||'',e.error_message||'']));
         }else{
-          rows.push([u.email,u.status,u.pages_created,'','']);
+          rows.push([u.email,destFor(u.email),u.status,u.pages_created,'','']);
         }
       });
-      const csv='Email,Status,Pages Created,Conversation,Error\n'+
+      const csv='Email,Destination Path,Status,Pages Created,Conversation,Error\n'+
         rows.map(r=>r.map(f=>`"${String(f||'').replace(/"/g,'""')}"`).join(',')).join('\n');
       const a=document.createElement('a');
       a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
       a.download=`migration_report_${batchId||'latest'}.csv`;a.click();
-    }catch{
-      // Fallback: direct download
-      const a=document.createElement('a');
-      a.href='/api/reports/migration';a.download='migration_report.json';a.click();
+    }catch(e){
+      console.warn('CSV download failed:',e);
     }
   };
 
@@ -944,9 +944,6 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
   const dlBatch=id=>{
     const a=document.createElement('a');a.href=`/api/reports/${id}/csv`;a.download=`batch_${id}.csv`;a.click();
   };
-  const dlBatchJson=id=>{
-    const a=document.createElement('a');a.href=`/api/reports/${id}?download=true`;a.download=`batch_${id}.json`;a.click();
-  };
 
   const fmtDate=ts=>{try{const d=new Date(ts);return d.toLocaleDateString()+' '+d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'})}catch{return ts}};
   const fmtDur=(s,e)=>{try{const sec=Math.round((new Date(e)-new Date(s))/1000);return sec<60?`${sec}s`:`${Math.floor(sec/60)}m ${sec%60}s`}catch{return ''}};
@@ -1010,7 +1007,6 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
                   <div style={{display:'flex',gap:6,flexShrink:0,marginLeft:8,alignItems:'center'}}>
                     {r.status==='running'&&<span style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:'#1D4ED8'}}><Spinner s={12}/>Running...</span>}
                     {r.status!=='running'&&!r.dryRun&&<button onClick={()=>dlBatch(r._id)} title="Download CSV" style={{display:'flex',alignItems:'center',gap:4,padding:'5px 9px',borderRadius:6,border:`1px solid ${C.primary}`,background:'white',fontSize:11,color:C.primary,cursor:'pointer',fontFamily:'inherit',fontWeight:500}} onMouseEnter={e=>e.currentTarget.style.background=C.tint} onMouseLeave={e=>e.currentTarget.style.background='white'}><IcoDownload s={11} c={C.primary}/> CSV</button>}
-                    {r.status!=='running'&&<button onClick={()=>dlBatchJson(r._id)} title="Download JSON" style={{display:'flex',alignItems:'center',gap:4,padding:'5px 9px',borderRadius:6,border:`1px solid ${C.border}`,background:'white',fontSize:11,color:C.muted,cursor:'pointer',fontFamily:'inherit',fontWeight:500}} onMouseEnter={e=>e.currentTarget.style.background=C.bg} onMouseLeave={e=>e.currentTarget.style.background='white'}><IcoDownload s={11}/> JSON</button>}
                   </div>
                 </div>
 
@@ -1300,8 +1296,7 @@ function App(){
     setStep(0);
   };
 
-  const resetSession=()=>{if(confirm('Reset all session data?')){lsClear(appUser?._id);location.reload()}};
-  // Logout: destroy session only — DO NOT clear localStorage so user returns to their last state
+// Logout: destroy session only — DO NOT clear localStorage so user returns to their last state
   const handleLogout=async()=>{await fetch('/api/logout',{method:'POST'});window.location.href='/login.html'};
   const handleStepClick=i=>{if(i<step&&!live)setStep(i)};
 
@@ -1319,9 +1314,6 @@ function App(){
           </div>
           <button onClick={()=>setShowReports(true)} style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:'rgba(255,255,255,.8)',background:'rgba(255,255,255,.12)',border:'1px solid rgba(255,255,255,.25)',borderRadius:5,padding:'4px 10px',cursor:'pointer',fontFamily:'inherit',transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.2)'} onMouseLeave={e=>e.currentTarget.style.background='rgba(255,255,255,.12)'}>
             <IcoReport s={12}/> Reports
-          </button>
-          <button onClick={resetSession} style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:'rgba(255,255,255,.6)',background:'transparent',border:'1px solid rgba(255,255,255,.2)',borderRadius:5,padding:'4px 9px',cursor:'pointer',fontFamily:'inherit',transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.1)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-            <IcoReset s={11}/> Reset
           </button>
           {appUser&&<div style={{display:'flex',alignItems:'center',gap:8,borderLeft:'1px solid rgba(255,255,255,.2)',paddingLeft:10}}>
             <div style={{width:26,height:26,borderRadius:'50%',background:'rgba(255,255,255,.2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:700,color:'white'}}>{(appUser.name||appUser.email).slice(0,2).toUpperCase()}</div>
@@ -1350,7 +1342,7 @@ function App(){
             {step===1&&<Step1 googleUsers={googleUsers} googleAuthed={googleAuthed} onComplete={handleImportComplete} onBack={()=>setStep(0)} showToast={showToast} uploadData={uploadData}/>}
             {step===2&&<Step2 uploadData={uploadData} msUsers={msUsers} mappings={mappings} setMappings={setMappings} selectedUsers={selectedUsers} setSelectedUsers={setSelectedUsers} onNext={()=>{addLog('info',`User mappings ready — ${selectedUsers.size||Object.keys(mappings).length} users selected`);setStep(3)}} onBack={()=>setStep(1)} showToast={showToast}/>}
             {step===3&&<Step3 options={options} setOptions={setOptions} config={config} setConfig={setConfig} msAuthed={msAuthed} googleAuthed={googleAuthed} onRun={retryMode?(()=>retryFailed(config.filePath||undefined)):runMigration} onBack={()=>{setRetryMode(false);setStep(retryMode?4:2)}} retryMode={retryMode}/>}
-            {(step===4||step===5)&&<StepMigrate stats={stats} done={migDone} lastRunWasDry={lastRunWasDry} batchId={currentBatchId} onStartLive={()=>runMigration(true)} onRunAnother={runAnotherBatch} onRetry={retryFailed} retrying={retrying} hasUploadData={!!uploadData} onGoToConnect={handleGoToConnect} onRetryWithPath={handleRetryWithPath}/>}
+            {(step===4||step===5)&&<StepMigrate stats={stats} done={migDone} lastRunWasDry={lastRunWasDry} batchId={currentBatchId} onStartLive={()=>runMigration(true)} onRunAnother={runAnotherBatch} onRetry={retryFailed} retrying={retrying} hasUploadData={!!uploadData} onGoToConnect={handleGoToConnect} onRetryWithPath={handleRetryWithPath} totalExpected={(()=>{if(!uploadData?.users)return 0;const selected=selectedUsers.size>0?[...selectedUsers]:Object.keys(mappings);const emails=selected.length>0?new Set(selected):new Set(uploadData.users.map(u=>u.email));return uploadData.users.filter(u=>emails.has(u.email)).reduce((s,u)=>s+(u.conversation_count||0),0)})()}/>}
           </div>
         </div>
 
