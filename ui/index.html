@@ -227,7 +227,10 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
         ):lgG?(
           <div style={{display:'flex',alignItems:'center',gap:8,fontSize:12,color:C.muted}}><Spinner s={13}/> Loading users...</div>
         ):errG?(
-          <div style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:C.error}}><IcoError s={13}/> {errG}</div>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10}}>
+            <div style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:C.error,flex:1}}><IcoError s={13}/> {errG}</div>
+            <button onClick={logoutGoogle} style={{fontSize:11,color:C.muted,background:'none',border:`1px solid ${C.border}`,borderRadius:5,padding:'4px 8px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,whiteSpace:'nowrap',flexShrink:0}}><IcoLogout s={11}/> Sign Out</button>
+          </div>
         ):(
           <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
             <span style={{fontSize:12,color:C.muted,display:'flex',alignItems:'center',gap:4}}><IcoUser s={12}/> {googleUsers.length} users loaded</span>

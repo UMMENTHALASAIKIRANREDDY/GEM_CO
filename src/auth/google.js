@@ -9,6 +9,10 @@ function _loadServiceAccount() {
   if (!fs.existsSync(saPath)) {
     throw new Error(`Google service account file not found: ${saPath}`);
   }
+  const stats = fs.statSync(saPath);
+  if (stats.isDirectory()) {
+    throw new Error(`Google service account path is a directory, not a file: ${saPath}`);
+  }
   return JSON.parse(fs.readFileSync(saPath, 'utf8'));
 }
 
