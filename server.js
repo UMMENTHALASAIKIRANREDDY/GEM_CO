@@ -9,6 +9,7 @@ import { EventEmitter } from 'events';
 
 import { getAuthUrl, acquireTokenByCode, isAuthenticated, getValidToken, clearMsToken, restoreMsSessions } from './src/auth/microsoft.js';
 import { getGoogleAuthUrl, acquireGoogleTokenByCode, isGoogleAuthenticated, getGoogleOAuth2Client, clearGoogleToken, restoreGoogleSessions } from './src/auth/googleOAuth.js';
+import { getDriveService, getAdminDirectoryClient, getAdminReportsClient, getVaultAuthClient, validateServiceAccount } from './src/auth/google.js';
 import { google } from 'googleapis';
 import { VaultReader } from './src/modules/vaultReader.js';
 import { VaultExporter } from './src/modules/vaultExporter.js';
@@ -428,8 +429,7 @@ app.get('/api/check-permissions', requireAuth, async (req, res) => {
 app.get('/api/google/users', requireGoogleAuth, async (req, res) => {
   try {
     const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
-    const auth = getGoogleOAuth2Client(appUserId);
-    const admin = google.admin({ version: 'directory_v1', auth });
+    const admin = getAdminDirectoryClient(googleEmail);
     const users = [];
     let pageToken = undefined;
 
