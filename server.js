@@ -408,7 +408,8 @@ app.get('/api/check-permissions', requireAuth, async (req, res) => {
   try {
     const { appUserId, googleEmail } = getWorkspaceContext(req);
     const googleClient = getAdminDirectoryClient(googleEmail);
-    const result = await checkPermissions(googleClient);
+    const reportsClient = getAdminReportsClient(googleEmail);
+    const result = await checkPermissions(googleClient, reportsClient);
     res.json(result);
   } catch (err) {
     // Not authenticated with Google yet
