@@ -158,8 +158,8 @@ app.get('/api/diagnose-audit', async (req, res) => {
   const startTime = start ? new Date(start) : new Date(Date.now() - 3 * 60 * 60 * 1000);
   const endTime   = end   ? new Date(end)   : new Date();
   try {
-    const { appUserId } = getWorkspaceContext(req);
-    const auth = getGoogleOAuth2Client(appUserId);
+    const { appUserId, googleEmail } = getWorkspaceContext(req);
+    const auth = getAdminReportsClient(googleEmail);
     const client = new AuditLogClient(auth);
     const result = await client.testQuery(email, startTime, endTime);
     res.json({ email, startTime, endTime, ...result });
@@ -172,10 +172,8 @@ app.get('/api/diagnose-audit', async (req, res) => {
 app.get('/api/test/drive-files', async (req, res) => {
   const { ownerEmail } = req.query;
   try {
-    const { google } = await import('googleapis');
-    const { appUserId } = getWorkspaceContext(req);
-    const auth = getGoogleOAuth2Client(appUserId);
-    const drive = google.drive({ version: 'v3', auth });
+    const { appUserId, googleEmail } = getWorkspaceContext(req);
+    const drive = getDriveService(googleEmail);
     const r = await drive.files.list({
       q: `'${ownerEmail}' in owners and trashed = false`,
       fields: 'files(id, name, mimeType)',
@@ -191,10 +189,9 @@ app.post('/api/test/drive-transfer', async (req, res) => {
     return res.status(400).json({ error: 'fileId, fileName, ownerEmail, targetEmail are required' });
   }
   try {
-    const { appUserId } = getWorkspaceContext(req);
-    const googleClient = getGoogleOAuth2Client(appUserId);
+    const { appUserId, googleEmail } = getWorkspaceContext(req);
     const { DriveFileMatcher } = await import('./src/modules/driveFileMatcher.js');
-    const matcher = new DriveFileMatcher(googleClient, ownerEmail, appUserId);
+    const matcher = new DriveFileMatcher(getDriveService(googleEmail), ownerEmail, appUserId);
     const driveFile = { id: fileId, name: fileName, mimeType: mimeType || 'application/vnd.google-apps.document' };
     const result = await matcher.uploadToOneDrive(driveFile, targetEmail);
     if (result && !result.error) {
