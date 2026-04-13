@@ -406,8 +406,8 @@ app.post('/auth/logout', (req, res) => {
 
 app.get('/api/check-permissions', requireAuth, async (req, res) => {
   try {
-    const { appUserId } = getWorkspaceContext(req);
-    const googleClient = getGoogleOAuth2Client(appUserId);
+    const { appUserId, googleEmail } = getWorkspaceContext(req);
+    const googleClient = getAdminDirectoryClient(googleEmail);
     const result = await checkPermissions(googleClient);
     res.json(result);
   } catch (err) {
@@ -1051,9 +1051,9 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
         let fileCorrelator = null;
         let driveMatcher = null;
         try {
-          googleClient = getGoogleOAuth2Client(appUserId);
+          googleClient = getAdminReportsClient(googleEmail);
           fileCorrelator = new FileCorrelator(googleClient, googleEmail); // resolution only — no upload
-          driveMatcher = new DriveFileMatcher(googleClient, googleEmail, appUserId);
+          driveMatcher = new DriveFileMatcher(getDriveService(googleEmail), googleEmail, appUserId);
           emit('info', `  Drive file resolution enabled for ${googleEmail}`);
         } catch (_) {
           emit('warn', `  Drive file resolution skipped for ${googleEmail} — Google not authenticated`);
