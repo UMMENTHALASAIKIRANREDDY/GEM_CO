@@ -8,7 +8,7 @@ import AdmZip from 'adm-zip';
 import { EventEmitter } from 'events';
 
 import { getAuthUrl, acquireTokenByCode, isAuthenticated, getValidToken, clearMsToken, restoreMsSessions } from './src/auth/microsoft.js';
-import { getGoogleAuthUrl, acquireGoogleTokenByCode, isGoogleAuthenticated, getGoogleOAuth2Client, clearGoogleToken, restoreGoogleSessions } from './src/auth/googleOAuth.js';
+import { getGoogleAuthUrl, acquireGoogleTokenByCode, isGoogleAuthenticated, clearGoogleToken, restoreGoogleSessions } from './src/auth/googleOAuth.js';
 import { getDriveService, getAdminDirectoryClient, getAdminReportsClient, getVaultAuthClient, validateServiceAccount } from './src/auth/google.js';
 import { google } from 'googleapis';
 import { VaultReader } from './src/modules/vaultReader.js';
