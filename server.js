@@ -1102,12 +1102,15 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
                   if (turn.driveFiles && turn.driveFiles.length > 0) {
                     const uploaded = await Promise.all(turn.driveFiles.map(async (f) => {
                       const { _meta, ...rest } = f;
-                      // Reuse cached result if same file already uploaded in this conversation
+                      // Reuse cached result — store the Promise immediately so concurrent turns
+                      // referencing the same file wait on a single upload instead of racing
                       if (uploadCache.has(f.driveFileId)) {
-                        const cached = uploadCache.get(f.driveFileId);
+                        const cached = await uploadCache.get(f.driveFileId);
                         return { ...rest, ...(typeof cached === 'string' ? { oneDriveUrl: cached } : { oneDriveUrl: null, uploadError: cached?.error }) };
                       }
-                      const result = await driveMatcher.uploadToOneDrive(f._meta, m365Email);
+                      const uploadPromise = driveMatcher.uploadToOneDrive(f._meta, m365Email);
+                      uploadCache.set(f.driveFileId, uploadPromise);
+                      const result = await uploadPromise;
                       uploadCache.set(f.driveFileId, result);
                       if (result && typeof result === 'string') {
                         totalDriveFiles++;

@@ -113,23 +113,36 @@ export class PagesCreator {
     const sectionId = await this._getOrCreateSection(targetEmail);
     const htmlContent = this._buildPageHtml(conversation, isFlagged);
 
-    const response = await fetch(
-      `${GRAPH_BASE}/users/${targetEmail}/onenote/sections/${sectionId}/pages`,
-      {
-        method: 'POST',
-        headers: { ...await this._headers(), 'Content-Type': 'text/html' },
-        body: htmlContent
-      }
-    );
+    const MAX_RETRIES = 3;
+    let lastError;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      const response = await fetch(
+        `${GRAPH_BASE}/users/${targetEmail}/onenote/sections/${sectionId}/pages`,
+        {
+          method: 'POST',
+          headers: { ...await this._headers(), 'Content-Type': 'text/html' },
+          body: htmlContent
+        }
+      );
 
-    if (!response.ok) {
+      if (response.ok) {
+        const data = await response.json();
+        logger.info(`OneNote page created for ${targetEmail}: "${conversation.title?.slice(0, 50)}"`);
+        return data.id;
+      }
+
       const body = await response.text();
-      throw new Error(`OneNote page creation failed for ${targetEmail}: ${response.status} — ${body.slice(0, 300)}`);
+      lastError = `OneNote page creation failed for ${targetEmail}: ${response.status} — ${body.slice(0, 300)}`;
+
+      // Retry on transient server errors (5xx), give up immediately on client errors (4xx)
+      if (response.status < 500 || attempt === MAX_RETRIES) break;
+
+      const delay = attempt * 2000; // 2s, 4s
+      logger.warn(`OneNote page creation transient error (attempt ${attempt}/${MAX_RETRIES}), retrying in ${delay}ms — "${conversation.title?.slice(0, 50)}"`);
+      await new Promise(r => setTimeout(r, delay));
     }
 
-    const data = await response.json();
-    logger.info(`OneNote page created for ${targetEmail}: "${conversation.title?.slice(0, 50)}"`);
-    return data.id;
+    throw new Error(lastError);
   }
 
   /**
