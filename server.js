@@ -8,8 +8,8 @@ import AdmZip from 'adm-zip';
 import { EventEmitter } from 'events';
 
 import { getAuthUrl, acquireTokenByCode, isAuthenticated, getValidToken, clearMsToken, restoreMsSessions } from './src/auth/microsoft.js';
-import { getGoogleAuthUrl, acquireGoogleTokenByCode, isGoogleAuthenticated, clearGoogleToken, restoreGoogleSessions } from './src/auth/googleOAuth.js';
-import { getDriveService, getAdminDirectoryClient, getAdminReportsClient, getVaultAuthClient, validateServiceAccount } from './src/auth/google.js';
+import { getGoogleAuthUrl, acquireGoogleTokenByCode, isGoogleAuthenticated, getGoogleOAuth2Client, clearGoogleToken, restoreGoogleSessions } from './src/auth/googleOAuth.js';
+import { getDriveService } from './src/auth/google.js';
 import { google } from 'googleapis';
 import { VaultReader } from './src/modules/vaultReader.js';
 import { VaultExporter } from './src/modules/vaultExporter.js';
@@ -159,7 +159,7 @@ app.get('/api/diagnose-audit', async (req, res) => {
   const endTime   = end   ? new Date(end)   : new Date();
   try {
     const { appUserId, googleEmail } = getWorkspaceContext(req);
-    const auth = getAdminReportsClient(googleEmail);
+    const auth = getGoogleOAuth2Client(appUserId);
     const client = new AuditLogClient(auth);
     const result = await client.testQuery(email, startTime, endTime);
     res.json({ email, startTime, endTime, ...result });
@@ -173,7 +173,9 @@ app.get('/api/test/drive-files', async (req, res) => {
   const { ownerEmail } = req.query;
   try {
     const { appUserId, googleEmail } = getWorkspaceContext(req);
-    const drive = getDriveService(googleEmail);
+    const { google } = await import('googleapis');
+    const auth = getGoogleOAuth2Client(appUserId);
+    const drive = google.drive({ version: 'v3', auth });
     const r = await drive.files.list({
       q: `'${ownerEmail}' in owners and trashed = false`,
       fields: 'files(id, name, mimeType)',
@@ -190,8 +192,9 @@ app.post('/api/test/drive-transfer', async (req, res) => {
   }
   try {
     const { appUserId, googleEmail } = getWorkspaceContext(req);
+    const googleClient = getGoogleOAuth2Client(appUserId);
     const { DriveFileMatcher } = await import('./src/modules/driveFileMatcher.js');
-    const matcher = new DriveFileMatcher(getDriveService(googleEmail), ownerEmail, appUserId);
+    const matcher = new DriveFileMatcher(googleClient, ownerEmail, appUserId);
     const driveFile = { id: fileId, name: fileName, mimeType: mimeType || 'application/vnd.google-apps.document' };
     const result = await matcher.uploadToOneDrive(driveFile, targetEmail);
     if (result && !result.error) {
@@ -385,12 +388,7 @@ app.get('/auth/google/callback', async (req, res) => {
 
 app.get('/auth/google/status', (req, res) => {
   const { appUserId } = getWorkspaceContext(req);
-  const sa = validateServiceAccount();
-  res.json({
-    authenticated: isGoogleAuthenticated(appUserId),
-    serviceAccount: sa.ok,
-    serviceAccountError: sa.ok ? undefined : sa.error,
-  });
+  res.json({ authenticated: isGoogleAuthenticated(appUserId) });
 });
 
 app.post('/auth/google/logout', (req, res) => {
@@ -411,10 +409,9 @@ app.post('/auth/logout', (req, res) => {
 
 app.get('/api/check-permissions', requireAuth, async (req, res) => {
   try {
-    const { appUserId, googleEmail } = getWorkspaceContext(req);
-    const googleClient = getAdminDirectoryClient(googleEmail);
-    const reportsClient = getAdminReportsClient(googleEmail);
-    const result = await checkPermissions(googleClient, reportsClient);
+    const { appUserId } = getWorkspaceContext(req);
+    const googleClient = getGoogleOAuth2Client(appUserId);
+    const result = await checkPermissions(googleClient);
     res.json(result);
   } catch (err) {
     // Not authenticated with Google yet
@@ -432,7 +429,8 @@ app.get('/api/check-permissions', requireAuth, async (req, res) => {
 app.get('/api/google/users', requireGoogleAuth, async (req, res) => {
   try {
     const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
-    const admin = getAdminDirectoryClient(googleEmail);
+    const auth = getGoogleOAuth2Client(appUserId);
+    const admin = google.admin({ version: 'directory_v1', auth });
     const users = [];
     let pageToken = undefined;
 
@@ -486,7 +484,7 @@ app.post('/api/google/vault-export', requireGoogleAuth, async (req, res) => {
     }
 
     const { appUserId, googleEmail } = getWorkspaceContext(req);
-    const auth = getVaultAuthClient(googleEmail);
+    const auth = getGoogleOAuth2Client(appUserId);
     const exporter = new VaultExporter(auth);
 
     const matter = await exporter.createMatter(`GEM_CO Export ${new Date().toISOString()}`);
@@ -1057,9 +1055,9 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
         let fileCorrelator = null;
         let driveMatcher = null;
         try {
-          googleClient = getAdminReportsClient(googleEmail);
+          googleClient = getGoogleOAuth2Client(appUserId);
           fileCorrelator = new FileCorrelator(googleClient, googleEmail); // resolution only — no upload
-          driveMatcher = new DriveFileMatcher(getDriveService(googleEmail), googleEmail, appUserId);
+          driveMatcher = new DriveFileMatcher(googleClient, googleEmail, appUserId);
           emit('info', `  Drive file resolution enabled for ${googleEmail}`);
         } catch (_) {
           emit('warn', `  Drive file resolution skipped for ${googleEmail} — Google not authenticated`);
