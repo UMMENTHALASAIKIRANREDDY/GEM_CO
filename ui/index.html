@@ -614,7 +614,6 @@ const Step3=({options,setOptions,config,setConfig,msAuthed,googleAuthed,onRun,on
       <Card style={{marginBottom:16}}>
         <div style={{fontSize:13,fontWeight:600,marginBottom:4,color:C.dark}}>Behavior</div>
         <Chk label="Dry run (preview only — no pages created)" hint="Recommended before first live migration" checked={options.dryRun} onChange={e=>setOptions(p=>({...p,dryRun:e.target.checked}))}/>
-        <Chk label="Disable Azure OpenAI (GPT-4o) responses" hint="Skip AI-generated Copilot responses — migrate Gemini content only. Faster and avoids OpenAI costs." checked={options.skipAiResponse} onChange={e=>setOptions(p=>({...p,skipAiResponse:e.target.checked}))}/>
       </Card>
 
       <Card style={{marginBottom:20}}>
@@ -1882,7 +1881,7 @@ function App(){
 
     const fm={};const keys=selectedUsers.size>0?[...selectedUsers]:Object.keys(mappings);
     keys.forEach(k=>{if(mappings[k]!==undefined)fm[k]=mappings[k]});
-    const payload={extract_path:uploadData.extract_path,tenant_id:config.tenantId,customer_name:config.filePath||'Gemini',user_mappings:fm,dry_run:isDry,skip_followups:false,skip_ai_response:options.skipAiResponse,from_date:options.fromDate||null,to_date:options.toDate||null,upload_id:uploadData.id};
+    const payload={extract_path:uploadData.extract_path,tenant_id:config.tenantId,customer_name:config.filePath||'Gemini',user_mappings:fm,dry_run:isDry,skip_followups:false,skip_ai_response:true,from_date:options.fromDate||null,to_date:options.toDate||null,upload_id:uploadData.id};
     try{
       const res=await fetch('/api/migrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       if(!res.ok){const d=await res.json();addLog('error',d.error);setLive(false)}
