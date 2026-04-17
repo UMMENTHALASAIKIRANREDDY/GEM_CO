@@ -5,7 +5,7 @@ import { getLogger } from '../utils/logger.js';
 const logger = getLogger('auth:google');
 
 function _loadServiceAccount() {
-  const saPath = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE || process.env.GOOGLE_SERVICE_ACCOUNT_PATH || './service_account.json';
+  const saPath = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE || './service_account.json';
   if (!fs.existsSync(saPath)) {
     throw new Error(`Google service account file not found: ${saPath}`);
   }
