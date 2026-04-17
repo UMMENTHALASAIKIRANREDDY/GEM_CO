@@ -1218,11 +1218,22 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
     r.onload=e=>{
       const lines=e.target.result.split(/\r?\n/).slice(1);
       const m={...c2gMappings};
-      for(const l of lines){if(!l.trim())continue;const c=parseCsvLine(l);if(c.length>=2&&c[0])m[c[0]]=c[1]}
-      setC2gMappings(m);setC2gSelectedUsers(new Set(Object.keys(m)));
-      setCsvUploading(false);showToast('User mapping uploaded.');
+      const sel=new Set();
+      for(const l of lines){
+        if(!l.trim())continue;
+        const c=parseCsvLine(l);
+        if(c.length>=2&&c[0]){
+          const src=c[0].trim().toLowerCase();
+          const dst=c[1].trim();
+          m[src]=dst;
+          if(dst)sel.add(src);
+        }
+      }
+      setC2gMappings(m);
+      setC2gSelectedUsers(prev=>{const n=new Set(prev);sel.forEach(s=>n.add(s));return n});
+      setCsvUploading(false);showToast(`User mapping uploaded — ${sel.size} pair(s) loaded.`);
     };
-    r.onerror=()=>setCsvUploading(false);
+    r.onerror=()=>{setCsvUploading(false);showToast('Failed to read CSV file.','error')};
     r.readAsText(file);
   };
 
