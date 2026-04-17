@@ -32,7 +32,10 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 const migrationEvents = new EventEmitter();
-const logBuffers = new Map(); // appUserId → log entries array
+migrationEvents.setMaxListeners(50);
+const logBuffers = new Map();      // appUserId → log entries array
+const g2cInFlightFor = new Set();  // appUserIds with an active G→C migration
+const G2C_BUFFER_MAX = 2000;
 
 // Store tenant ID for auth flow
 let currentTenantId = null;
@@ -55,10 +58,20 @@ app.use(session({
   saveUninitialized: false,
   cookie: { maxAge: 24 * 60 * 60 * 1000 } // 24 hours
 }));
+// Debug request logger — only enabled when DEBUG_REQUESTS=1 in the environment
+if (process.env.DEBUG_REQUESTS === '1') {
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api/')) {
+      console.log(`[req] ${req.method} ${req.path} authed=${!!req.session?.appUser}`);
+    }
+    next();
+  });
+}
 
 // ─── App Auth (login gate) ──────────────────────────────────────────────────
 function requireAuth(req, res, next) {
   if (req.session?.appUser) return next();
+  if (process.env.DEBUG_REQUESTS === '1') console.log(`[auth] 401 on ${req.method} ${req.path}`);
   res.status(401).json({ error: 'Not logged in' });
 }
 
@@ -127,6 +140,11 @@ app.get('/', (req, res) => {
 
 // Static files (CSS, JS, images) — always accessible
 app.use(express.static(path.join(__dirname, 'ui')));
+
+// App config (public — no auth needed)
+app.get('/api/app-config', (req, res) => {
+  res.json({ showReset: process.env.SHOW_RESET_BUTTON === 'true' });
+});
 
 // Login / logout / me
 app.post('/api/login', async (req, res) => {
@@ -894,12 +912,21 @@ app.get('/api/migration-logs/:batchId', async (req, res) => {
 // ─── COPILOT → GEMINI (C2G) ROUTES ──────────────────────────────────
 // ════════════════════════════════════════════════════════════════════
 
-// C2G SSE log emitter (separate from G→C)
+// C2G SSE log emitter + replay buffer
+// Replay buffer solves the race "POST finishes before SSE connects", but only
+// replays while a migration is actually in-flight so a NEW SSE never sees a
+// stale `done` from a prior run (which would close the stream immediately).
+const C2G_BUFFER_MAX = 2000; // cap memory for long runs
 const c2gLogEmitter = new EventEmitter();
 c2gLogEmitter.setMaxListeners(50);
+let c2gLogBuffer = [];
+let c2gInFlight = false;
 
 function c2gLog(type, message) {
-  c2gLogEmitter.emit('log', { type, message, ts: new Date().toISOString() });
+  const entry = { type, message, ts: new Date().toISOString() };
+  c2gLogBuffer.push(entry);
+  if (c2gLogBuffer.length > C2G_BUFFER_MAX) c2gLogBuffer.splice(0, c2gLogBuffer.length - C2G_BUFFER_MAX);
+  c2gLogEmitter.emit('log', entry);
 }
 
 // GET /api/c2g/migrate-log — SSE stream for C2G migration
@@ -909,8 +936,12 @@ app.get('/api/c2g/migrate-log', (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
-  const send = d => res.write(`data: ${JSON.stringify(d)}\n\n`);
-  const handler = d => send(d);
+  // Only replay logs if a migration is actively running — otherwise fresh
+  // clients would receive the previous run's `done` event and close immediately.
+  if (c2gInFlight) {
+    c2gLogBuffer.forEach(d => res.write(`data: ${JSON.stringify(d)}\n\n`));
+  }
+  const handler = d => res.write(`data: ${JSON.stringify(d)}\n\n`);
   c2gLogEmitter.on('log', handler);
   req.on('close', () => c2gLogEmitter.off('log', handler));
 });
@@ -920,29 +951,35 @@ app.post('/api/c2g/migrate', requireAuth, async (req, res) => {
   try {
     const { appUserId } = getWorkspaceContext(req);
     const { pairs } = req.body; // [{sourceEmail, destEmail}]
+    if (process.env.DEBUG_REQUESTS === '1') console.log(`[C2G] /api/c2g/migrate hit — appUserId=${appUserId}, pairs=${pairs?.length} pairs`);
     if (!pairs?.length) return res.status(400).json({ error: 'No user pairs provided' });
+    if (c2gInFlight) return res.status(409).json({ error: 'A C2G migration is already running' });
 
+    c2gLogBuffer = [];
+    c2gInFlight = true;
     res.json({ started: true });
 
     // Run migration async — stream progress via SSE
     setImmediate(async () => {
-      let files = 0, errors = 0;
+      let files = 0, errors = 0, users = 0;
+      const emitDone = (reason) => c2gLog('done', JSON.stringify({ files, errors, users, reason: reason || 'ok' }));
+
       try {
         // Dynamically import migration logic from copilot folder
         let migModule;
         try {
           migModule = await import('./copilot/copilot/server/src/migration/migrate.js');
-        } catch(importErr) {
+        } catch (importErr) {
           c2gLog('error', `Failed to load migration module: ${importErr.message}`);
           c2gLog('error', 'Run: npm install (from GEM_CO root) to install required packages.');
-          c2gLog('done', JSON.stringify({ files: 0, errors: 1, users: 0 }));
-          return;
+          errors = 1;
+          return emitDone('import-failed');
         }
         const { runMigration: runC2G } = migModule;
         if (!runC2G) {
           c2gLog('error', 'C2G migration module did not export runMigration.');
-          c2gLog('done', JSON.stringify({ files: 0, errors: 1, users: 0 }));
-          return;
+          errors = 1;
+          return emitDone('bad-module');
         }
 
         // Bridge tenant ID — copilot module reads SOURCE_AZURE_TENANT_ID || AZURE_TENANT_ID
@@ -953,7 +990,11 @@ app.post('/api/c2g/migrate', requireAuth, async (req, res) => {
 
         // Build pairs in the format the copilot migration expects
         const msToken = isAuthenticated(appUserId) ? await getValidToken(appUserId).catch(() => null) : null;
-        if (!msToken) { c2gLog('error', 'Microsoft auth token unavailable.'); c2gLog('done', 'ended'); return; }
+        if (!msToken) {
+          c2gLog('error', 'Microsoft auth token unavailable. Sign in with Microsoft and try again.');
+          errors = 1;
+          return emitDone('no-ms-token');
+        }
 
         // Get user IDs from email list
         let allMsUsers = [];
@@ -975,32 +1016,71 @@ app.post('/api/c2g/migrate', requireAuth, async (req, res) => {
           return { sourceUserId: u?.id, sourceDisplayName: u?.displayName || p.sourceEmail, destUserEmail: p.destEmail, sourceEmail: p.sourceEmail };
         }).filter(p => p.sourceUserId);
 
-        if (!migPairs.length) { c2gLog('error', 'No valid user pairs with MS user IDs found.'); c2gLog('done', 'ended'); return; }
+        if (!migPairs.length) {
+          c2gLog('error', 'No valid user pairs with MS user IDs found.');
+          errors = 1;
+          return emitDone('no-valid-pairs');
+        }
 
+        // Pre-check: verify service account key file exists
+        const saKeyPath = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE || './copilot/copilot/service_account.json';
+        if (!fs.existsSync(path.resolve(saKeyPath))) {
+          c2gLog('error', `Service account key file not found: ${saKeyPath}`);
+          c2gLog('error', 'Set GOOGLE_SERVICE_ACCOUNT_KEY_FILE in .env to point to your Google service account JSON file.');
+          errors = 1;
+          return emitDone('no-sa-key');
+        }
+
+        users = migPairs.length;
         c2gLog('info', `Starting C2G migration for ${migPairs.length} user pair(s)...`);
-        const results = await runC2G(migPairs);
+
+        // Forward migrate.js console.log/error to the SSE chat log for the run.
+        // Use try/finally so restoration happens even if runC2G throws — otherwise
+        // the process-wide console stays patched and future [Migration] logs leak
+        // into a dead c2gLog sink.
+        const origLog = console.log;
+        const origErr = console.error;
+        console.log = (...args) => { origLog(...args); const msg = args.join(' '); if (msg.includes('[Migration]')) c2gLog('info', msg); };
+        console.error = (...args) => { origErr(...args); const msg = args.join(' '); if (msg.includes('[Migration]')) c2gLog('warn', msg); };
+
+        let results;
+        try {
+          results = await runC2G(migPairs);
+        } finally {
+          console.log = origLog;
+          console.error = origErr;
+        }
+
         for (const r of results) {
-          if (r.errors?.length) {
-            console.error(`[C2G] ${r.sourceDisplayName} errors:`, r.errors.join(' | '));
-            r.errors.forEach(err => c2gLog('warn', `  Error: ${err}`));
-          }
           c2gLog('info', `Processing: ${r.sourceDisplayName}`);
+          if (r.errors?.length) {
+            origErr(`[C2G] ${r.sourceDisplayName} errors:`, r.errors.join(' | '));
+            r.errors.forEach(e => c2gLog('warn', `  ↳ ${e}`));
+          }
           files += r.filesUploaded || 0;
           errors += (r.errors || []).length;
-          c2gLog(errors > 0 ? 'warn' : 'success', `${r.sourceDisplayName}: ${r.filesUploaded || 0} files uploaded, ${(r.errors||[]).length} errors`);
+          c2gLog(r.errors?.length ? 'warn' : 'success', `${r.sourceDisplayName}: ${r.filesUploaded || 0} files uploaded, ${(r.errors||[]).length} errors`);
         }
-        c2gLog('done', JSON.stringify({ files, errors, users: migPairs.length }));
+        emitDone('ok');
       } catch (e) {
         c2gLog('error', e.message);
-        c2gLog('done', JSON.stringify({ files, errors, users: 0 }));
+        errors = errors || 1;
+        emitDone('exception');
+      } finally {
+        c2gInFlight = false;
       }
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    c2gInFlight = false;
+    if (!res.headersSent) res.status(500).json({ error: err.message });
   }
 });
 
 // ─── SSE — live log stream ────────────────────────────────────────────────────
+// Same gating as C2G: only replay buffered logs while this user has an
+// active G→C migration running. Otherwise a fresh SSE would receive the
+// prior run's `done` event and close immediately — which is exactly what
+// caused "logs not showing" on a second migration.
 app.get('/api/migration-log', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -1009,12 +1089,13 @@ app.get('/api/migration-log', (req, res) => {
 
   const appUserId = req.session?.appUser?._id?.toString() || null;
 
-  // Replay buffered logs for THIS user only
-  const userBuffer = logBuffers.get(appUserId) || [];
-  for (const entry of userBuffer) {
-    res.write(`data: ${JSON.stringify(entry)}\n\n`);
+  if (g2cInFlightFor.has(appUserId)) {
+    const userBuffer = logBuffers.get(appUserId) || [];
+    for (const entry of userBuffer) {
+      res.write(`data: ${JSON.stringify(entry)}\n\n`);
+    }
+    if (typeof res.flush === 'function') res.flush();
   }
-  if (typeof res.flush === 'function') res.flush();
 
   // Only forward live logs that belong to this user
   const onLog = (data) => {
@@ -1033,9 +1114,12 @@ let _currentAppUserId = null;
 
 function emit(type, message, extra = {}) {
   const entry = { type, message, ts: new Date().toISOString(), ...extra };
-  // Buffer per user
+  // Buffer per user (bounded)
   if (!logBuffers.has(_currentAppUserId)) logBuffers.set(_currentAppUserId, []);
-  logBuffers.get(_currentAppUserId).push(entry);
+  const buf = logBuffers.get(_currentAppUserId);
+  buf.push(entry);
+  if (buf.length > G2C_BUFFER_MAX) buf.splice(0, buf.length - G2C_BUFFER_MAX);
+  if (type === 'done' || type === 'error-fatal') g2cInFlightFor.delete(_currentAppUserId);
   // Emit with appUserId tag for SSE filtering
   migrationEvents.emit('log', { ...entry, _appUserId: _currentAppUserId });
   // Persist to MongoDB (fire-and-forget)
@@ -1089,6 +1173,10 @@ async function withConcurrency(items, limit, fn) {
 
 async function runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id, upload_id, appUserId, googleEmail, msEmail }) {
   logBuffers.set(appUserId, []); // clear previous run's logs for this user
+  g2cInFlightFor.add(appUserId);
+  // The in-flight flag is cleared inside emit() whenever a `done` entry is
+  // emitted (see emit above). This avoids needing to wrap the entire large
+  // runMigration body in try/finally.
   const batchId = batch_id || Date.now().toString();
   currentBatchId = batchId;
   _currentAppUserId = appUserId;
@@ -1733,6 +1821,20 @@ app.post('/api/auth/ms/disconnect', requireAuth, async (req, res) => {
 });
 
 connectMongo().then(async () => {
+  // Also connect copilot's Mongoose cogem DB. We temporarily swap MONGO_URI to
+  // point at the /cogem database, but must ALWAYS restore it — even if
+  // connectDB() throws — otherwise the rest of the process sees the wrong URI.
+  const origUri = process.env.MONGO_URI;
+  try {
+    const cogemUri = (origUri || '').replace(/\/gemco(\?|$)/, '/cogem$1');
+    process.env.MONGO_URI = cogemUri || origUri;
+    const { connectDB } = await import('./copilot/copilot/server/src/db/connection.js');
+    await connectDB();
+  } catch (e) {
+    console.warn('[cogem] Copilot DB connect failed (non-fatal):', e.message);
+  } finally {
+    if (origUri !== undefined) process.env.MONGO_URI = origUri;
+  }
   await restoreGoogleSessions();
   await restoreMsSessions();
   app.listen(PORT, () => {

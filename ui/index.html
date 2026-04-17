@@ -906,34 +906,47 @@ const UserMsg=({children})=>(
   </div>
 );
 
-/* Collapsible shell/terminal log block */
-const ShellBlock=({lines,onLineClick})=>{
+/* Migration activity log — clean, chat-friendly, live-updating */
+const MigrationLog=({lines=[],onLineClick})=>{
   const [collapsed,setCollapsed]=useState(false);
-  const lineColor=t=>t==='error'?'#f87171':t==='warn'?'#fbbf24':t==='success'?'#4ade80':t==='done'?'#60a5fa':'#94a3b8';
-  const visible=collapsed?lines.slice(0,3):lines;
+  const scrollRef=useRef(null);
+  const safeLines=Array.isArray(lines)?lines:[];
+  const dotColor=t=>t==='error'?C.error:t==='warn'?'#F59E0B':t==='success'?'#10B981':t==='done'?C.primary:C.primaryL;
+  const isDone=safeLines.some(l=>l.type==='done');
+  const hasError=safeLines.some(l=>l.type==='error');
+  const isLive=safeLines.length>0&&!isDone;
+  const headerDot=hasError?C.error:isDone?'#10B981':isLive?C.primary:C.muted;
+  const headerLabel=hasError?'Completed with errors':isDone?'Completed':isLive?'Running…':'Waiting to start';
+  useEffect(()=>{if(!collapsed&&scrollRef.current)scrollRef.current.scrollTop=scrollRef.current.scrollHeight},[safeLines.length,collapsed]);
   return(
-    <div className="fade-up" style={{marginLeft:36,borderRadius:8,overflow:'hidden',border:'1px solid #1e293b',fontSize:12,fontFamily:'monospace'}}>
-      {/* Terminal chrome */}
-      <div onClick={()=>setCollapsed(p=>!p)} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'6px 12px',background:'#1e293b',cursor:'pointer',userSelect:'none'}}>
-        <div style={{display:'flex',alignItems:'center',gap:6}}>
-          <span style={{width:8,height:8,borderRadius:'50%',background:'#ef4444',display:'inline-block'}}/>
-          <span style={{width:8,height:8,borderRadius:'50%',background:'#f59e0b',display:'inline-block'}}/>
-          <span style={{width:8,height:8,borderRadius:'50%',background:'#22c55e',display:'inline-block'}}/>
-          <span style={{marginLeft:10,color:'#94a3b8',fontSize:11}}>shell</span>
-          <span style={{color:'#475569',fontSize:10}}>{lines.length} lines</span>
+    <div className="fade-up" style={{marginLeft:36,borderRadius:10,overflow:'hidden',border:`1px solid ${C.border}`,background:C.white,boxShadow:'0 1px 2px rgba(0,0,0,.04)'}}>
+      <div onClick={()=>setCollapsed(p=>!p)} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 14px',background:C.tint,cursor:'pointer',userSelect:'none',borderBottom:collapsed?'none':`1px solid ${C.border}`}}>
+        <div style={{display:'flex',alignItems:'center',gap:10}}>
+          <span style={{width:8,height:8,borderRadius:'50%',background:headerDot,boxShadow:isLive?`0 0 0 3px ${C.primary}26`:'none',animation:isLive?'pulse 1.4s ease-in-out infinite':'none',display:'inline-block'}}/>
+          <span style={{fontSize:12,fontWeight:600,color:C.dark}}>Migration Activity</span>
+          <span style={{fontSize:11,color:C.muted}}>·</span>
+          <span style={{fontSize:11,color:C.muted}}>{headerLabel}</span>
+          {safeLines.length>0&&<span style={{fontSize:11,color:C.muted}}>· {safeLines.length} {safeLines.length===1?'event':'events'}</span>}
         </div>
-        <span style={{color:'#64748b',fontSize:10}}>{collapsed?'▼ expand':'▲ collapse'}</span>
+        <span style={{fontSize:11,color:C.primary,fontWeight:500}}>{collapsed?'Show':'Hide'}</span>
       </div>
-      {/* Log lines */}
-      <div style={{background:'#0f172a',maxHeight:collapsed?72:280,overflowY:collapsed?'hidden':'auto',transition:'max-height .2s'}}>
-        {visible.map((ln,i)=>(
-          <div key={i} onClick={()=>onLineClick&&onLineClick(ln)} style={{display:'flex',padding:'2px 12px',cursor:onLineClick?'pointer':'default',transition:'background .1s'}} onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.04)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-            <span style={{color:'#334155',minWidth:28,textAlign:'right',paddingRight:12,userSelect:'none',fontSize:11}}>{ln.line||i+1}</span>
-            <span style={{color:lineColor(ln.type),flex:1,wordBreak:'break-all',fontSize:11}}>{ln.text}</span>
-          </div>
-        ))}
-        {collapsed&&lines.length>3&&<div style={{padding:'2px 12px 6px 52px',color:'#475569',fontSize:11}}>… {lines.length-3} more lines</div>}
-      </div>
+      {!collapsed&&(
+        <div ref={scrollRef} style={{maxHeight:260,overflowY:'auto',background:C.white}}>
+          {safeLines.length===0&&(
+            <div style={{padding:'14px 16px',color:C.muted,fontSize:12,display:'flex',alignItems:'center',gap:10}}>
+              <span style={{display:'inline-block',width:6,height:6,borderRadius:'50%',background:C.primary,animation:'pulse 1s ease-in-out infinite',flexShrink:0}}/>
+              <span style={{fontStyle:'italic'}}>Waiting for activity…</span>
+            </div>
+          )}
+          {safeLines.map((ln,i)=>(
+            <div key={i} onClick={()=>onLineClick&&onLineClick(ln)} style={{display:'flex',alignItems:'flex-start',gap:10,padding:'8px 14px',borderTop:i>0?`1px solid ${C.border}`:'none',cursor:onLineClick?'pointer':'default',transition:'background .12s'}} onMouseEnter={e=>e.currentTarget.style.background=C.tint} onMouseLeave={e=>e.currentTarget.style.background=C.white}>
+              <span style={{display:'inline-block',width:7,height:7,marginTop:6,borderRadius:'50%',background:dotColor(ln.type),flexShrink:0}}/>
+              <span style={{flex:1,fontSize:12,color:C.dark,lineHeight:1.45,wordBreak:'break-word'}}>{ln.text}</span>
+              {ln.ts&&<span style={{fontSize:10,color:C.muted,flexShrink:0,fontVariantNumeric:'tabular-nums',marginTop:2}}>{ln.ts}</span>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
@@ -1151,7 +1164,7 @@ const AgentChat=({msgs,typing,input,onInput,onSend,onLogLineClick,onQuickReply,w
           </div>
         )}
         {msgs.map(m=>{
-          if(m.shellBlock)return<ShellBlock key={m.id} lines={m.shellBlock} onLineClick={onLogLineClick}/>;
+          if(m.shellBlock)return<MigrationLog key={m.id} lines={m.shellBlock} onLineClick={onLogLineClick}/>;
           if(m.role==='user')return<UserMsg key={m.id}>{m.content}</UserMsg>;
           return(
             <div key={m.id}>
@@ -1546,6 +1559,7 @@ function App(){
   const [toast,setToast]=useState(null); // {message, type}
   const [showReports,setShowReports]=useState(false);
   const [appUser,setAppUser]=useState(null);
+  const [showReset,setShowReset]=useState(false);
   const [reportRefreshKey,setReportRefreshKey]=useState(0); // increments to force reports re-fetch
   const [wsLoaded,setWsLoaded]=useState(false); // true after DB workspace hydration
   const KRef=useRef(K); // mutable ref so persist effects always use current scoped keys
@@ -1554,7 +1568,12 @@ function App(){
   const sseRef=useRef(null);
   const [splitPct,setSplitPct]=useState(50);
   const [panelSwapped,setPanelSwapped]=useState(false);
-  const [agentMsgs,setAgentMsgs]=useState(()=>lsGet(K.agentMsgs,[]));
+  // Drop stale shellBlock entries from previous sessions (they'd render as
+  // empty/ghost activity bars). Active runs build a fresh shellBlock anyway.
+  const [agentMsgs,setAgentMsgs]=useState(()=>{
+    const stored=lsGet(K.agentMsgs,[]);
+    return Array.isArray(stored)?stored.filter(m=>!m.shellBlock):[];
+  });
   const [agentTyping,setAgentTyping]=useState(false);
   const [agentInput,setAgentInput]=useState('');
   const [leftMode,setLeftMode]=useState('viz'); // 'viz' | 'mapping'
@@ -1569,7 +1588,8 @@ function App(){
   const [chatUploading,setChatUploading]=useState(false);
   const containerRef=useRef(null);
   const dividerRef=useRef(null);
-  const logBufferRef=useRef([]);
+  const g2cShellMsgIdRef=useRef(null);
+  const c2gShellMsgIdRef=useRef(null);
   const panelDragRef=useRef(null);
   const greetedRef=useRef(false);
   const sendToAgentRef=useRef(null);
@@ -1588,6 +1608,11 @@ function App(){
     };
     const onUp=()=>{if(dividerRef.current)dividerRef.current.classList.remove('active');document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp)};
     document.addEventListener('mousemove',onMove);document.addEventListener('mouseup',onUp);
+  },[]);
+
+  // Load app config (reset button visibility etc.)
+  useEffect(()=>{
+    fetch('/api/app-config').then(r=>r.ok?r.json():null).then(cfg=>{if(cfg?.showReset)setShowReset(true);}).catch(()=>{});
   },[]);
 
   // Auth check on mount — verify app session, hydrate state from DB (cross-device), check cloud auth
@@ -1654,7 +1679,7 @@ function App(){
   useEffect(()=>{lsSet(KRef.current.stats,stats)},[stats]);
   useEffect(()=>{lsSet(KRef.current.batchId,currentBatchId)},[currentBatchId]);
   useEffect(()=>{lsSet(KRef.current.lastDry,lastRunWasDry)},[lastRunWasDry]);
-  useEffect(()=>{lsSet(KRef.current.agentMsgs,agentMsgs.slice(-100))},[agentMsgs]);
+  useEffect(()=>{lsSet(KRef.current.agentMsgs,agentMsgs.filter(m=>!m.shellBlock).slice(-100))},[agentMsgs]);
   useEffect(()=>{lsSet(KRef.current.migDir,migDir)},[migDir]);
   useEffect(()=>{lsSet(KRef.current.c2gMappings,c2gMappings)},[c2gMappings]);
   useEffect(()=>{lsSet(KRef.current.c2gSelUsers,[...c2gSelectedUsers])},[c2gSelectedUsers]);
@@ -1775,8 +1800,10 @@ function App(){
     if(forceLive)setOptions(p=>({...p,dryRun:false}));
     setStep(5);setMigDone(false);setStats({users:0,pages:0,errors:0,flagged:0});setLogs([]);
     addLog('info',isDry?'Starting dry run...':'Starting live migration...');
-    logBufferRef.current=[];
-    addAgentMsg('bot',isDry?'🔍 Dry run started! Logs will stream below — no changes will be made to your data.':'🚀 Live migration started! I\'ll monitor progress and stream logs here.');
+    const shellId=Date.now()+Math.random();
+    g2cShellMsgIdRef.current=shellId;
+    addAgentMsg('bot',isDry?'🔍 Dry run started! Logs streaming below — no changes will be made.':'🚀 Live migration started! Logs streaming below.');
+    setAgentMsgs(prev=>[...prev,{id:shellId,role:'bot',content:'',shellBlock:[]}]);
     setLive(true);
     const curStats={users:0,pages:0,errors:0,flagged:0};
 
@@ -1790,12 +1817,8 @@ function App(){
         if(d.type==='info'&&d.message.includes('Processing:'))curStats.users++;
         if(d.type==='warn'&&d.message.includes('flagged')){const m=d.message.match(/(\d+) conversations flagged/);if(m)curStats.flagged+=parseInt(m[1])}
         setStats({...curStats});addLog(d.type,d.message);
-        // Buffer logs → flush as collapsible shell block in agent chat every 10 lines or on phase boundary
-        logBufferRef.current.push({type:d.type,text:d.message,ts:new Date().toTimeString().slice(0,8),line:logBufferRef.current.length+1});
-        if(logBufferRef.current.length>=20||(d.type==='done'||d.type==='error')){
-          const lines=[...logBufferRef.current];logBufferRef.current=[];
-          if(lines.length>0)setAgentMsgs(prev=>[...prev,{id:Date.now()+Math.random(),role:'bot',content:'',shellBlock:lines}]);
-        }
+        const ln={type:d.type,text:d.message,ts:new Date().toTimeString().slice(0,8)};
+        setAgentMsgs(prev=>prev.map(m=>m.id===g2cShellMsgIdRef.current?{...m,shellBlock:[...m.shellBlock,{...ln,line:m.shellBlock.length+1}]}:m));
         if(d.type==='done'){
           if(d.batch_id)setCurrentBatchId(d.batch_id);
           sseRef.current.close();setLive(false);setMigDone(true);setRetrying(false);setStep(6);
@@ -1815,8 +1838,16 @@ function App(){
     const payload={extract_path:uploadData.extract_path,tenant_id:config.tenantId,customer_name:config.filePath||'Gemini',user_mappings:fm,dry_run:isDry,skip_followups:false,skip_ai_response:options.skipAiResponse,from_date:options.fromDate||null,to_date:options.toDate||null,upload_id:uploadData.id};
     try{
       const res=await fetch('/api/migrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-      if(!res.ok){const d=await res.json();addLog('error',d.error);setLive(false)}
-    }catch(err){addLog('error',err.message);setLive(false)}
+      if(!res.ok){
+        let apiErr='';try{apiErr=(await res.json()).error||'';}catch{}
+        const msg=res.status===401?'Session expired — please refresh the page and log in again.':(apiErr||`Migration failed (HTTP ${res.status})`);
+        addLog('error',msg);addAgentMsg('bot',`❌ ${msg}`);setLive(false);
+        if(sseRef.current){sseRef.current.close();sseRef.current=null;}
+      }
+    }catch(err){
+      addLog('error',err.message);addAgentMsg('bot',`❌ ${err.message}`);setLive(false);
+      if(sseRef.current){sseRef.current.close();sseRef.current=null;}
+    }
   };
 
   // Run Another Batch: two modes
@@ -1860,6 +1891,13 @@ function App(){
 // Logout: destroy session only — DO NOT clear localStorage so user returns to their last state
   const handleLogout=async()=>{await fetch('/api/logout',{method:'POST'});window.location.href='/login.html'};
 
+  // Reset: clear ALL migration state for current user + reload
+  const handleReset=useCallback(()=>{
+    if(!window.confirm('Reset all migration data? This clears mappings, logs, upload data, and migration state for this session.'))return;
+    lsClear(appUser?._id);
+    window.location.reload();
+  },[appUser]);
+
   /* Copilot→Gemini migration */
   const runC2GMigration=useCallback(async()=>{
     if(c2gLive)return;
@@ -1873,30 +1911,50 @@ function App(){
     }
     setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gLive(true);setStep(3);setLogs([]);
     addLog('info','Starting Copilot → Gemini migration...');
-    addAgentMsg('bot','🚀 Copilot → Gemini migration started! Logs will stream below.');
+    addAgentMsg('bot','🚀 Copilot → Gemini migration started! Logs streaming below.');
+    const c2gShellId=Date.now()+Math.random();
+    c2gShellMsgIdRef.current=c2gShellId;
+    setAgentMsgs(prev=>[...prev,{id:c2gShellId,role:'bot',content:'',shellBlock:[]}]);
     const curStats={users:0,files:0,errors:0};
     if(sseRef.current)sseRef.current.close();
+    // Open SSE FIRST then POST — prevents race where fast migration emits logs before browser connects
     sseRef.current=new EventSource('/api/c2g/migrate-log');
+    await new Promise(resolve=>{const t=setTimeout(resolve,600);sseRef.current.addEventListener('open',()=>{clearTimeout(t);resolve();},{once:true});});
     sseRef.current.onmessage=e=>{
       try{
         const d=JSON.parse(e.data);
         if(d.type==='success')curStats.files++;
-        if(d.type==='error')curStats.errors++;
+        if(d.type==='error'||d.type==='warn')curStats.errors++;
         if(d.type==='info'&&d.message?.includes('Processing:'))curStats.users++;
         setC2gStats({...curStats});addLog(d.type,d.message||'');
+        const ln={type:d.type,text:d.message||'',ts:new Date().toTimeString().slice(0,8)};
+        setAgentMsgs(prev=>prev.map(m=>m.id===c2gShellMsgIdRef.current?{...m,shellBlock:[...m.shellBlock,{...ln,line:m.shellBlock.length+1}]}:m));
         if(d.type==='done'){
-          try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;}catch{}
+          let reason='ok';
+          try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;if(p.reason)reason=p.reason;}catch{}
           setC2gStats({...curStats});
-          sseRef.current.close();setC2gLive(false);setC2gDone(true);setStep(4);
-          setTimeout(()=>addAgentMsg('bot',`✅ Copilot → Gemini complete!\n\n**${curStats.files}** files uploaded  ·  **${curStats.errors}** error${curStats.errors!==1?'s':''}`,{quickReplies:['Start Another']}),400);
+          if(sseRef.current){sseRef.current.close();sseRef.current=null;}
+          setC2gLive(false);setC2gDone(true);setStep(4);
+          const summary=reason==='ok'
+            ?`✅ Copilot → Gemini complete!\n\n**${curStats.files}** files uploaded  ·  **${curStats.errors}** error${curStats.errors!==1?'s':''}`
+            :`⚠️ Migration ended early (${reason}).\n\n**${curStats.files}** files uploaded  ·  **${curStats.errors}** error${curStats.errors!==1?'s':''}`;
+          setTimeout(()=>addAgentMsg('bot',summary,{quickReplies:['Start Another']}),400);
         }
       }catch{}
     };
-    sseRef.current.onerror=()=>{if(sseRef.current){sseRef.current.close();setC2gLive(false)}};
+    sseRef.current.onerror=()=>{if(sseRef.current){sseRef.current.close();sseRef.current=null;setC2gLive(false);}};
     try{
       const res=await fetch('/api/c2g/migrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pairs})});
-      if(!res.ok){const d=await res.json();addLog('error',d.error||'Migration failed');setC2gLive(false);}
-    }catch(err){addLog('error',err.message);setC2gLive(false);}
+      if(!res.ok){
+        let apiErr='';try{apiErr=(await res.json()).error||'';}catch{}
+        const msg=res.status===401?'Session expired — please refresh the page and log in again.':(apiErr||`Migration failed (HTTP ${res.status})`);
+        addLog('error',msg);addAgentMsg('bot',`❌ ${msg}`);setC2gLive(false);
+        if(sseRef.current){sseRef.current.close();sseRef.current=null;}
+      }
+    }catch(err){
+      addLog('error',err.message);addAgentMsg('bot',`❌ ${err.message}`);setC2gLive(false);
+      if(sseRef.current){sseRef.current.close();sseRef.current=null;}
+    }
   },[c2gLive,c2gSelectedUsers,c2gMappings,addLog,addAgentMsg]);
 
   const handleChangeDirection=useCallback(()=>{
@@ -2056,6 +2114,9 @@ function App(){
           {appUser&&<div style={{display:'flex',alignItems:'center',gap:8,borderLeft:'1px solid rgba(255,255,255,.2)',paddingLeft:10}}>
             <div style={{width:26,height:26,borderRadius:'50%',background:'rgba(255,255,255,.2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:700,color:'white'}}>{(appUser.name||appUser.email).slice(0,2).toUpperCase()}</div>
             <span style={{fontSize:11,color:'rgba(255,255,255,.8)',maxWidth:100,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{appUser.name||appUser.email}</span>
+            {showReset&&<button onClick={handleReset} title="Reset all migration data" style={{display:'flex',alignItems:'center',gap:4,fontSize:11,color:'rgba(255,180,180,.9)',background:'transparent',border:'1px solid rgba(255,100,100,.3)',borderRadius:5,padding:'4px 8px',cursor:'pointer',fontFamily:'inherit',transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.background='rgba(255,0,0,.15)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+              <IcoReset s={11}/> Reset
+            </button>}
             <button onClick={handleLogout} title="Sign out" style={{display:'flex',alignItems:'center',gap:4,fontSize:11,color:'rgba(255,255,255,.6)',background:'transparent',border:'1px solid rgba(255,255,255,.2)',borderRadius:5,padding:'4px 8px',cursor:'pointer',fontFamily:'inherit',transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.1)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
               <IcoLogout s={11}/> Sign out
             </button>
