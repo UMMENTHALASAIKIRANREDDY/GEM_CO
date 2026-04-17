@@ -1964,7 +1964,8 @@ function App(){
           setReportRefreshKey(p=>p+1);
           const errSummary=errorMessages.length>0?`\n\n⚠️ Errors:\n${errorMessages.slice(0,3).map(m=>`• ${m}`).join('\n')}`:'';
           const dryLabel=isDry?' (dry run)':'';
-          setTimeout(()=>addAgentMsg('bot',`${curStats.errors>0?'⚠️':'✅'} Copilot → Gemini${dryLabel} complete!\n\n**${curStats.files}** files${isDry?' (preview)':' uploaded'}  ·  **${curStats.errors}** error${curStats.errors!==1?'s':''}${errSummary}`,{quickReplies:isDry?['Start Live Migration','Start Another']:['Download Report','Start Another']}),400);
+          const nextSteps=isDry?'':`\n\nNext steps:\n1. Login to Google Gemini (gemini.google.com)\n2. Create a new Gem\n3. Upload the migrated DOCX file(s) as Knowledge\n4. Set instructions: "Use this file as knowledge and give responses from this document. If the user asks something not in the document, answer generally."\n5. Save the Gem`;
+          setTimeout(()=>addAgentMsg('bot',`${curStats.errors>0?'⚠️':'✅'} Copilot → Gemini${dryLabel} complete!\n\n**${curStats.files}** files${isDry?' (preview)':' uploaded'}  ·  **${curStats.errors}** error${curStats.errors!==1?'s':''}${errSummary}${nextSteps}`,{quickReplies:isDry?['Start Live Migration','Start Another']:['Download Report','Start Another']}),400);
         }
       }catch(parseErr){console.error('C2G SSE parse error',parseErr,e.data)}
     };
