@@ -1283,15 +1283,14 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
             </button>}
           </div>
         </div>
-        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+        <div style={{display:'flex',alignItems:'center',marginBottom:8}}>
           <div style={{fontSize:12,color:C.muted}}><span style={{fontWeight:600,color:C.primary}}>{c2gSelectedUsers.size}</span> of {displayUsers.length} selected</div>
-          <TextBtn onClick={()=>{const all=displayUsers.map(u=>(u.mail||u.userPrincipalName||'').toLowerCase());if(c2gSelectedUsers.size===all.length)setC2gSelectedUsers(new Set());else setC2gSelectedUsers(new Set(all))}}>{c2gSelectedUsers.size===displayUsers.length?'Deselect All':'Select All'}</TextBtn>
         </div>
         <SearchBar value={search} onChange={setSearch} placeholder="Search by email..."/>
       </div>
       <div style={{flex:1,overflowY:'auto',minHeight:0,background:'white',border:`1px solid ${C.border}`,borderRadius:10}}>
         <div style={{display:'grid',gridTemplateColumns:'32px 1fr 1fr',padding:'9px 14px',background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.4,position:'sticky',top:0,zIndex:1}}>
-          <div/><div>M365 Email</div><div>Google Email</div>
+          <input type="checkbox" checked={filtered.length>0&&filtered.every(u=>c2gSelectedUsers.has((u.mail||u.userPrincipalName||'').toLowerCase()))} onChange={()=>{const all=filtered.map(u=>(u.mail||u.userPrincipalName||'').toLowerCase());const allSelected=all.every(e=>c2gSelectedUsers.has(e));setC2gSelectedUsers(p=>{const n=new Set(p);if(allSelected)all.forEach(e=>n.delete(e));else all.forEach(e=>n.add(e));return n})}} style={{accentColor:C.primary,width:15,height:15,cursor:'pointer'}}/><div>M365 Email</div><div>Google Email</div>
         </div>
         {filtered.map((u,i)=>{
           const em=(u.mail||u.userPrincipalName||'').toLowerCase();
