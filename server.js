@@ -128,6 +128,11 @@ app.get('/', (req, res) => {
 // Static files (CSS, JS, images) — always accessible
 app.use(express.static(path.join(__dirname, 'ui')));
 
+// App config (public — no auth needed)
+app.get('/api/app-config', (req, res) => {
+  res.json({ showReset: process.env.SHOW_RESET_BUTTON === 'true' });
+});
+
 // Login / logout / me
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
@@ -1848,6 +1853,17 @@ app.post('/api/auth/ms/disconnect', requireAuth, async (req, res) => {
 });
 
 connectMongo().then(async () => {
+  // Connect copilot's Mongoose cogem DB
+  try {
+    const cogemUri = (process.env.MONGO_URI || '').replace(/\/gemco(\?|$)/, '/cogem$1');
+    const origUri = process.env.MONGO_URI;
+    process.env.MONGO_URI = cogemUri || origUri;
+    const { connectDB } = await import('./copilot/copilot/server/src/db/connection.js');
+    await connectDB();
+    process.env.MONGO_URI = origUri;
+  } catch (e) {
+    console.warn('[cogem] Copilot DB connect failed (non-fatal):', e.message);
+  }
   await restoreGoogleSessions();
   await restoreMsSessions();
   app.listen(PORT, () => {

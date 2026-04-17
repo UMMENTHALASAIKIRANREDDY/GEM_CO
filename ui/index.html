@@ -1613,6 +1613,7 @@ function App(){
   const [toast,setToast]=useState(null); // {message, type}
   const [showReports,setShowReports]=useState(false);
   const [appUser,setAppUser]=useState(null);
+  const [showReset,setShowReset]=useState(false);
   const [reportRefreshKey,setReportRefreshKey]=useState(0); // increments to force reports re-fetch
   const [wsLoaded,setWsLoaded]=useState(false); // true after DB workspace hydration
   const KRef=useRef(K); // mutable ref so persist effects always use current scoped keys
@@ -1659,6 +1660,9 @@ function App(){
     const onUp=()=>{if(dividerRef.current)dividerRef.current.classList.remove('active');document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp)};
     document.addEventListener('mousemove',onMove);document.addEventListener('mouseup',onUp);
   },[]);
+
+  // Load app config (reset button, feature flags)
+  useEffect(()=>{fetch('/api/app-config').then(r=>r.ok?r.json():null).then(cfg=>{if(cfg?.showReset)setShowReset(true);}).catch(()=>{});},[]);
 
   // Auth check on mount — verify app session, hydrate state from DB (cross-device), check cloud auth
   useEffect(()=>{
@@ -1930,6 +1934,12 @@ function App(){
 // Logout: destroy session only — DO NOT clear localStorage so user returns to their last state
   const handleLogout=async()=>{await fetch('/api/logout',{method:'POST'});window.location.href='/login.html'};
 
+  // Reset: clear all migration state for current user and reload
+  const handleReset=useCallback(()=>{
+    if(!window.confirm('Reset all migration data? This clears mappings, logs, upload data, and migration state.'))return;
+    lsClear(appUser?._id);window.location.reload();
+  },[appUser]);
+
   /* Copilot→Gemini migration */
   const runC2GMigration=useCallback(async(forceLive=false)=>{
     if(c2gLive)return;
@@ -2144,6 +2154,9 @@ function App(){
             <button onClick={handleLogout} title="Sign out" style={{display:'flex',alignItems:'center',gap:4,fontSize:11,color:'rgba(255,255,255,.6)',background:'transparent',border:'1px solid rgba(255,255,255,.2)',borderRadius:5,padding:'4px 8px',cursor:'pointer',fontFamily:'inherit',transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.1)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
               <IcoLogout s={11}/> Sign out
             </button>
+            {showReset&&<button onClick={handleReset} title="Reset all migration data" style={{display:'flex',alignItems:'center',gap:4,fontSize:11,color:'rgba(255,180,180,.9)',background:'transparent',border:'1px solid rgba(255,100,100,.3)',borderRadius:5,padding:'4px 8px',cursor:'pointer',fontFamily:'inherit',transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.background='rgba(255,0,0,.15)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+              <IcoReset s={11}/> Reset
+            </button>}
           </div>}
         </div>
       </div>
