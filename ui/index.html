@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Gemini → Copilot Migration | CloudFuze</title>
+  <title>CloudFuze Migration</title>
   <link rel="icon" type="image/png" href="/assets/CloudFuze blue.png"/>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet"/>
   <style>
@@ -184,7 +184,7 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
           <GoogleIcon/>
           <div style={{flex:1}}>
             <div style={{fontSize:14,fontWeight:600}}>Google Workspace</div>
-            <div style={{fontSize:12,color:C.muted}}>Source — Gemini conversations <span style={{fontSize:11,color:'#DC2626',fontWeight:600}}>(required)</span></div>
+            <div style={{fontSize:12,color:C.muted}}>Gemini conversations <span style={{fontSize:11,color:'#DC2626',fontWeight:600}}>(required)</span></div>
           </div>
           {googleAuthed?<span style={{display:'inline-flex',alignItems:'center',gap:5,fontSize:12,padding:'4px 12px',borderRadius:20,background:C.tint,color:C.primary,fontWeight:600,flexShrink:0}}><Check s={12} c={C.primary}/>Connected</span>:<span style={{fontSize:12,padding:'4px 12px',borderRadius:20,background:'#FEF2F2',color:'#DC2626',fontWeight:600,flexShrink:0}}>Required</span>}
         </div>
@@ -211,7 +211,7 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
           <MsIcon/>
           <div style={{flex:1}}>
             <div style={{fontSize:14,fontWeight:600}}>Microsoft Teams / 365</div>
-            <div style={{fontSize:12,color:C.muted}}>Destination — Copilot / OneNote <span style={{fontSize:11,color:C.error,fontWeight:600}}>(required)</span></div>
+            <div style={{fontSize:12,color:C.muted}}>Copilot / OneNote <span style={{fontSize:11,color:C.error,fontWeight:600}}>(required)</span></div>
           </div>
           {msAuthed?<span style={{display:'inline-flex',alignItems:'center',gap:5,fontSize:12,padding:'4px 12px',borderRadius:20,background:C.tint,color:C.primary,fontWeight:600,flexShrink:0}}><Check s={12} c={C.primary}/>Connected</span>:<span style={{fontSize:12,padding:'4px 12px',borderRadius:20,background:'#FEF2F2',color:C.error,fontWeight:500,flexShrink:0}}>Required</span>}
         </div>
@@ -948,11 +948,11 @@ const AuthWidget=({googleAuthed,msAuthed,onSignInGoogle,onSignInMs,googleUsers,m
     <div style={{fontSize:12,fontWeight:600,color:C.dark,marginBottom:10}}>Connect your cloud accounts</div>
     <div style={{display:'flex',flexDirection:'column',gap:8}}>
       <div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:8,border:`1.5px solid ${googleAuthed?'#22c55e':C.border}`,background:googleAuthed?'#f0fdf4':'white',transition:'all .3s'}}>
-        <GoogleIcon/><div style={{flex:1}}><div style={{fontSize:12,fontWeight:600}}>Google Workspace</div><div style={{fontSize:11,color:C.muted}}>{googleAuthed?`${(googleUsers||[]).length} users loaded`:'Source — Gemini conversations'}</div></div>
+        <GoogleIcon/><div style={{flex:1}}><div style={{fontSize:12,fontWeight:600}}>Google Workspace</div><div style={{fontSize:11,color:C.muted}}>{googleAuthed?`${(googleUsers||[]).length} users loaded`:'Gemini conversations'}</div></div>
         {googleAuthed?<span style={{fontSize:11,color:'#16a34a',fontWeight:600,display:'flex',alignItems:'center',gap:4,whiteSpace:'nowrap'}}><Check s={12} c="#22c55e"/>Connected</span>:<button onClick={onSignInGoogle} disabled={googleLoading} style={{fontSize:12,padding:'6px 14px',borderRadius:6,border:`1px solid ${C.border}`,background:'white',cursor:'pointer',fontFamily:'inherit',fontWeight:500,whiteSpace:'nowrap',display:'flex',alignItems:'center',gap:6,opacity:googleLoading?.6:1}}>{googleLoading?<Spinner s={12}/>:'Sign in'}</button>}
       </div>
       <div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:8,border:`1.5px solid ${msAuthed?'#22c55e':C.border}`,background:msAuthed?'#f0fdf4':'white',transition:'all .3s'}}>
-        <MsIcon/><div style={{flex:1}}><div style={{fontSize:12,fontWeight:600}}>Microsoft 365</div><div style={{fontSize:11,color:C.muted}}>{msAuthed?`${(msUsers||[]).length} users loaded`:'Destination — Teams / OneNote'}</div></div>
+        <MsIcon/><div style={{flex:1}}><div style={{fontSize:12,fontWeight:600}}>Microsoft 365</div><div style={{fontSize:11,color:C.muted}}>{msAuthed?`${(msUsers||[]).length} users loaded`:'Teams / OneNote'}</div></div>
         {msAuthed?<span style={{fontSize:11,color:'#16a34a',fontWeight:600,display:'flex',alignItems:'center',gap:4,whiteSpace:'nowrap'}}><Check s={12} c="#22c55e"/>Connected</span>:<button onClick={onSignInMs} disabled={msLoading} style={{fontSize:12,padding:'6px 14px',borderRadius:6,border:`1px solid ${C.border}`,background:'white',cursor:'pointer',fontFamily:'inherit',fontWeight:500,whiteSpace:'nowrap',display:'flex',alignItems:'center',gap:6,opacity:msLoading?.6:1}}>{msLoading?<Spinner s={12}/>:'Sign in'}</button>}
       </div>
     </div>
@@ -1258,9 +1258,9 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
         </div>
         <SearchBar value={search} onChange={setSearch} placeholder="Search by email..."/>
       </div>
-      <div style={{flex:1,overflowY:'auto',minHeight:0,background:'white',border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden'}}>
+      <div style={{flex:1,overflowY:'auto',minHeight:0,background:'white',border:`1px solid ${C.border}`,borderRadius:10}}>
         <div style={{display:'grid',gridTemplateColumns:'32px 1fr 1fr',padding:'9px 14px',background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.4,position:'sticky',top:0,zIndex:1}}>
-          <div/><div>M365 Email (Source)</div><div>Google Email (Destination)</div>
+          <div/><div>M365 Email</div><div>Google Email</div>
         </div>
         {filtered.map((u,i)=>{
           const em=(u.mail||u.userPrincipalName||'').toLowerCase();
@@ -1287,9 +1287,63 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
 };
 
 /* ════════════════════════════════════════════ */
+/* ═══  COPILOT→GEMINI: OPTIONS STEP         ═══ */
+/* ════════════════════════════════════════════ */
+const StepC2GOptions=({c2gOptions,setC2gOptions,c2gConfig,setC2gConfig,googleAuthed,msAuthed,onRun,onBack})=>{
+  const Chk=({label,checked,onChange,hint})=>(
+    <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer',padding:'8px 0'}}>
+      <input type="checkbox" checked={checked} onChange={onChange} style={{accentColor:C.primary,width:16,height:16}}/>
+      <div><span>{label}</span>{hint&&<div style={{fontSize:11,color:C.muted,marginTop:1}}>{hint}</div>}</div>
+    </label>
+  );
+  return(
+    <div className="fade-up">
+      <div style={{marginBottom:20}}>
+        <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Migration Options</div>
+        <div style={{fontSize:13,color:C.muted}}>Configure and start the Copilot → Gemini migration.</div>
+      </div>
+
+      <Field label="Folder Name *" hint="Google Drive folder where Copilot conversations will be saved (required)">
+        <input type="text" value={c2gConfig.folderName||''} onChange={e=>setC2gConfig(p=>({...p,folderName:e.target.value}))} placeholder="e.g. CopilotChats" style={{width:'100%',border:`2px solid ${C.border}`,borderRadius:6,padding:'9px 12px',fontSize:13,outline:'none',transition:'border .2s',boxSizing:'border-box'}} onFocus={e=>e.target.style.borderColor=C.primary} onBlur={e=>e.target.style.borderColor=C.border}/>
+      </Field>
+
+      <Card style={{marginBottom:16}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:4,color:C.dark}}>Behavior</div>
+        <Chk label="Dry run (preview only — no files uploaded)" hint="Shows what would be migrated without uploading to Google Drive" checked={c2gOptions.dryRun} onChange={e=>setC2gOptions(p=>({...p,dryRun:e.target.checked}))}/>
+      </Card>
+
+      <Card style={{marginBottom:20}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+          <div style={{fontSize:13,fontWeight:600,color:C.dark}}>Date Range</div>
+          <span style={{fontSize:11,color:C.primaryL,fontStyle:'italic'}}>Optional — blank = migrate all data</span>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+          <Field label="From Date"><Input type="date" value={c2gOptions.fromDate||''} onChange={e=>setC2gOptions(p=>({...p,fromDate:e.target.value}))}/></Field>
+          <Field label="To Date"><Input type="date" value={c2gOptions.toDate||''} onChange={e=>setC2gOptions(p=>({...p,toDate:e.target.value}))}/></Field>
+        </div>
+        {(c2gOptions.fromDate||c2gOptions.toDate)&&<TextBtn onClick={()=>setC2gOptions(p=>({...p,fromDate:'',toDate:''}))} style={{fontSize:11,marginTop:2,color:C.muted}}>Clear date range</TextBtn>}
+      </Card>
+
+      {!c2gOptions.dryRun&&!googleAuthed&&(
+        <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 16px',background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:8,fontSize:13,color:'#991B1B',marginBottom:16}}>
+          <IcoWarn s={15}/>Live migration requires Google sign-in (Step 1 — Connect Clouds).
+        </div>
+      )}
+
+      <div style={{display:'flex',gap:10}}>
+        <Btn variant="ghost" onClick={onBack}>← Back</Btn>
+        <Btn onClick={()=>onRun()} disabled={!c2gConfig.folderName||(!c2gOptions.dryRun&&!googleAuthed)} style={{flex:1,justifyContent:'center'}}>
+          {c2gOptions.dryRun?<><IcoSearch s={14}/>Start Dry Run</>:<><IcoRocket s={14}/>Start Migration</>}
+        </Btn>
+      </div>
+    </div>
+  );
+};
+
+/* ════════════════════════════════════════════ */
 /* ═══  COPILOT→GEMINI: MIGRATE STEP        ═══ */
 /* ════════════════════════════════════════════ */
-const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c2gLive,onChangeDirection})=>{
+const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c2gLive,onChangeDirection,lastRunWasDry,onStartLive})=>{
   const ring=c2gDone?100:(c2gStats.users>0?Math.min(Math.round((c2gStats.files/(c2gStats.users*2))*100),99):c2gLive?5:0);
   return(
     <div className="fade-up">
@@ -1331,21 +1385,22 @@ const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c
         <>
           <div style={{marginBottom:20,textAlign:'center'}}>
             <div style={{display:'flex',justifyContent:'center',marginBottom:8,color:C.success}}><IcoDone s={48}/></div>
-            <div style={{fontSize:18,fontWeight:700,color:C.dark,marginBottom:4}}>Migration Complete!</div>
-            <div style={{fontSize:13,color:C.muted}}>Copilot conversations have been uploaded to Google Drive.</div>
+            <div style={{fontSize:18,fontWeight:700,color:C.dark,marginBottom:4}}>{lastRunWasDry?'Dry Run Complete!':'Migration Complete!'}</div>
+            <div style={{fontSize:13,color:C.muted}}>{lastRunWasDry?'Preview finished — no files were uploaded.':'Copilot conversations have been uploaded to Google Drive.'}</div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:20}}>
-            {[{label:'Users Processed',val:c2gStats.users,c:'#0129AC'},{label:'Files Uploaded',val:c2gStats.files,c:'#20CC83'},{label:'Errors',val:c2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
+            {[{label:'Users Processed',val:c2gStats.users,c:'#0129AC'},{label:lastRunWasDry?'Files (preview)':'Files Uploaded',val:c2gStats.files,c:'#20CC83'},{label:'Errors',val:c2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
               <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
                 <div style={{fontSize:22,fontWeight:700,color:e.c}}>{e.val}</div>
                 <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
               </div>
             ))}
           </div>
-          <div style={{display:'flex',gap:10}}>
-            <Btn variant="ghost" onClick={onBack} style={{flex:1,justifyContent:'center'}}>← Map Again</Btn>
-            <Btn onClick={()=>onRunAnother&&onRunAnother()} style={{flex:1,justifyContent:'center'}}>Start Another</Btn>
-            {onChangeDirection&&<Btn variant="ghost" onClick={onChangeDirection} style={{flex:1,justifyContent:'center'}}>⇄ Change Direction</Btn>}
+          <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+            {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{flex:'1 1 140px',justifyContent:'center'}}><IcoRocket s={14}/> Start Live Migration</Btn>}
+            <Btn variant="ghost" onClick={onBack} style={{flex:'1 1 100px',justifyContent:'center'}}>← Options</Btn>
+            <Btn variant="ghost" onClick={()=>onRunAnother&&onRunAnother()} style={{flex:'1 1 120px',justifyContent:'center'}}>New Import</Btn>
+            {onChangeDirection&&<Btn variant="ghost" onClick={onChangeDirection} style={{flex:'1 1 120px',justifyContent:'center'}}>⇄ Change Direction</Btn>}
           </div>
         </>
       )}
@@ -1455,6 +1510,8 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
                     <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,flexWrap:'wrap'}}>
                       <span style={{fontSize:13,fontWeight:600,color:C.dark}}>{r.customerName||'Migration'}</span>
                       <span style={{fontSize:11,padding:'2px 8px',borderRadius:20,fontWeight:600,background:ss.bg,color:ss.color}}>{ss.label}</span>
+                      {r.direction==='c2g'&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#EFF6FF',color:'#1D4ED8',fontWeight:600}}>C2G</span>}
+                      {!r.direction&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#F0FDF4',color:'#166534',fontWeight:600}}>G2C</span>}
                     </div>
                     <div style={{fontSize:12,color:C.muted,display:'flex',gap:12}}>
                       <span>{fmtDate(r.startTime)}</span>
@@ -1476,9 +1533,10 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
                       const donePages=live?liveStats.pages:(isRunningBatch?r.progressPages:r.migratedConversations);
                       const doneErrors=live?liveStats.errors:(isRunningBatch?r.progressErrors:r.totalErrors);
                       const totalUsers=r.totalUsers||0;
+                      const filesLabel=r.direction==='c2g'?'Files':'Pages';
                       return[
                         ['Users',isRunningBatch?`${doneUsers??0}/${totalUsers}`:doneUsers,false],
-                        ['Pages',donePages,false],
+                        [filesLabel,donePages,false],
                         ['Errors',doneErrors,doneErrors>0]
                       ].map(([lbl,val,isErr],j)=>(
                         <div key={j} style={{textAlign:'center'}}>
@@ -1494,12 +1552,21 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
                 {/* Per-user detail expand */}
                 {isExp&&(
                   <div style={{marginTop:12,border:`1px solid ${C.border}`,borderRadius:6,overflow:'hidden'}}>
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 80px 60px 60px',padding:'6px 12px',background:C.bg,fontSize:10,fontWeight:700,color:C.muted,textTransform:'uppercase',letterSpacing:.4}}>
-                      <div>User</div><div style={{textAlign:'center'}}>Status</div><div style={{textAlign:'center'}}>Pages</div><div style={{textAlign:'center'}}>Errors</div>
+                    <div style={{display:'grid',gridTemplateColumns:r.direction==='c2g'?'1fr 1fr 70px 50px 50px':'1fr 80px 60px 60px',padding:'6px 12px',background:C.bg,fontSize:10,fontWeight:700,color:C.muted,textTransform:'uppercase',letterSpacing:.4}}>
+                      {r.direction==='c2g'?<><div>Source</div><div>Destination</div><div style={{textAlign:'center'}}>Status</div><div style={{textAlign:'center'}}>Files</div><div style={{textAlign:'center'}}>Errors</div></>
+                      :<><div>User</div><div style={{textAlign:'center'}}>Status</div><div style={{textAlign:'center'}}>Pages</div><div style={{textAlign:'center'}}>Errors</div></>}
                     </div>
                     {!details&&<div style={{padding:'12px',textAlign:'center',fontSize:12,color:C.muted}}><Spinner s={14}/></div>}
                     {details&&details.map((u,k)=>(
-                      <div key={k} style={{display:'grid',gridTemplateColumns:'1fr 80px 60px 60px',alignItems:'center',padding:'7px 12px',borderTop:`1px solid ${C.bg}`,background:'white'}}>
+                      r.direction==='c2g'?
+                      <div key={k} style={{display:'grid',gridTemplateColumns:'1fr 1fr 70px 50px 50px',alignItems:'center',padding:'7px 12px',borderTop:`1px solid ${C.bg}`,background:'white'}}>
+                        <div style={{fontSize:11,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:C.dark}}>{u.email}</div>
+                        <div style={{fontSize:11,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:C.muted}}>{u.destEmail||''}</div>
+                        <div style={{textAlign:'center'}}><span style={{fontSize:10,padding:'2px 6px',borderRadius:20,fontWeight:600,background:u.status==='success'?'#dcfce7':u.status==='partial'?'#fef3c7':'#fee2e2',color:u.status==='success'?'#166534':u.status==='partial'?'#92400e':'#991b1b'}}>{u.status}</span></div>
+                        <div style={{textAlign:'center',fontSize:13,fontWeight:600,color:C.primary}}>{u.pages_created}</div>
+                        <div style={{textAlign:'center',fontSize:13,fontWeight:600,color:u.error_count>0?C.error:C.muted}}>{u.error_count}</div>
+                      </div>
+                      :<div key={k} style={{display:'grid',gridTemplateColumns:'1fr 80px 60px 60px',alignItems:'center',padding:'7px 12px',borderTop:`1px solid ${C.bg}`,background:'white'}}>
                         <div style={{fontSize:12,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:C.dark}}>{u.email}</div>
                         <div style={{textAlign:'center'}}><span style={{fontSize:10,padding:'2px 6px',borderRadius:20,fontWeight:600,background:u.status==='success'?'#dcfce7':u.status==='partial'?'#fef3c7':'#fee2e2',color:u.status==='success'?'#166534':u.status==='partial'?'#92400e':'#991b1b'}}>{u.status}</span></div>
                         <div style={{textAlign:'center',fontSize:13,fontWeight:600,color:C.primary}}>{u.pages_created}</div>
@@ -1564,6 +1631,9 @@ function App(){
   const [c2gStats,setC2gStats]=useState({users:0,files:0,errors:0});
   const [c2gDone,setC2gDone]=useState(false);
   const [c2gLive,setC2gLive]=useState(false);
+  const [c2gOptions,setC2gOptions]=useState({dryRun:true,fromDate:'',toDate:''});
+  const [c2gConfig,setC2gConfig]=useState({folderName:'CopilotChats'});
+  const [c2gLastDry,setC2gLastDry]=useState(false);
   const [chatGLoading,setChatGLoading]=useState(false);
   const [chatMLoading,setChatMLoading]=useState(false);
   const [chatUploading,setChatUploading]=useState(false);
@@ -1861,9 +1931,11 @@ function App(){
   const handleLogout=async()=>{await fetch('/api/logout',{method:'POST'});window.location.href='/login.html'};
 
   /* Copilot→Gemini migration */
-  const runC2GMigration=useCallback(async()=>{
+  const runC2GMigration=useCallback(async(forceLive=false)=>{
     if(c2gLive)return;
-    // Build pairs BEFORE changing live state — avoids React 18 batch cancel
+    const isDry=forceLive===true?false:c2gOptions.dryRun;
+    if(forceLive)setC2gOptions(p=>({...p,dryRun:false}));
+    setC2gLastDry(isDry);
     const keys=c2gSelectedUsers.size>0?[...c2gSelectedUsers]:Object.keys(c2gMappings);
     const pairs=[];
     keys.forEach(em=>{if(c2gMappings[em])pairs.push({sourceEmail:em,destEmail:c2gMappings[em]})});
@@ -1871,33 +1943,46 @@ function App(){
       addAgentMsg('bot','⚠️ No user mappings found. Go back to the mapping step and fill in the Google destination emails for each M365 user.');
       return;
     }
-    setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gLive(true);setStep(3);setLogs([]);
-    addLog('info','Starting Copilot → Gemini migration...');
-    addAgentMsg('bot','🚀 Copilot → Gemini migration started! Logs will stream below.');
+    setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gLive(true);setStep(4);setLogs([]);
+    addLog('info',isDry?'Starting dry run...':'Starting Copilot → Gemini migration...');
+    addAgentMsg('bot',isDry?'🔍 Dry run started! Logs will stream below — no files will be uploaded.':'🚀 Copilot → Gemini migration started! Logs will stream below.');
     const curStats={users:0,files:0,errors:0};
     if(sseRef.current)sseRef.current.close();
     sseRef.current=new EventSource('/api/c2g/migrate-log');
+    const errorMessages=[];
     sseRef.current.onmessage=e=>{
       try{
         const d=JSON.parse(e.data);
         if(d.type==='success')curStats.files++;
         if(d.type==='error')curStats.errors++;
         if(d.type==='info'&&d.message?.includes('Processing:'))curStats.users++;
+        if((d.type==='warn'||d.type==='error')&&d.message&&!d.message.match(/^[a-zA-Z0-9@.\-_]+\s*→/))errorMessages.push(d.message);
         setC2gStats({...curStats});addLog(d.type,d.message||'');
         if(d.type==='done'){
           try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;}catch{}
           setC2gStats({...curStats});
-          sseRef.current.close();setC2gLive(false);setC2gDone(true);setStep(4);
-          setTimeout(()=>addAgentMsg('bot',`✅ Copilot → Gemini complete!\n\n**${curStats.files}** files uploaded  ·  **${curStats.errors}** error${curStats.errors!==1?'s':''}`,{quickReplies:['Start Another']}),400);
+          sseRef.current.close();setC2gLive(false);setC2gDone(true);setStep(5);
+          setReportRefreshKey(p=>p+1);
+          const errSummary=errorMessages.length>0?`\n\n⚠️ Errors:\n${errorMessages.slice(0,3).map(m=>`• ${m}`).join('\n')}`:'';
+          const dryLabel=isDry?' (dry run)':'';
+          setTimeout(()=>addAgentMsg('bot',`${curStats.errors>0?'⚠️':'✅'} Copilot → Gemini${dryLabel} complete!\n\n**${curStats.files}** files${isDry?' (preview)':' uploaded'}  ·  **${curStats.errors}** error${curStats.errors!==1?'s':''}${errSummary}`,{quickReplies:isDry?['Start Live Migration','Start Another']:['Download Report','Start Another']}),400);
         }
-      }catch{}
+      }catch(parseErr){console.error('C2G SSE parse error',parseErr,e.data)}
     };
-    sseRef.current.onerror=()=>{if(sseRef.current){sseRef.current.close();setC2gLive(false)}};
+    sseRef.current.onerror=(ev)=>{
+      console.error('C2G SSE error',ev);
+      if(sseRef.current){sseRef.current.close();setC2gLive(false);}
+      addLog('error','Lost connection to migration log stream.');
+    };
+    // Wait for SSE connection to establish before triggering migration
+    const sseReady=new Promise(resolve=>{sseRef.current.onopen=()=>resolve();setTimeout(resolve,1000)});
+    await sseReady;
     try{
-      const res=await fetch('/api/c2g/migrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pairs})});
-      if(!res.ok){const d=await res.json();addLog('error',d.error||'Migration failed');setC2gLive(false);}
-    }catch(err){addLog('error',err.message);setC2gLive(false);}
-  },[c2gLive,c2gSelectedUsers,c2gMappings,addLog,addAgentMsg]);
+      const payload={pairs,folderName:c2gConfig.folderName||'CopilotChats',dryRun:isDry,fromDate:c2gOptions.fromDate||null,toDate:c2gOptions.toDate||null};
+      const res=await fetch('/api/c2g/migrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      if(!res.ok){const d=await res.json().catch(()=>({}));addLog('error',d.error||`Migration failed (${res.status})`);addAgentMsg('bot',`Migration request failed: ${d.error||res.statusText}`);setC2gLive(false);}
+    }catch(err){addLog('error',err.message);addAgentMsg('bot',`Migration request error: ${err.message}`);setC2gLive(false);}
+  },[c2gLive,c2gSelectedUsers,c2gMappings,c2gOptions,c2gConfig,addLog,addAgentMsg]);
 
   const handleChangeDirection=useCallback(()=>{
     setMigDir(null);setStep(1);
@@ -2089,9 +2174,11 @@ function App(){
               const isMapStep=(step===3&&migDir==='gemini-copilot')||(step===2&&migDir==='copilot-gemini');
               return(
                 <div style={{flex:1,overflowY:isMapStep?'hidden':'auto',padding:'16px 20px',display:isMapStep?'flex':'block',flexDirection:isMapStep?'column':undefined,minHeight:0}}>
-                  {/* Step 0: Connect — always shown */}
+                  {/* Fallback: if step > 1 but no direction chosen, show connect */}
+                  {step>1&&!migDir&&<Step0 googleAuthed={googleAuthed} setGoogleAuthed={setGoogleAuthed} msAuthed={msAuthed} setMsAuthed={setMsAuthed} googleUsers={googleUsers} setGoogleUsers={setGoogleUsers} msUsers={msUsers} setMsUsers={setMsUsers} tenantId={config.tenantId} onComplete={()=>setStep(1)}/>}
+                  {/* Step 0: Connect */}
                   {step===0&&<Step0 googleAuthed={googleAuthed} setGoogleAuthed={setGoogleAuthed} msAuthed={msAuthed} setMsAuthed={setMsAuthed} googleUsers={googleUsers} setGoogleUsers={setGoogleUsers} msUsers={msUsers} setMsUsers={setMsUsers} tenantId={config.tenantId} onComplete={()=>setStep(1)}/>}
-                  {/* Step 1: Direction picker — always shown */}
+                  {/* Step 1: Direction picker */}
                   {step===1&&<StepDirection onSelect={dir=>{setMigDir(dir);setStep(2);}} onBack={()=>setStep(0)}/>}
                   {/* Gemini → Copilot steps */}
                   {step===2&&migDir==='gemini-copilot'&&<Step1 googleUsers={googleUsers} googleAuthed={googleAuthed} onComplete={handleImportComplete} onBack={()=>setStep(1)} showToast={showToast} uploadData={uploadData}/>}
@@ -2100,7 +2187,8 @@ function App(){
                   {(step===5||step===6)&&migDir==='gemini-copilot'&&<StepMigrate stats={stats} done={migDone} lastRunWasDry={lastRunWasDry} batchId={currentBatchId} onStartLive={()=>runMigration(true)} onRunAnother={runAnotherBatch} onRetry={retryFailed} retrying={retrying} hasUploadData={!!uploadData} onGoToConnect={handleGoToConnect} onRetryWithPath={handleRetryWithPath} onChangeDirection={handleChangeDirection} totalExpected={(()=>{if(!uploadData?.users)return 0;const sel=selectedUsers.size>0?[...selectedUsers]:Object.keys(mappings);const emails=sel.length>0?new Set(sel):new Set(uploadData.users.map(u=>u.email));return uploadData.users.filter(u=>emails.has(u.email)).reduce((s,u)=>s+(u.conversation_count||0),0)})()}/>}
                   {/* Copilot → Gemini steps */}
                   {step===2&&migDir==='copilot-gemini'&&<StepC2GMap msUsers={msUsers} googleUsers={googleUsers} c2gMappings={c2gMappings} setC2gMappings={setC2gMappings} c2gSelectedUsers={c2gSelectedUsers} setC2gSelectedUsers={setC2gSelectedUsers} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast}/>}
-                  {(step===3||step===4)&&migDir==='copilot-gemini'&&<StepC2GMigrate c2gStats={c2gStats} c2gDone={c2gDone} c2gBatchId={null} onRunAnother={()=>{setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setStep(2);}} onBack={()=>setStep(2)} onStart={runC2GMigration} c2gLive={c2gLive} onChangeDirection={handleChangeDirection}/>}
+                  {step===3&&migDir==='copilot-gemini'&&<StepC2GOptions c2gOptions={c2gOptions} setC2gOptions={setC2gOptions} c2gConfig={c2gConfig} setC2gConfig={setC2gConfig} googleAuthed={googleAuthed} msAuthed={msAuthed} onRun={runC2GMigration} onBack={()=>setStep(2)}/>}
+                  {(step===4||step===5)&&migDir==='copilot-gemini'&&<StepC2GMigrate c2gStats={c2gStats} c2gDone={c2gDone} c2gBatchId={null} onRunAnother={()=>{setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(3)} onStart={runC2GMigration} c2gLive={c2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={c2gLastDry} onStartLive={()=>runC2GMigration(true)}/>}
                 </div>
               );
             })()}
