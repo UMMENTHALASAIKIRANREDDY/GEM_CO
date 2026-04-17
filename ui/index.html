@@ -2104,7 +2104,7 @@ function App(){
           sseRef.current.close();setC2gLive(false);setC2gDone(true);setStep(5);
           setReportRefreshKey(p=>p+1);
           const s2={...curStats};
-          const nextSteps=isDry?'':'\n\n**Next steps:** Open [gemini.google.com](https://gemini.google.com), create a new Gem, upload the DOCX files as Knowledge, and set your instructions.';
+          const nextSteps=isDry?'':'\n\nNext steps:\n1. Login to Google Gemini (gemini.google.com)\n2. Create a new Gem\n3. Upload the migrated DOCX file(s) as Knowledge\n4. Set instructions: "Use this file as knowledge and give responses from this document. If the user asks something not in the document, answer generally."\n5. Save the Gem';
           setTimeout(()=>addAgentMsg('bot',
             s2.errors>0
               ? `Migration finished with **${s2.errors} error${s2.errors!==1?'s':''}**. Check below and retry if needed.`
