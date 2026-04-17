@@ -855,7 +855,7 @@ const StepMigrate=({stats,done,lastRunWasDry,batchId,onStartLive,onRunAnother,on
               </Btn>
             )}
             <Btn variant="ghost" onClick={()=>onRunAnother(false)} style={{flex:'1 1 100px',justifyContent:'center'}}>
-              New Import
+              New Migration
             </Btn>
             {onChangeDirection&&<Btn variant="ghost" onClick={onChangeDirection} style={{flex:'1 1 120px',justifyContent:'center'}}>⇄ Change Direction</Btn>}
           </div>
@@ -1398,7 +1398,7 @@ const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c
           <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
             {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{flex:'1 1 140px',justifyContent:'center'}}><IcoRocket s={14}/> Start Live Migration</Btn>}
             <Btn variant="ghost" onClick={onBack} style={{flex:'1 1 100px',justifyContent:'center'}}>← Options</Btn>
-            <Btn variant="ghost" onClick={()=>onRunAnother&&onRunAnother()} style={{flex:'1 1 120px',justifyContent:'center'}}>New Import</Btn>
+            <Btn variant="ghost" onClick={()=>onRunAnother&&onRunAnother()} style={{flex:'1 1 120px',justifyContent:'center'}}>New Migration</Btn>
             {onChangeDirection&&<Btn variant="ghost" onClick={onChangeDirection} style={{flex:'1 1 120px',justifyContent:'center'}}>⇄ Change Direction</Btn>}
           </div>
         </>
