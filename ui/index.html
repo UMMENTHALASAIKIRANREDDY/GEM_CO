@@ -608,8 +608,8 @@ const Step3=({options,setOptions,config,setConfig,msAuthed,googleAuthed,onRun,on
         </div>
       )}
 
-      <Field label="File Name *" hint="OneNote path where migrated pages will be created (required)">
-        <input ref={filePathRef} type="text" value={config.filePath||''} onChange={e=>setConfig(p=>({...p,filePath:e.target.value}))} placeholder="e.g. /Sites/Migration/GeminiExports" style={{width:'100%',border:`2px solid ${retryMode?'#EA580C':C.border}`,borderRadius:6,padding:'9px 12px',fontSize:13,outline:'none',transition:'border .2s',boxSizing:'border-box'}} onFocus={e=>e.target.style.borderColor=retryMode?'#C2410C':C.primary} onBlur={e=>e.target.style.borderColor=retryMode?'#EA580C':C.border}/>
+      <Field label="File Name *">
+        <input ref={filePathRef} type="text" value={config.filePath||''} onChange={e=>setConfig(p=>({...p,filePath:e.target.value}))} placeholder="GeminiChats" style={{width:'100%',border:`2px solid ${retryMode?'#EA580C':C.border}`,borderRadius:6,padding:'9px 12px',fontSize:13,outline:'none',transition:'border .2s',boxSizing:'border-box'}} onFocus={e=>e.target.style.borderColor=retryMode?'#C2410C':C.primary} onBlur={e=>e.target.style.borderColor=retryMode?'#EA580C':C.border}/>
       </Field>
 
       <Card style={{marginBottom:16}}>
@@ -1334,8 +1334,8 @@ const StepC2GOptions=({c2gOptions,setC2gOptions,c2gConfig,setC2gConfig,googleAut
         <div style={{fontSize:13,color:C.muted}}>Configure and start the Copilot → Gemini migration.</div>
       </div>
 
-      <Field label="Folder Name *" hint="Google Drive folder where Copilot conversations will be saved (required)">
-        <input type="text" value={c2gConfig.folderName||''} onChange={e=>setC2gConfig(p=>({...p,folderName:e.target.value}))} placeholder="e.g. CopilotChats" style={{width:'100%',border:`2px solid ${C.border}`,borderRadius:6,padding:'9px 12px',fontSize:13,outline:'none',transition:'border .2s',boxSizing:'border-box'}} onFocus={e=>e.target.style.borderColor=C.primary} onBlur={e=>e.target.style.borderColor=C.border}/>
+      <Field label="Folder Name *">
+        <input type="text" value={c2gConfig.folderName||''} onChange={e=>setC2gConfig(p=>({...p,folderName:e.target.value}))} placeholder="CopilotChats" style={{width:'100%',border:`2px solid ${C.border}`,borderRadius:6,padding:'9px 12px',fontSize:13,outline:'none',transition:'border .2s',boxSizing:'border-box'}} onFocus={e=>e.target.style.borderColor=C.primary} onBlur={e=>e.target.style.borderColor=C.border}/>
       </Field>
 
       <Card style={{marginBottom:16}}>
@@ -1625,7 +1625,7 @@ function App(){
 
   const [step,setStep]=useState(()=>lsGet(K.step,0));
   const [uploadData,setUploadData]=useState(()=>lsGet(K.uploadData,null));
-  const [config,setConfig]=useState(()=>{const s=lsGet(K.config,{});return{filePath:s.filePath||s.fileName||s.customerName||'',tenantId:s.tenantId||'807d6772-847c-40e2-9bec-e2c930b3a42e'}});
+  const [config,setConfig]=useState(()=>{const s=lsGet(K.config,{});return{filePath:s.filePath||s.fileName||s.customerName||'GeminiChats',tenantId:s.tenantId||'807d6772-847c-40e2-9bec-e2c930b3a42e'}});
   const [mappings,setMappings]=useState(()=>lsGet(K.mappings,{}));
   const [selectedUsers,setSelectedUsers]=useState(()=>{const s=lsGet(K.selUsers,null);return s?new Set(s):new Set()});
   const [options,setOptions]=useState({dryRun:true,skipFollowups:false,skipAiResponse:false,fromDate:'',toDate:''});
