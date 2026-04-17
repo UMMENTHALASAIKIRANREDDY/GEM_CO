@@ -543,24 +543,25 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
               {unmapped>0&&<span style={{color:C.error}}>{autoMapped>0?' · ':''}{unmapped} need mapping</span>}
             </div>
           </div>
-          <div style={{display:'flex',gap:6,flexShrink:0}}>
+          <div style={{display:'flex',gap:4,flexShrink:0}}>
             <input ref={csvRef} type="file" accept=".csv" style={{display:'none'}} onChange={e=>{if(e.target.files[0])uploadCsv(e.target.files[0]);e.target.value=''}}/>
-            <button onClick={()=>csvRef.current.click()} disabled={csvUploading} style={{fontSize:12,color:C.muted,background:'white',border:`1px solid ${C.border}`,borderRadius:5,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,display:'inline-flex',alignItems:'center',gap:4}}>
-              {csvUploading?<Spinner s={10}/>:<IcoUpload s={11}/>} Upload CSV
+            <button onClick={()=>csvRef.current.click()} disabled={csvUploading} title="Upload CSV" style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.border}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}} onMouseEnter={e=>e.currentTarget.style.background=C.bg} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+              {csvUploading?<Spinner s={12}/>:<IcoUpload s={13} c={C.muted}/>}
             </button>
-            <button onClick={downloadCsv} style={{fontSize:12,color:C.primary,background:'white',border:`1px solid ${C.primary}`,borderRadius:5,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,display:'inline-flex',alignItems:'center',gap:4}}><IcoDownload s={11} c={C.primary}/> Download CSV</button>
+            <button onClick={downloadCsv} title="Download CSV" style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.primary}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}} onMouseEnter={e=>e.currentTarget.style.background=C.tint} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+              <IcoDownload s={13} c={C.primary}/>
+            </button>
           </div>
         </div>
-        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+        <div style={{display:'flex',alignItems:'center',marginBottom:8}}>
           <div style={{fontSize:12,color:C.muted}}><span style={{fontWeight:600,color:C.primary}}>{selectedUsers.size}</span> of {users.length} selected</div>
-          <TextBtn onClick={toggleAll}>{selectedUsers.size===users.length?'Deselect All':'Select All'}</TextBtn>
         </div>
         <SearchBar value={search} onChange={setSearch} placeholder="Search by email..."/>
       </div>
 
-      <div style={{flex:1,overflowY:'auto',minHeight:0,background:'white',border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden'}}>
+      <div style={{flex:1,overflowY:'auto',minHeight:0,background:'white',border:`1px solid ${C.border}`,borderRadius:10}}>
         <div style={{display:'grid',gridTemplateColumns:'32px 1fr 1fr 60px',padding:'9px 14px',background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.4,position:'sticky',top:0,zIndex:1}}>
-          <div/><div>Google Email</div><div>M365 Email</div><div style={{textAlign:'right'}}>Chats</div>
+          <input type="checkbox" checked={selectedUsers.size>0&&selectedUsers.size===users.length} onChange={()=>{if(selectedUsers.size===users.length)setSelectedUsers(new Set());else setSelectedUsers(new Set(users.map(u=>u.email)))}} style={{accentColor:C.primary,width:15,height:15,cursor:'pointer'}}/><div>Google Email</div><div>M365 Email</div><div style={{textAlign:'right'}}>Chats</div>
         </div>
         {filtered.map((u,i)=>{
           const mapped=!!(mappings[u.email]);
@@ -617,14 +618,13 @@ const Step3=({options,setOptions,config,setConfig,msAuthed,googleAuthed,onRun,on
         </div>
       )}
 
-      <Field label="File Name *" hint="OneNote path where migrated pages will be created (required)">
-        <input ref={filePathRef} type="text" value={config.filePath||''} onChange={e=>setConfig(p=>({...p,filePath:e.target.value}))} placeholder="e.g. /Sites/Migration/GeminiExports" style={{width:'100%',border:`2px solid ${retryMode?'#EA580C':C.border}`,borderRadius:6,padding:'9px 12px',fontSize:13,outline:'none',transition:'border .2s',boxSizing:'border-box'}} onFocus={e=>e.target.style.borderColor=retryMode?'#C2410C':C.primary} onBlur={e=>e.target.style.borderColor=retryMode?'#EA580C':C.border}/>
+      <Field label="File Name *">
+        <input ref={filePathRef} type="text" value={config.filePath||''} onChange={e=>setConfig(p=>({...p,filePath:e.target.value}))} placeholder="GeminiChats" style={{width:'100%',border:`2px solid ${retryMode?'#EA580C':C.border}`,borderRadius:6,padding:'9px 12px',fontSize:13,outline:'none',transition:'border .2s',boxSizing:'border-box'}} onFocus={e=>e.target.style.borderColor=retryMode?'#C2410C':C.primary} onBlur={e=>e.target.style.borderColor=retryMode?'#EA580C':C.border}/>
       </Field>
 
       <Card style={{marginBottom:16}}>
         <div style={{fontSize:13,fontWeight:600,marginBottom:4,color:C.dark}}>Behavior</div>
         <Chk label="Dry run (preview only — no pages created)" hint="Recommended before first live migration" checked={options.dryRun} onChange={e=>setOptions(p=>({...p,dryRun:e.target.checked}))}/>
-        <Chk label="Disable Azure OpenAI (GPT-4o) responses" hint="Skip AI-generated Copilot responses — migrate Gemini content only. Faster and avoids OpenAI costs." checked={options.skipAiResponse} onChange={e=>setOptions(p=>({...p,skipAiResponse:e.target.checked}))}/>
       </Card>
 
       <Card style={{marginBottom:20}}>
@@ -866,7 +866,7 @@ const StepMigrate=({stats,done,lastRunWasDry,batchId,onStartLive,onRunAnother,on
               </Btn>
             )}
             <Btn variant="ghost" onClick={()=>onRunAnother(false)} style={{flex:'1 1 100px',justifyContent:'center'}}>
-              New Import
+              New Migration
             </Btn>
             {onChangeDirection&&<Btn variant="ghost" onClick={onChangeDirection} style={{flex:'1 1 120px',justifyContent:'center'}}>⇄ Change Direction</Btn>}
           </div>
@@ -1270,6 +1270,7 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
   const csvRef=useRef(null);
   const [search,setSearch]=useState('');
   const [csvUploading,setCsvUploading]=useState(false);
+  const [csvEmails,setCsvEmails]=useState(null);
 
   // Auto-map by email local-part on mount
   useEffect(()=>{
@@ -1286,10 +1287,11 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
   },[msUsers,googleUsers]);
 
   const downloadCsv=()=>{
-    const rows=msUsers.map(u=>{const e=u.mail||u.userPrincipalName||'';return`"${e}","${c2gMappings[e]||''}"`});
+    const src=csvEmails||msUsers.map(u=>(u.mail||u.userPrincipalName||'').toLowerCase());
+    const rows=src.map(e=>`"${e}","${c2gMappings[e]||''}"`);
     const csv='M365 Email,Google Email\n'+rows.join('\n');
     const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='c2g-user-mappings.csv';a.click();
-    showToast('User mapping CSV downloaded.');
+    showToast('CSV downloaded.');
   };
 
   const uploadCsv=file=>{
@@ -1297,19 +1299,43 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
     const r=new FileReader();
     r.onload=e=>{
       const lines=e.target.result.split(/\r?\n/).slice(1);
-      const m={...c2gMappings};
-      for(const l of lines){if(!l.trim())continue;const c=parseCsvLine(l);if(c.length>=2&&c[0])m[c[0]]=c[1]}
-      setC2gMappings(m);setC2gSelectedUsers(new Set(Object.keys(m)));
-      setCsvUploading(false);showToast('User mapping uploaded.');
+      const m={};const csvKeys=[];
+      for(const l of lines){
+        if(!l.trim())continue;
+        const c=parseCsvLine(l);
+        if(c.length>=2&&c[0]){
+          const src=c[0].trim().toLowerCase();
+          const dst=c[1].trim();
+          m[src]=dst;
+          csvKeys.push(src);
+        }
+      }
+      setC2gMappings(prev=>({...prev,...m}));
+      setC2gSelectedUsers(new Set(csvKeys.filter(k=>m[k])));
+      setCsvEmails(csvKeys);
+      setCsvUploading(false);showToast(`CSV uploaded — ${csvKeys.length} user(s).`);
     };
-    r.onerror=()=>setCsvUploading(false);
+    r.onerror=()=>{setCsvUploading(false);showToast('Failed to read CSV file.','error')};
     r.readAsText(file);
   };
 
-  const filtered=msUsers.filter(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();const q=search.toLowerCase();return em.includes(q)||(c2gMappings[em]||'').toLowerCase().includes(q)});
+  const clearCsv=()=>{
+    setCsvEmails(null);
+    // Restore auto-mapping from cloud users
+    const byLocal={};
+    googleUsers.forEach(u=>{const em=(u.email||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
+    const m={};
+    msUsers.forEach(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();m[em]=byLocal[em.split('@')[0]]||''});
+    setC2gMappings(m);
+    setC2gSelectedUsers(new Set(msUsers.map(u=>(u.mail||u.userPrincipalName||'').toLowerCase())));
+    showToast('CSV cleared — restored cloud auto-mapping.');
+  };
+
+  const displayUsers=csvEmails?msUsers.filter(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();return csvEmails.includes(em)}):msUsers;
+  const filtered=displayUsers.filter(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();const q=search.toLowerCase();return em.includes(q)||(c2gMappings[em]||'').toLowerCase().includes(q)}).sort((a,b)=>{const ea=(a.mail||a.userPrincipalName||'').toLowerCase(),eb=(b.mail||b.userPrincipalName||'').toLowerCase();const sa=c2gSelectedUsers.has(ea)?0:1,sb=c2gSelectedUsers.has(eb)?0:1;return sa-sb||ea.localeCompare(eb)});
   const toggleUser=e=>setC2gSelectedUsers(p=>{const n=new Set(p);n.has(e)?n.delete(e):n.add(e);return n});
-  const autoMapped=msUsers.filter(u=>!!c2gMappings[u.mail||u.userPrincipalName||'']).length;
-  const unmapped=msUsers.filter(u=>!c2gMappings[u.mail||u.userPrincipalName||'']).length;
+  const autoMapped=displayUsers.filter(u=>!!c2gMappings[u.mail||u.userPrincipalName||'']).length;
+  const unmapped=displayUsers.filter(u=>!c2gMappings[u.mail||u.userPrincipalName||'']).length;
 
   return(
     <div style={{display:'flex',flexDirection:'column',height:'100%'}} className="fade-up">
@@ -1318,28 +1344,33 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
           <div>
             <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:2}}>User Mapping</div>
             <div style={{fontSize:13,color:C.muted}}>
-              Map M365 accounts to Google emails.{' '}
+              {csvEmails?<span style={{color:C.primary,fontWeight:500}}>{csvEmails.length} users from CSV</span>
+              :<>Map M365 accounts to Google emails.{' '}
               {autoMapped>0&&<span style={{color:C.success,fontWeight:500}}>{autoMapped} auto-mapped</span>}
-              {unmapped>0&&<span style={{color:C.error}}>{autoMapped>0?' · ':''}{unmapped} need mapping</span>}
+              {unmapped>0&&<span style={{color:C.error}}>{autoMapped>0?' · ':''}{unmapped} need mapping</span>}</>}
             </div>
           </div>
-          <div style={{display:'flex',gap:6,flexShrink:0}}>
+          <div style={{display:'flex',gap:4,flexShrink:0}}>
             <input ref={csvRef} type="file" accept=".csv" style={{display:'none'}} onChange={e=>{if(e.target.files[0])uploadCsv(e.target.files[0]);e.target.value=''}}/>
-            <button onClick={()=>csvRef.current.click()} disabled={csvUploading} style={{fontSize:12,color:C.muted,background:'white',border:`1px solid ${C.border}`,borderRadius:5,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,display:'inline-flex',alignItems:'center',gap:4}}>
-              {csvUploading?<Spinner s={10}/>:<IcoUpload s={11}/>} Upload CSV
+            <button onClick={()=>csvRef.current.click()} disabled={csvUploading} title="Upload CSV" style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.border}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}} onMouseEnter={e=>e.currentTarget.style.background=C.bg} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+              {csvUploading?<Spinner s={12}/>:<IcoUpload s={13} c={C.muted}/>}
             </button>
-            <button onClick={downloadCsv} style={{fontSize:12,color:C.primary,background:'white',border:`1px solid ${C.primary}`,borderRadius:5,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,display:'inline-flex',alignItems:'center',gap:4}}><IcoDownload s={11} c={C.primary}/> Download CSV</button>
+            <button onClick={downloadCsv} title="Download CSV" style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.primary}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}} onMouseEnter={e=>e.currentTarget.style.background=C.tint} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+              <IcoDownload s={13} c={C.primary}/>
+            </button>
+            {csvEmails&&<button onClick={clearCsv} title="Clear CSV — restore cloud mapping" style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.error}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}} onMouseEnter={e=>e.currentTarget.style.background='#FEF2F2'} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+              <IcoTrash s={13}/>
+            </button>}
           </div>
         </div>
-        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
-          <div style={{fontSize:12,color:C.muted}}><span style={{fontWeight:600,color:C.primary}}>{c2gSelectedUsers.size}</span> of {msUsers.length} selected</div>
-          <TextBtn onClick={()=>{if(c2gSelectedUsers.size===msUsers.length)setC2gSelectedUsers(new Set());else setC2gSelectedUsers(new Set(msUsers.map(u=>u.mail||u.userPrincipalName||'')))}}>{c2gSelectedUsers.size===msUsers.length?'Deselect All':'Select All'}</TextBtn>
+        <div style={{display:'flex',alignItems:'center',marginBottom:8}}>
+          <div style={{fontSize:12,color:C.muted}}><span style={{fontWeight:600,color:C.primary}}>{c2gSelectedUsers.size}</span> of {displayUsers.length} selected</div>
         </div>
         <SearchBar value={search} onChange={setSearch} placeholder="Search by email..."/>
       </div>
       <div style={{flex:1,overflowY:'auto',minHeight:0,background:'white',border:`1px solid ${C.border}`,borderRadius:10}}>
         <div style={{display:'grid',gridTemplateColumns:'32px 1fr 1fr',padding:'9px 14px',background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.4,position:'sticky',top:0,zIndex:1}}>
-          <div/><div>M365 Email</div><div>Google Email</div>
+          <input type="checkbox" checked={c2gSelectedUsers.size>0&&c2gSelectedUsers.size===displayUsers.length} onChange={()=>{if(c2gSelectedUsers.size===displayUsers.length)setC2gSelectedUsers(new Set());else setC2gSelectedUsers(new Set(displayUsers.map(u=>(u.mail||u.userPrincipalName||'').toLowerCase())))}} style={{accentColor:C.primary,width:15,height:15,cursor:'pointer'}}/><div>M365 Email</div><div>Google Email</div>
         </div>
         {filtered.map((u,i)=>{
           const em=(u.mail||u.userPrincipalName||'').toLowerCase();
@@ -1382,8 +1413,8 @@ const StepC2GOptions=({c2gOptions,setC2gOptions,c2gConfig,setC2gConfig,googleAut
         <div style={{fontSize:13,color:C.muted}}>Configure and start the Copilot → Gemini migration.</div>
       </div>
 
-      <Field label="Folder Name *" hint="Google Drive folder where Copilot conversations will be saved (required)">
-        <input type="text" value={c2gConfig.folderName||''} onChange={e=>setC2gConfig(p=>({...p,folderName:e.target.value}))} placeholder="e.g. CopilotChats" style={{width:'100%',border:`2px solid ${C.border}`,borderRadius:6,padding:'9px 12px',fontSize:13,outline:'none',transition:'border .2s',boxSizing:'border-box'}} onFocus={e=>e.target.style.borderColor=C.primary} onBlur={e=>e.target.style.borderColor=C.border}/>
+      <Field label="Folder Name *">
+        <input type="text" value={c2gConfig.folderName||''} onChange={e=>setC2gConfig(p=>({...p,folderName:e.target.value}))} placeholder="CopilotChats" style={{width:'100%',border:`2px solid ${C.border}`,borderRadius:6,padding:'9px 12px',fontSize:13,outline:'none',transition:'border .2s',boxSizing:'border-box'}} onFocus={e=>e.target.style.borderColor=C.primary} onBlur={e=>e.target.style.borderColor=C.border}/>
       </Field>
 
       <Card style={{marginBottom:16}}>
@@ -1478,7 +1509,7 @@ const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c
           <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
             {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{flex:'1 1 140px',justifyContent:'center'}}><IcoRocket s={14}/> Start Live Migration</Btn>}
             <Btn variant="ghost" onClick={onBack} style={{flex:'1 1 100px',justifyContent:'center'}}>← Options</Btn>
-            <Btn variant="ghost" onClick={()=>onRunAnother&&onRunAnother()} style={{flex:'1 1 120px',justifyContent:'center'}}>New Import</Btn>
+            <Btn variant="ghost" onClick={()=>onRunAnother&&onRunAnother()} style={{flex:'1 1 120px',justifyContent:'center'}}>New Migration</Btn>
             {onChangeDirection&&<Btn variant="ghost" onClick={onChangeDirection} style={{flex:'1 1 120px',justifyContent:'center'}}>⇄ Change Direction</Btn>}
           </div>
         </>
@@ -1673,7 +1704,7 @@ function App(){
 
   const [step,setStep]=useState(()=>lsGet(K.step,0));
   const [uploadData,setUploadData]=useState(()=>lsGet(K.uploadData,null));
-  const [config,setConfig]=useState(()=>{const s=lsGet(K.config,{});return{filePath:s.filePath||s.fileName||s.customerName||'',tenantId:s.tenantId||'807d6772-847c-40e2-9bec-e2c930b3a42e'}});
+  const [config,setConfig]=useState(()=>{const s=lsGet(K.config,{});return{filePath:s.filePath||s.fileName||s.customerName||'GeminiChats',tenantId:s.tenantId||'807d6772-847c-40e2-9bec-e2c930b3a42e'}});
   const [mappings,setMappings]=useState(()=>lsGet(K.mappings,{}));
   const [selectedUsers,setSelectedUsers]=useState(()=>{const s=lsGet(K.selUsers,null);return s?new Set(s):new Set()});
   const [options,setOptions]=useState({dryRun:true,skipFollowups:false,skipAiResponse:false,fromDate:'',toDate:''});
@@ -1977,7 +2008,7 @@ function App(){
 
     const fm={};const keys=selectedUsers.size>0?[...selectedUsers]:Object.keys(mappings);
     keys.forEach(k=>{if(mappings[k]!==undefined)fm[k]=mappings[k]});
-    const payload={extract_path:uploadData.extract_path,tenant_id:config.tenantId,customer_name:config.filePath||'Gemini',user_mappings:fm,dry_run:isDry,skip_followups:false,skip_ai_response:options.skipAiResponse,from_date:options.fromDate||null,to_date:options.toDate||null,upload_id:uploadData.id};
+    const payload={extract_path:uploadData.extract_path,tenant_id:config.tenantId,customer_name:config.filePath||'Gemini',user_mappings:fm,dry_run:isDry,skip_followups:false,skip_ai_response:true,from_date:options.fromDate||null,to_date:options.toDate||null,upload_id:uploadData.id};
     try{
       const res=await fetch('/api/migrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       if(!res.ok){const d=await res.json();addLog('error',d.error);setLive(false)}
@@ -2073,12 +2104,13 @@ function App(){
           sseRef.current.close();setC2gLive(false);setC2gDone(true);setStep(5);
           setReportRefreshKey(p=>p+1);
           const s2={...curStats};
+          const nextSteps=isDry?'':'\n\n**Next steps:** Open [gemini.google.com](https://gemini.google.com), create a new Gem, upload the DOCX files as Knowledge, and set your instructions.';
           setTimeout(()=>addAgentMsg('bot',
             s2.errors>0
               ? `Migration finished with **${s2.errors} error${s2.errors!==1?'s':''}**. Check below and retry if needed.`
               : isDry
                 ? `Dry run complete — **${s2.files} file${s2.files!==1?'s':''}** would be uploaded for **${s2.users} user${s2.users!==1?'s':''}**. Ready to go live?`
-                : `All done! **${s2.files} file${s2.files!==1?'s':''}** uploaded to Google Drive across **${s2.users} user${s2.users!==1?'s':''}**.`,
+                : `All done! **${s2.files} file${s2.files!==1?'s':''}** uploaded to Google Drive across **${s2.users} user${s2.users!==1?'s':''}**.${nextSteps}`,
             {statusCard:{users:s2.users,files:s2.files,errors:s2.errors,label:isDry?'Dry Run Preview':'Migration Results'},
              quickReplies:isDry?['Start Live Migration','Start Another']:s2.errors>0?['Download Report','Start Another']:['Download Report','Start Another']}
           ),400);
@@ -2250,9 +2282,9 @@ function App(){
     <div style={{display:'flex',flexDirection:'column',height:'100vh',fontFamily:'Poppins,system-ui,sans-serif'}}>
       {/* Header */}
       <div style={{background:C.primary,height:52,display:'flex',alignItems:'center',padding:'0 24px',gap:12,flexShrink:0,boxShadow:'0 2px 8px rgba(1,41,172,.2)'}}>
-        <img src="/assets/logo.png" alt="CloudFuze" style={{height:32,objectFit:'contain'}}/>
+        <img src="/assets/logo.png" alt="CloudFuze" style={{height:32,objectFit:'contain',cursor:'pointer'}} onClick={()=>window.location.reload()}/>
         <div style={{width:1,height:24,background:'rgba(255,255,255,.25)',margin:'0 4px'}}/>
-        <div style={{color:'white',fontSize:15,fontWeight:700,letterSpacing:.2}}>CloudFuze</div>
+        <div style={{color:'white',fontSize:15,fontWeight:700,letterSpacing:.2,cursor:'pointer'}} onClick={()=>window.location.reload()}>CloudFuze</div>
         <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:10}}>
           <div style={{display:'flex',alignItems:'center',gap:6}}>
             <div className={live?'pulse-dot':''} style={{width:8,height:8,borderRadius:'50%',background:live?'#4ade80':'rgba(255,255,255,.3)',transition:'background .3s'}}/>
@@ -2280,16 +2312,16 @@ function App(){
             <div style={{padding:'10px 16px',borderBottom:`1px solid ${C.border}`,background:'white',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
               <div style={{display:'flex',alignItems:'center',gap:10}}>
                 <div onMouseDown={e=>handlePanelGripMouseDown(side,e)} style={{cursor:'grab',color:C.muted,display:'flex',padding:'3px 4px',borderRadius:4,userSelect:'none',transition:'color .15s',flexShrink:0}} title="Drag to swap panels" onMouseEnter={e=>e.currentTarget.style.color=C.primary} onMouseLeave={e=>e.currentTarget.style.color=C.muted}><IcoGrip s={14}/></div>
-                <div style={{width:30,height:30,borderRadius:8,background:`linear-gradient(135deg,${C.primary},${C.primaryL})`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                <div onClick={()=>setStep(0)} style={{width:30,height:30,borderRadius:8,background:`linear-gradient(135deg,${C.primary},${C.primaryL})`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,cursor:'pointer'}}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><path d="M12 2a4 4 0 014 4v2H8V6a4 4 0 014-4z"/><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5" fill="white"/><circle cx="15" cy="14" r="1.5" fill="white"/></svg>
                 </div>
-                <div>
+                <div onClick={()=>setStep(0)} style={{cursor:'pointer'}}>
                   <div style={{fontSize:13,fontWeight:600,lineHeight:1.2,color:C.dark}}>CloudFuze Migration</div>
                 </div>
               </div>
               <div style={{display:'flex',alignItems:'center',gap:6}}>
-                {migDone&&currentBatchId&&<span style={{fontSize:9,color:C.primaryL,flexShrink:0,background:C.tint,padding:'2px 6px',borderRadius:4}}>#{currentBatchId.slice(-6)}</span>}
-                {migDir&&<button onClick={handleChangeDirection} style={{fontSize:10,color:C.muted,background:'none',border:`1px solid ${C.border}`,borderRadius:4,padding:'2px 8px',cursor:'pointer',fontFamily:'inherit',flexShrink:0}} onMouseEnter={e=>{e.currentTarget.style.color=C.primary;e.currentTarget.style.borderColor=C.primary}} onMouseLeave={e=>{e.currentTarget.style.color=C.muted;e.currentTarget.style.borderColor=C.border}}>⇄ Change</button>}
+                {/* batchId saved in backend — hidden from UI */}
+{/* change direction available from completion screen */}
               </div>
             </div>
             {/* Step content */}
@@ -2323,10 +2355,10 @@ function App(){
             <div style={{padding:'10px 16px',borderBottom:`1px solid ${C.border}`,background:'white',display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
               <div style={{display:'flex',alignItems:'center',gap:8}}>
                 <div onMouseDown={e=>handlePanelGripMouseDown(side,e)} style={{cursor:'grab',color:C.muted,display:'flex',padding:'3px 4px',borderRadius:4,userSelect:'none',transition:'color .15s'}} title="Drag to swap panels" onMouseEnter={e=>e.currentTarget.style.color=C.primary} onMouseLeave={e=>e.currentTarget.style.color=C.muted}><IcoGrip s={14}/></div>
-                <div style={{width:30,height:30,borderRadius:8,background:`linear-gradient(135deg,${C.primary},${C.primaryL})`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                <div onClick={()=>setStep(0)} style={{width:30,height:30,borderRadius:8,background:`linear-gradient(135deg,${C.primary},${C.primaryL})`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,cursor:'pointer'}}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><path d="M12 2a4 4 0 014 4v2H8V6a4 4 0 014-4z"/><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5" fill="white"/><circle cx="15" cy="14" r="1.5" fill="white"/></svg>
                 </div>
-                <div>
+                <div onClick={()=>setStep(0)} style={{cursor:'pointer'}}>
                   <div style={{fontSize:13,fontWeight:600,lineHeight:1.2,color:C.dark}}>Migration Agent</div>
                   {migDir&&<div style={{display:'flex',alignItems:'center',gap:4,marginTop:1}}>
                     {migDir==='gemini-copilot'?<><GoogleIcon/><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg><MsIcon/><span style={{fontSize:10,color:C.muted,marginLeft:2}}>Google → Microsoft</span></>
