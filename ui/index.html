@@ -1226,7 +1226,7 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
     r.readAsText(file);
   };
 
-  const filtered=msUsers.filter(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();const q=search.toLowerCase();return em.includes(q)||(c2gMappings[em]||'').toLowerCase().includes(q)});
+  const filtered=msUsers.filter(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();const q=search.toLowerCase();return em.includes(q)||(c2gMappings[em]||'').toLowerCase().includes(q)}).sort((a,b)=>{const ea=(a.mail||a.userPrincipalName||'').toLowerCase(),eb=(b.mail||b.userPrincipalName||'').toLowerCase();const sa=c2gSelectedUsers.has(ea)?0:1,sb=c2gSelectedUsers.has(eb)?0:1;return sa-sb||ea.localeCompare(eb)});
   const toggleUser=e=>setC2gSelectedUsers(p=>{const n=new Set(p);n.has(e)?n.delete(e):n.add(e);return n});
   const autoMapped=msUsers.filter(u=>!!c2gMappings[u.mail||u.userPrincipalName||'']).length;
   const unmapped=msUsers.filter(u=>!c2gMappings[u.mail||u.userPrincipalName||'']).length;
