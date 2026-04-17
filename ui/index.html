@@ -1205,7 +1205,7 @@ const VisualizationPanel=({step,googleAuthed,msAuthed,uploadData,googleUsers,msU
 };
 
 /* Agent chat panel */
-const AgentChat=({msgs,typing,input,onInput,onSend,onLogLineClick,onQuickReply,widgetProps={},onShowReports})=>{
+const AgentChat=({msgs,typing,input,onInput,onSend,onLogLineClick,onQuickReply,widgetProps={},onShowReports,onClearChat})=>{
   const endRef=useRef(null);
   const [plusOpen,setPlusOpen]=useState(false);
   const plusRef=useRef(null);
@@ -1227,16 +1227,20 @@ const AgentChat=({msgs,typing,input,onInput,onSend,onLogLineClick,onQuickReply,w
             <div style={{fontSize:12,color:C.muted,maxWidth:240}}>Your AI guide for migrating Google Gemini conversations to Microsoft Copilot. Ask me anything or let me guide you through the process.</div>
           </div>
         )}
-        {msgs.map(m=>{
-          if(m.shellBlock)return null;
-          if(m.role==='user')return<UserMsg key={m.id}>{m.content}</UserMsg>;
-          return(
-            <div key={m.id}>
-              <BotMsg quickReplies={m.quickReplies} onQuickReply={onQuickReply} statusCard={m.statusCard} chips={m.chips}>{m.content}</BotMsg>
-              {m.widget&&<ChatWidget type={m.widget.type} widgetProps={widgetProps}/>}
-            </div>
-          );
-        })}
+        {(()=>{
+          const visible=msgs.filter(m=>!m.shellBlock);
+          const lastBotIdx=visible.map(m=>m.role).lastIndexOf('bot');
+          return visible.map((m,i)=>{
+            if(m.role==='user')return<UserMsg key={m.id}>{m.content}</UserMsg>;
+            const isLast=i===lastBotIdx;
+            return(
+              <div key={m.id}>
+                <BotMsg quickReplies={isLast?m.quickReplies:undefined} onQuickReply={onQuickReply} statusCard={m.statusCard} chips={m.chips}>{m.content}</BotMsg>
+                {m.widget&&<ChatWidget type={m.widget.type} widgetProps={widgetProps}/>}
+              </div>
+            );
+          });
+        })()}
         {typing&&<TypingDots/>}
         <div ref={endRef}/>
       </div>
@@ -1249,6 +1253,9 @@ const AgentChat=({msgs,typing,input,onInput,onSend,onLogLineClick,onQuickReply,w
               <div style={{position:'absolute',bottom:'calc(100% + 6px)',left:0,background:'white',border:`1px solid ${C.border}`,borderRadius:10,boxShadow:'0 4px 20px rgba(0,0,0,.1)',minWidth:160,zIndex:200,overflow:'hidden'}}>
                 <button onClick={()=>{setPlusOpen(false);onShowReports&&onShowReports();}} style={{width:'100%',padding:'10px 14px',border:'none',background:'white',cursor:'pointer',fontSize:12,fontFamily:'inherit',color:C.dark,display:'flex',alignItems:'center',gap:8,textAlign:'left',transition:'background .12s'}} onMouseEnter={e=>e.currentTarget.style.background=C.tint} onMouseLeave={e=>e.currentTarget.style.background='white'}>
                   <IcoReport s={13}/> View Reports
+                </button>
+                <button onClick={()=>{setPlusOpen(false);onClearChat&&onClearChat();}} style={{width:'100%',padding:'10px 14px',border:'none',background:'white',cursor:'pointer',fontSize:12,fontFamily:'inherit',color:'#ef4444',display:'flex',alignItems:'center',gap:8,textAlign:'left',transition:'background .12s'}} onMouseEnter={e=>e.currentTarget.style.background='#fff5f5'} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+                  <IcoReset s={13}/> Clear Chat
                 </button>
               </div>
             )}
@@ -2134,7 +2141,10 @@ function App(){
   const sendToAgent=useCallback(async(overrideMsg,isSystem=false)=>{
     const userMsg=overrideMsg||agentInput.trim();
     if(!userMsg)return;
-    if(!isSystem){setAgentInput('');addAgentMsg('user',userMsg);}
+    if(!isSystem){
+      if(/^clear( chat)?$/i.test(userMsg.trim())){setAgentInput('');setAgentMsgs([]);return;}
+      setAgentInput('');addAgentMsg('user',userMsg);
+    }
     setAgentTyping(true);
     try{
       const history=agentMsgs.filter(m=>!m.shellBlock).map(m=>({role:m.role==='bot'?'assistant':'user',content:m.content})).slice(-12);
@@ -2334,7 +2344,7 @@ function App(){
                 <span style={{fontSize:12,color:live?'#16a34a':C.muted,fontWeight:500}}>{live?'Migrating':'Ready'}</span>
               </div>
             </div>
-            <AgentChat msgs={agentMsgs} typing={agentTyping} input={agentInput} onInput={setAgentInput} onSend={()=>sendToAgent()} onLogLineClick={handleLogLineClick} onQuickReply={handleAgentQuickReply} widgetProps={widgetProps} onShowReports={()=>setShowReports(true)}/>
+            <AgentChat msgs={agentMsgs} typing={agentTyping} input={agentInput} onInput={setAgentInput} onSend={()=>sendToAgent()} onLogLineClick={handleLogLineClick} onQuickReply={handleAgentQuickReply} widgetProps={widgetProps} onShowReports={()=>setShowReports(true)} onClearChat={()=>setAgentMsgs([])}/>
           </div>
         );
         return(
