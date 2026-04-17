@@ -14,8 +14,8 @@ services:
       # Persistent data directories
       - ./uploads:/app/uploads
       - ./customers:/app/customers
-      # Service account — must exist at project root on the host (cp copilot/copilot/service_account.json ./service_account.json)
-      - ./service_account.json:/app/service_account.json:ro
+      # Service account key — sourced from copilot/copilot/service_account.json
+      - ./copilot/copilot/service_account.json:/app/service_account.json:ro
     depends_on:
       mongodb:
         condition: service_healthy
