@@ -1658,19 +1658,48 @@ const AGENT_TOOLS = [
         required: ['log_line']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'show_status_card',
+      description: 'Display a visual status card with migration stats. Use when summarizing migration results or answering questions about counts.',
+      parameters: {
+        type: 'object',
+        properties: {
+          users:  { type: 'number', description: 'Users processed' },
+          files:  { type: 'number', description: 'Files/pages migrated' },
+          errors: { type: 'number', description: 'Error count' },
+          label:  { type: 'string', description: 'Card title, e.g. "Migration Results"' }
+        },
+        required: ['users', 'files', 'errors']
+      }
+    }
   }
 ];
 
 const STEP_NAMES = ['Connect Clouds', 'Import Data', 'Map Users', 'Options', 'Migration in Progress', 'Migration Complete'];
 
-const STEP_QUICK_REPLIES = [
-  ['Connect Google Workspace', 'Connect Microsoft 365', 'Do I need admin access?'],
-  ['Upload a Vault ZIP', 'Export from Google Drive', 'What format is needed?'],
-  ['Show me the mapping', 'Auto-map users', 'How do I fix unmapped users?'],
-  ['Start Dry Run', 'Start Migration', 'What does dry run do?'],
-  ['How long will this take?', 'Show live stats', 'Stop migration'],
-  ['Download Report', 'Start Another Migration', 'What happens next?']
-];
+function getContextualReplies({migDir,migDone,live,googleAuthed,msAuthed,uploadData,mappings_count,stats,lastRunWasDry}={}) {
+  if(!googleAuthed||!msAuthed) return ['Connect Google Workspace','Connect Microsoft 365','How does this work?'];
+  if(!migDir) return ['Migrate Gemini → Copilot','Migrate Copilot → Gemini','What\'s the difference?'];
+  if(migDir==='gemini-copilot'){
+    if(!uploadData) return ['Upload Vault ZIP','Export from Google Drive','What format do I need?'];
+    if(!mappings_count) return ['Auto-map users','Map manually','What is user mapping?'];
+    if(!migDone&&!live) return ['Start dry run','Start live migration','What does dry run do?'];
+    if(live) return ['Check migration status','What\'s happening?'];
+    if(migDone&&(stats?.errors||0)>0) return ['Retry failed','Download report','What failed and why?'];
+    if(migDone) return ['Download report','Start another','Change direction'];
+  }
+  if(migDir==='copilot-gemini'){
+    if(!mappings_count) return ['Map C2G users','How does C2G migration work?'];
+    if(!migDone&&!live) return ['Start dry run','Start live migration'];
+    if(live) return ['Check migration status'];
+    if(migDone&&(stats?.errors||0)>0) return ['What errors occurred?','Download report'];
+    if(migDone) return ['Download report','Start another','Change direction'];
+  }
+  return ['What can you do?','Show migration status'];
+}
 
 async function callAI(messages, tools) {
   const azureEndpoint = process.env.AZURE_OPENAI_ENDPOINT;
@@ -1680,7 +1709,7 @@ async function callAI(messages, tools) {
 
   if (azureEndpoint && azureKey) {
     const url = `${azureEndpoint.replace(/\/$/, '')}/openai/deployments/${azureDeployment}/chat/completions?api-version=2024-02-15-preview`;
-    const body = { messages, max_tokens: 700, temperature: 0.35 };
+    const body = { messages, max_tokens: 900, temperature: 0.4 };
     if (tools) body.tools = tools;
     const r = await fetch(url, {
       method: 'POST',
@@ -1717,10 +1746,10 @@ app.post('/api/chat', requireAuth, async (req, res) => {
   } = migrationState;
 
   const logsSection = migrationLogs.length > 0
-    ? `\nRecent migration log (last ${migrationLogs.length} entries):\n${migrationLogs.join('\n')}\n`
+    ? `\nRecent migration log (${migrationLogs.length} entries):\n${migrationLogs.join('\n')}\n`
     : '';
 
-  const systemPrompt = `You are the Migration Agent for CloudFuze GEM — a tool that migrates conversations between Google Workspace and Microsoft 365 in both directions.
+  const systemPrompt = `You are the CloudFuze Migration Agent — a knowledgeable, conversational co-pilot for migrating conversations between Google Workspace and Microsoft 365 in both directions.
 
 Current migration state:
 - Direction: ${migDir === 'gemini-copilot' ? 'Google Gemini → Microsoft Copilot' : migDir === 'copilot-gemini' ? 'Microsoft Copilot → Google Drive' : 'not selected'}
@@ -1732,14 +1761,16 @@ Current migration state:
 - Dry run mode: ${options.dryRun ? 'yes' : 'no'}
 - Migration running: ${live}
 - Migration done: ${migDone}
-- Last run was dry run: ${lastRunWasDry}
-- Stats: ${stats.users || 0} users, ${stats.pages || 0} pages/files migrated, ${stats.errors || 0} errors, ${stats.flagged || 0} flagged
+- Last run: ${lastRunWasDry ? 'dry run' : 'live'}
+- Stats: ${stats.users || 0} users · ${stats.pages || 0} pages/files migrated · ${stats.errors || 0} errors
 ${logsSection}
-When the user asks about migration progress, errors, results, or what happened — answer using the log entries above. Summarise clearly: how many users processed, files migrated, any errors and what they mean.
-You work alongside the left panel which shows the current migration step's UI. You CAN take real actions: navigate to steps, start migration, retry failures, show reports.
-Guide the user proactively. Be concise — 2-4 sentences max unless explaining an error.
+Use the state and logs above to give specific, relevant answers. When the user asks about progress, results, or errors — answer from the actual data above, citing real numbers.
 
-IMPORTANT: Use plain text only. No markdown asterisks, no bold syntax, no bullet symbols. Use line breaks for structure.`;
+Formatting: use markdown freely — **bold** for key numbers and values, - bullet lists for steps or options, ## headers only for longer structured answers. Match length to need.
+
+Personality: direct, warm, expert. Like a senior engineer helping a colleague. Never narrate what step the user is on — offer to help them move forward instead. Ask one focused question when you notice something worth exploring.
+
+You CAN take real actions via tools: navigate steps, start migration, retry, show reports, show mapping, show_status_card.`;
 
   const messages = [
     { role: 'system', content: systemPrompt },
@@ -1752,6 +1783,7 @@ IMPORTANT: Use plain text only. No markdown asterisks, no bold syntax, no bullet
     let choice = response.choices?.[0];
     let actionToExecute = null;
     let navigateToStep = null;
+    let statusCardData = null;
 
     // Handle tool calls
     if (choice?.finish_reason === 'tool_calls' && choice.message?.tool_calls) {
@@ -1803,6 +1835,12 @@ IMPORTANT: Use plain text only. No markdown asterisks, no bold syntax, no bullet
                 : `This is an informational log from the migration engine showing normal progress.`;
               break;
             }
+            case 'show_status_card': {
+              actionToExecute = actionToExecute || null;
+              statusCardData = { users: args.users || 0, files: args.files || 0, errors: args.errors || 0, label: args.label || 'Migration Results' };
+              result = `Status card shown: ${args.users||0} users, ${args.files||0} files, ${args.errors||0} errors.`;
+              break;
+            }
             default:
               result = 'Unknown tool.';
           }
@@ -1816,7 +1854,7 @@ IMPORTANT: Use plain text only. No markdown asterisks, no bold syntax, no bullet
     }
 
     const reply = choice?.message?.content || "I couldn't generate a response. Please try again.";
-    const quickReplies = STEP_QUICK_REPLIES[step] || [];
+    const quickReplies = getContextualReplies(migrationState);
 
     // Auto-inject widget based on current migration state + agent action
     let widget = null;
@@ -1833,6 +1871,7 @@ IMPORTANT: Use plain text only. No markdown asterisks, no bold syntax, no bullet
     if (actionToExecute) payload.action = actionToExecute;
     if (navigateToStep !== null) payload.navigate = navigateToStep;
     if (widget) payload.widget = widget;
+    if (statusCardData) payload.statusCard = statusCardData;
 
     res.json(payload);
   } catch (err) {
