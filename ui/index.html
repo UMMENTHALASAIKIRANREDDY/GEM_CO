@@ -860,11 +860,6 @@ const StepMigrate=({stats,done,lastRunWasDry,batchId,onStartLive,onRunAnother,on
                 <IcoRocket s={14}/> Start Migration (Live)
               </Btn>
             )}
-            {hasUploadData&&(
-              <Btn variant="outline" onClick={()=>onRunAnother(true)} style={{flex:'1 1 120px',justifyContent:'center'}}>
-                Another Batch (Same Data)
-              </Btn>
-            )}
             <Btn variant="ghost" onClick={()=>onRunAnother(false)} style={{flex:'1 1 100px',justifyContent:'center'}}>
               New Migration
             </Btn>
