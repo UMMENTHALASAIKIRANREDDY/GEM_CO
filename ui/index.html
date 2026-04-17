@@ -1190,6 +1190,7 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
   const csvRef=useRef(null);
   const [search,setSearch]=useState('');
   const [csvUploading,setCsvUploading]=useState(false);
+  const [csvEmails,setCsvEmails]=useState(null);
 
   // Auto-map by email local-part on mount
   useEffect(()=>{
@@ -1206,10 +1207,11 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
   },[msUsers,googleUsers]);
 
   const downloadCsv=()=>{
-    const rows=msUsers.map(u=>{const e=u.mail||u.userPrincipalName||'';return`"${e}","${c2gMappings[e]||''}"`});
+    const src=csvEmails||msUsers.map(u=>(u.mail||u.userPrincipalName||'').toLowerCase());
+    const rows=src.map(e=>`"${e}","${c2gMappings[e]||''}"`);
     const csv='M365 Email,Google Email\n'+rows.join('\n');
     const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='c2g-user-mappings.csv';a.click();
-    showToast('User mapping CSV downloaded.');
+    showToast('CSV downloaded.');
   };
 
   const uploadCsv=file=>{
@@ -1217,8 +1219,7 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
     const r=new FileReader();
     r.onload=e=>{
       const lines=e.target.result.split(/\r?\n/).slice(1);
-      const m={...c2gMappings};
-      const sel=new Set();
+      const m={};const csvKeys=[];
       for(const l of lines){
         if(!l.trim())continue;
         const c=parseCsvLine(l);
@@ -1226,21 +1227,35 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
           const src=c[0].trim().toLowerCase();
           const dst=c[1].trim();
           m[src]=dst;
-          if(dst)sel.add(src);
+          csvKeys.push(src);
         }
       }
-      setC2gMappings(m);
-      setC2gSelectedUsers(prev=>{const n=new Set(prev);sel.forEach(s=>n.add(s));return n});
-      setCsvUploading(false);showToast(`User mapping uploaded — ${sel.size} pair(s) loaded.`);
+      setC2gMappings(prev=>({...prev,...m}));
+      setC2gSelectedUsers(new Set(csvKeys.filter(k=>m[k])));
+      setCsvEmails(csvKeys);
+      setCsvUploading(false);showToast(`CSV uploaded — ${csvKeys.length} user(s).`);
     };
     r.onerror=()=>{setCsvUploading(false);showToast('Failed to read CSV file.','error')};
     r.readAsText(file);
   };
 
-  const filtered=msUsers.filter(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();const q=search.toLowerCase();return em.includes(q)||(c2gMappings[em]||'').toLowerCase().includes(q)}).sort((a,b)=>{const ea=(a.mail||a.userPrincipalName||'').toLowerCase(),eb=(b.mail||b.userPrincipalName||'').toLowerCase();const sa=c2gSelectedUsers.has(ea)?0:1,sb=c2gSelectedUsers.has(eb)?0:1;return sa-sb||ea.localeCompare(eb)});
+  const clearCsv=()=>{
+    setCsvEmails(null);
+    // Restore auto-mapping from cloud users
+    const byLocal={};
+    googleUsers.forEach(u=>{const em=(u.email||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
+    const m={};
+    msUsers.forEach(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();m[em]=byLocal[em.split('@')[0]]||''});
+    setC2gMappings(m);
+    setC2gSelectedUsers(new Set(msUsers.map(u=>(u.mail||u.userPrincipalName||'').toLowerCase())));
+    showToast('CSV cleared — restored cloud auto-mapping.');
+  };
+
+  const displayUsers=csvEmails?msUsers.filter(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();return csvEmails.includes(em)}):msUsers;
+  const filtered=displayUsers.filter(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();const q=search.toLowerCase();return em.includes(q)||(c2gMappings[em]||'').toLowerCase().includes(q)}).sort((a,b)=>{const ea=(a.mail||a.userPrincipalName||'').toLowerCase(),eb=(b.mail||b.userPrincipalName||'').toLowerCase();const sa=c2gSelectedUsers.has(ea)?0:1,sb=c2gSelectedUsers.has(eb)?0:1;return sa-sb||ea.localeCompare(eb)});
   const toggleUser=e=>setC2gSelectedUsers(p=>{const n=new Set(p);n.has(e)?n.delete(e):n.add(e);return n});
-  const autoMapped=msUsers.filter(u=>!!c2gMappings[u.mail||u.userPrincipalName||'']).length;
-  const unmapped=msUsers.filter(u=>!c2gMappings[u.mail||u.userPrincipalName||'']).length;
+  const autoMapped=displayUsers.filter(u=>!!c2gMappings[u.mail||u.userPrincipalName||'']).length;
+  const unmapped=displayUsers.filter(u=>!c2gMappings[u.mail||u.userPrincipalName||'']).length;
 
   return(
     <div style={{display:'flex',flexDirection:'column',height:'100%'}} className="fade-up">
@@ -1249,22 +1264,28 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
           <div>
             <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:2}}>User Mapping</div>
             <div style={{fontSize:13,color:C.muted}}>
-              Map M365 accounts to Google emails.{' '}
+              {csvEmails?<span style={{color:C.primary,fontWeight:500}}>{csvEmails.length} users from CSV</span>
+              :<>Map M365 accounts to Google emails.{' '}
               {autoMapped>0&&<span style={{color:C.success,fontWeight:500}}>{autoMapped} auto-mapped</span>}
-              {unmapped>0&&<span style={{color:C.error}}>{autoMapped>0?' · ':''}{unmapped} need mapping</span>}
+              {unmapped>0&&<span style={{color:C.error}}>{autoMapped>0?' · ':''}{unmapped} need mapping</span>}</>}
             </div>
           </div>
-          <div style={{display:'flex',gap:6,flexShrink:0}}>
+          <div style={{display:'flex',gap:4,flexShrink:0}}>
             <input ref={csvRef} type="file" accept=".csv" style={{display:'none'}} onChange={e=>{if(e.target.files[0])uploadCsv(e.target.files[0]);e.target.value=''}}/>
-            <button onClick={()=>csvRef.current.click()} disabled={csvUploading} style={{fontSize:12,color:C.muted,background:'white',border:`1px solid ${C.border}`,borderRadius:5,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,display:'inline-flex',alignItems:'center',gap:4}}>
-              {csvUploading?<Spinner s={10}/>:<IcoUpload s={11}/>} Upload CSV
+            <button onClick={()=>csvRef.current.click()} disabled={csvUploading} title="Upload CSV" style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.border}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}} onMouseEnter={e=>e.currentTarget.style.background=C.bg} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+              {csvUploading?<Spinner s={12}/>:<IcoUpload s={13} c={C.muted}/>}
             </button>
-            <button onClick={downloadCsv} style={{fontSize:12,color:C.primary,background:'white',border:`1px solid ${C.primary}`,borderRadius:5,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,display:'inline-flex',alignItems:'center',gap:4}}><IcoDownload s={11} c={C.primary}/> Download CSV</button>
+            <button onClick={downloadCsv} title="Download CSV" style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.primary}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}} onMouseEnter={e=>e.currentTarget.style.background=C.tint} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+              <IcoDownload s={13} c={C.primary}/>
+            </button>
+            {csvEmails&&<button onClick={clearCsv} title="Clear CSV — restore cloud mapping" style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.error}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}} onMouseEnter={e=>e.currentTarget.style.background='#FEF2F2'} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+              <IcoTrash s={13}/>
+            </button>}
           </div>
         </div>
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
-          <div style={{fontSize:12,color:C.muted}}><span style={{fontWeight:600,color:C.primary}}>{c2gSelectedUsers.size}</span> of {msUsers.length} selected</div>
-          <TextBtn onClick={()=>{if(c2gSelectedUsers.size===msUsers.length)setC2gSelectedUsers(new Set());else setC2gSelectedUsers(new Set(msUsers.map(u=>u.mail||u.userPrincipalName||'')))}}>{c2gSelectedUsers.size===msUsers.length?'Deselect All':'Select All'}</TextBtn>
+          <div style={{fontSize:12,color:C.muted}}><span style={{fontWeight:600,color:C.primary}}>{c2gSelectedUsers.size}</span> of {displayUsers.length} selected</div>
+          <TextBtn onClick={()=>{const all=displayUsers.map(u=>(u.mail||u.userPrincipalName||'').toLowerCase());if(c2gSelectedUsers.size===all.length)setC2gSelectedUsers(new Set());else setC2gSelectedUsers(new Set(all))}}>{c2gSelectedUsers.size===displayUsers.length?'Deselect All':'Select All'}</TextBtn>
         </div>
         <SearchBar value={search} onChange={setSearch} placeholder="Search by email..."/>
       </div>
