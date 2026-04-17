@@ -504,12 +504,16 @@ app.post('/api/google/vault-export', requireGoogleAuth, async (req, res) => {
     const matter = await exporter.createMatter(`GEM_CO Export ${new Date().toISOString()}`);
     const exportData = await exporter.createExport(matter.matterId, user_emails);
 
+    const { msEmail } = getWorkspaceContext(req);
     activeExport = {
       matterId: matter.matterId,
       exportId: exportData.id,
       status: 'IN_PROGRESS',
       userEmails: user_emails,
       exporter,
+      appUserId,
+      googleEmail,
+      msEmail,
     };
 
     // Persist to vaultExports
@@ -585,11 +589,30 @@ app.get('/api/google/vault-export/status', async (_req, res) => {
       );
       dbLog.info(`vaultExports.update — export ${exportId} COMPLETED`);
 
+      // Save to uploads collection so it appears in Previous Uploads list
+      const uploadId = path.basename(destDir);
+      const usersArr = users.map(u => ({ email: u.email, displayName: u.displayName, conversationCount: u.conversationCount }));
+      const uploadDoc = {
+        _id: uploadId,
+        originalName: `vault_export_${new Date().toISOString().slice(0,10)}.zip`,
+        uploadTime: new Date(),
+        extractPath: destDir,
+        totalUsers: users.length,
+        totalConversations: users.reduce((s, u) => s + u.conversationCount, 0),
+        users: usersArr,
+        appUserId: activeExport.appUserId,
+        googleEmail: activeExport.googleEmail,
+        msEmail: activeExport.msEmail,
+      };
+      await db().collection('uploads').updateOne({ _id: uploadId }, { $set: uploadDoc }, { upsert: true });
+      dbLog.info(`uploads.upsert (vault export) — ${uploadDoc.totalUsers} users`);
+
       activeExport = null;
 
       return res.json({
         status,
-        upload_id: path.basename(destDir),
+        id: uploadId,
+        original_name: uploadDoc.originalName,
         extract_path: destDir,
         total_users: users.length,
         total_conversations: users.reduce((s, u) => s + u.conversationCount, 0),
@@ -728,10 +751,10 @@ app.post('/api/upload', requireGoogleAuth, upload.single('vault_zip'), async (re
 
 // ─── Upload Management ────────────────────────────────────────────────────────
 app.get('/api/uploads', async (req, res) => {
-  const wsFilter = getWorkspaceFilter(req);
-  if (!wsFilter) return res.json({ uploads: [] });
-  // Match current workspace OR legacy uploads (no googleEmail/msEmail fields) for this appUser
-  const uploads = await db().collection('uploads').find({ $or: [wsFilter, { appUserId: wsFilter.appUserId, googleEmail: { $exists: false } }] }).sort({ uploadTime: -1 }).toArray();
+  const { appUserId, googleEmail } = getWorkspaceContext(req);
+  if (!appUserId || !googleEmail) return res.json({ uploads: [] });
+  // Show all uploads for this user+google account regardless of MS connection
+  const uploads = await db().collection('uploads').find({ appUserId, $or: [{ googleEmail }, { googleEmail: { $exists: false } }] }).sort({ uploadTime: -1 }).toArray();
   res.json({
     uploads: uploads.map(u => ({
       id: u._id,

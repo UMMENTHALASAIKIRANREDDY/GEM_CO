@@ -427,7 +427,7 @@ const Step1=({googleUsers,googleAuthed,onComplete,onBack,showToast,uploadData:ac
               </div>
             </div>
             <div style={{fontWeight:600,fontSize:14,marginBottom:4}}>Exporting Gemini Data</div>
-            <div style={{fontSize:12,color:C.muted}}>{exportStatus}</div>
+            <div style={{fontSize:12,color:exportStatus.startsWith('Error')||exportStatus.startsWith('Failed')?C.error:C.muted,fontWeight:exportStatus.startsWith('Error')||exportStatus.startsWith('Failed')?600:400}}>{exportStatus}</div>
           </Card>
         ):googleUsers.length>0?(
           <UserSelectPanel users={googleUsers} selected={selected} toggleUser={toggleUser} toggleAll={toggleAll} startExport={startExport}/>
