@@ -51,7 +51,9 @@ const C={primary:'#0129AC',primaryH:'#0C18D4',primaryL:'#809EFC',tint:'#E1ECFF',
 const LS_KEYS={step:'step',uploadData:'upload_data',config:'config',
   mappings:'mappings',logs:'logs',authG:'auth_google',authMs:'auth_ms',
   batches:'batches',selUsers:'selected_users',
-  migDone:'mig_done',stats:'stats',batchId:'current_batch',lastDry:'last_dry'};
+  migDone:'mig_done',stats:'stats',batchId:'current_batch',lastDry:'last_dry',
+  agentMsgs:'agent_msgs',migDir:'mig_dir',
+  c2gMappings:'c2g_mappings',c2gSelUsers:'c2g_sel_users'};
 const LS=(uid)=>{const p=uid?`gem_${uid}_`:'gem_';return Object.fromEntries(Object.entries(LS_KEYS).map(([k,v])=>[k,p+v]))};
 const lsGet=(k,fb)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb}catch{return fb}};
 const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}};
@@ -143,44 +145,8 @@ const UserSelectPanel=({users,selected,toggleUser,toggleAll,startExport})=>{
   );
 };
 
-/* ══════════════════════════════ */
-/* ═══      STEP TRACKER      ═══ */
-/* ══════════════════════════════ */
-const STEP_ICONS=[
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/></svg>,
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="14" y2="12"/><line x1="4" y1="18" x2="18" y2="18"/></svg>,
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>,
-];
-const STEP_LABELS=['Connect Clouds','Import Data','Map Users','Options','Migrate','Complete'];
-
-const StepTracker=({active,onStepClick,live})=>(
-  <div style={{display:'flex',alignItems:'center',padding:'14px 24px',borderBottom:`1px solid ${C.border}`,background:'white'}}>
-    {STEP_LABELS.map((label,i)=>{
-      const done=i<active,act=i===active;
-      // Clickable only for completed steps AND not when migration is running
-      const clickable=done&&!live&&typeof onStepClick==='function';
-      return(
-        <React.Fragment key={i}>
-          <div onClick={()=>clickable&&onStepClick(i)} title={clickable?`Go back to ${label}`:undefined}
-            style={{display:'flex',alignItems:'center',gap:8,opacity:done||act?1:.4,transition:'all .3s',cursor:clickable?'pointer':'default',userSelect:'none'}}>
-            <div style={{width:32,height:32,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',
-              background:done?C.primary:act?C.tint:'#e5e7eb',color:done?'white':act?C.primary:C.muted,
-              transition:'all .3s',boxShadow:act?`0 0 0 4px ${C.tint}`:'none',flexShrink:0,
-              border:act?`2px solid ${C.primary}`:'none',animation:act?'glow 2s ease-in-out infinite':undefined}}>
-              {done?<span className="check-pop" style={{display:'flex'}}><Check s={15} c="white"/></span>:STEP_ICONS[i]}
-            </div>
-            <span style={{fontSize:11,fontWeight:act?600:400,color:done?C.primary:act?C.primary:C.muted,whiteSpace:'nowrap',
-              textDecoration:clickable?'underline dotted':'none',textUnderlineOffset:'2px'}}>{label}</span>
-          </div>
-          {i<STEP_LABELS.length-1&&<div style={{flex:1,height:2,margin:'0 8px',minWidth:12,background:done?C.primary:act?C.primaryL:C.border,transition:'background .5s',animation:act?'connectorPulse 1.6s ease-in-out infinite':undefined}}/>}
-        </React.Fragment>
-      );
-    })}
-  </div>
-);
+/* Grip icon for panel drag-to-swap */
+const IcoGrip=({s=14})=><svg width={s} height={s} viewBox="0 0 20 20" fill="currentColor"><circle cx="6" cy="4" r="1.5"/><circle cx="6" cy="10" r="1.5"/><circle cx="6" cy="16" r="1.5"/><circle cx="14" cy="4" r="1.5"/><circle cx="14" cy="10" r="1.5"/><circle cx="14" cy="16" r="1.5"/></svg>;
 
 /* ══════════════════════════════ */
 /* ═══    STEP 0: ADD CLOUDS  ═══ */
@@ -265,7 +231,43 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
 
       {!msAuthed&&<div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:8,fontSize:13,color:'#991B1B',marginBottom:16}}><IcoWarn s={14}/>Microsoft Teams connection is required to proceed.</div>}
       {!googleAuthed&&<div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:8,fontSize:13,color:'#991B1B',marginBottom:16}}><IcoWarn s={14}/>Google Workspace connection is required to proceed.</div>}
-      <Btn onClick={onComplete} disabled={!msAuthed||!googleAuthed} style={{width:'100%',justifyContent:'center'}}>Continue to Import Data →</Btn>
+      <Btn onClick={onComplete} disabled={!msAuthed||!googleAuthed} style={{width:'100%',justifyContent:'center'}}>Continue →</Btn>
+    </div>
+  );
+};
+
+/* ══════════════════════════════════ */
+/* ═══  STEP 1: CHOOSE DIRECTION  ═══ */
+/* ══════════════════════════════════ */
+const StepDirection=({onSelect,onBack})=>{
+  const [hovered,setHovered]=useState(null);
+  const dirs=[
+    {id:'gemini-copilot',label:'Gemini → Copilot',sub:'Google Workspace to Microsoft 365',srcIcon:<GoogleIcon/>,tgtIcon:<MsIcon/>},
+    {id:'copilot-gemini',label:'Copilot → Gemini',sub:'Microsoft 365 to Google Workspace',srcIcon:<MsIcon/>,tgtIcon:<GoogleIcon/>},
+  ];
+  return(
+    <div className="fade-up">
+      <div style={{marginBottom:24}}>
+        <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Choose Migration Direction</div>
+        <div style={{fontSize:13,color:C.muted}}>Select the source and destination for your migration.</div>
+      </div>
+      <div style={{display:'flex',gap:14,marginBottom:24}}>
+        {dirs.map(d=>(
+          <button key={d.id} onClick={()=>onSelect(d.id)}
+            onMouseEnter={()=>setHovered(d.id)} onMouseLeave={()=>setHovered(null)}
+            style={{flex:1,padding:'24px 16px',borderRadius:14,border:`2px solid ${hovered===d.id?C.primary:C.border}`,
+              background:hovered===d.id?C.tint:'white',cursor:'pointer',textAlign:'center',transition:'all .2s',fontFamily:'inherit'}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:10,marginBottom:14}}>
+              {d.srcIcon}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+              {d.tgtIcon}
+            </div>
+            <div style={{fontWeight:600,fontSize:14,color:C.dark,marginBottom:4}}>{d.label}</div>
+            <div style={{fontSize:11,color:C.muted}}>{d.sub}</div>
+          </button>
+        ))}
+      </div>
+      <Btn variant="ghost" onClick={onBack}>← Back</Btn>
     </div>
   );
 };
@@ -658,7 +660,7 @@ const MIG_ENTITIES=[
   {label:'Flagged',icon:<IcoFlag s={18}/>,  color:C.primaryL},
 ];
 
-const StepMigrate=({stats,done,lastRunWasDry,batchId,onStartLive,onRunAnother,onRetry,retrying,hasUploadData,onGoToConnect,onRetryWithPath,totalExpected=0})=>{
+const StepMigrate=({stats,done,lastRunWasDry,batchId,onStartLive,onRunAnother,onRetry,retrying,hasUploadData,onGoToConnect,onRetryWithPath,totalExpected=0,onChangeDirection})=>{
   const [batchUsers,setBatchUsers]=useState(null);
   const [showUserDetail,setShowUserDetail]=useState(false);
   const [errorGroups,setErrorGroups]=useState(null);
@@ -856,6 +858,7 @@ const StepMigrate=({stats,done,lastRunWasDry,batchId,onStartLive,onRunAnother,on
             <Btn variant="ghost" onClick={()=>onRunAnother(false)} style={{flex:'1 1 100px',justifyContent:'center'}}>
               New Import
             </Btn>
+            {onChangeDirection&&<Btn variant="ghost" onClick={onChangeDirection} style={{flex:'1 1 120px',justifyContent:'center'}}>⇄ Change Direction</Btn>}
           </div>
         </>
       )}
@@ -863,35 +866,489 @@ const StepMigrate=({stats,done,lastRunWasDry,batchId,onStartLive,onRunAnother,on
   );
 };
 
-/* ══════════════════════════════ */
-/* ═══      LOG FEED          ═══ */
-/* ══════════════════════════════ */
-const LOG_STYLES={
-  info:   {bg:'white',      border:`1px solid ${C.border}`,      color:C.dark,    borderL:`3px solid ${C.primary}`,  ico:<IcoInfo s={13}/>},
-  success:{bg:C.tint,       border:`1px solid ${C.primaryL}`,    color:C.primary, borderL:`3px solid ${C.primary}`,  ico:<Check s={13} c={C.primary}/>},
-  error:  {bg:'#FEF2F2',    border:'1px solid #FCA5A5',          color:'#991B1B', borderL:'3px solid #FF1F1F',       ico:<IcoError s={13}/>},
-  warn:   {bg:C.tint,       border:`1px solid ${C.primaryL}`,    color:C.primary, borderL:`3px solid ${C.primaryL}`, ico:<IcoWarn s={13}/>},
-  done:   {bg:C.primary,    border:'none',                        color:'white',   borderL:'none',                    ico:<IcoDone s={13}/>},
-  user:   {bg:C.tint,       border:`1px solid ${C.primary}40`,   color:C.primary, borderL:`3px solid ${C.primary}`,  ico:<IcoUser s={13}/>},
-};
-const LogFeed=({logs,live})=>{
-  const endRef=useRef(null);
-  useEffect(()=>{endRef.current?.scrollIntoView({behavior:'smooth'})},[logs,live]);
-  const BotAv=()=><div style={{width:28,height:28,borderRadius:'50%',background:`linear-gradient(135deg,${C.primary},${C.primaryL})`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><path d="M12 2a4 4 0 014 4v2H8V6a4 4 0 014-4z"/><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5" fill="white"/><circle cx="15" cy="14" r="1.5" fill="white"/></svg></div>;
+/* ══════════════════════════════════════ */
+/* ═══   MIGRATION AGENT CHAT UI      ═══ */
+/* ══════════════════════════════════════ */
+
+/* Bot avatar */
+const BotAv=({s=28})=><div style={{width:s,height:s,borderRadius:'50%',background:`linear-gradient(135deg,${C.primary},${C.primaryL})`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><svg width={s*.48} height={s*.48} viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><path d="M12 2a4 4 0 014 4v2H8V6a4 4 0 014-4z"/><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5" fill="white"/><circle cx="15" cy="14" r="1.5" fill="white"/></svg></div>;
+
+/* Parse agent text: **bold** → <strong>, \n → <br/> */
+function parseAgentText(text){
+  if(!text)return null;
+  return text.split('\n').map((line,li)=>{
+    const parts=line.split(/\*\*(.*?)\*\*/g).map((p,pi)=>pi%2===1?<strong key={pi}>{p}</strong>:p);
+    return<React.Fragment key={li}>{parts}{li<text.split('\n').length-1&&<br/>}</React.Fragment>;
+  });
+}
+
+/* Bot message bubble */
+const BotMsg=({children,quickReplies,onQuickReply})=>(
+  <div className="fade-up" style={{display:'flex',alignItems:'flex-start',gap:8}}>
+    <BotAv/>
+    <div style={{flex:1,minWidth:0}}>
+      <div style={{background:'#f1f5f9',borderRadius:'12px 12px 12px 3px',padding:'10px 14px',fontSize:13,lineHeight:1.6,color:'#1e293b'}}>{parseAgentText(children)||children}</div>
+      {quickReplies&&quickReplies.length>0&&(
+        <div style={{display:'flex',flexWrap:'wrap',gap:6,marginTop:8}}>
+          {quickReplies.map((qr,i)=>(
+            <button key={i} onClick={()=>onQuickReply&&onQuickReply(qr)} style={{background:'white',border:`1.5px solid ${C.primaryL}`,borderRadius:99,padding:'6px 14px',fontSize:12,color:C.primary,fontWeight:500,cursor:'pointer',fontFamily:'inherit',transition:'all .15s'}} onMouseEnter={e=>{e.target.style.background=C.tint;e.target.style.borderColor=C.primary}} onMouseLeave={e=>{e.target.style.background='white';e.target.style.borderColor=C.primaryL}}>{qr}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  </div>
+);
+
+/* User message bubble */
+const UserMsg=({children})=>(
+  <div className="fade-up" style={{display:'flex',justifyContent:'flex-end'}}>
+    <div style={{background:`linear-gradient(135deg,${C.primary},${C.primaryH})`,borderRadius:'12px 12px 3px 12px',padding:'10px 14px',maxWidth:'78%',color:'white',fontSize:13,lineHeight:1.5}}>{children}</div>
+  </div>
+);
+
+/* Collapsible shell/terminal log block */
+const ShellBlock=({lines,onLineClick})=>{
+  const [collapsed,setCollapsed]=useState(false);
+  const lineColor=t=>t==='error'?'#f87171':t==='warn'?'#fbbf24':t==='success'?'#4ade80':t==='done'?'#60a5fa':'#94a3b8';
+  const visible=collapsed?lines.slice(0,3):lines;
   return(
-    <div style={{flex:1,overflowY:'auto',padding:'16px 20px',display:'flex',flexDirection:'column',gap:8}}>
-      {logs.length===0&&!live&&(<div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',color:C.muted,textAlign:'center',padding:'40px 20px'}}><div style={{display:'flex',justifyContent:'center',marginBottom:12,opacity:.25,color:C.primary,animation:'float 3s ease-in-out infinite'}}><IcoPage s={48}/></div><div style={{fontSize:14,fontWeight:500}}>Migration log</div><div style={{fontSize:12,marginTop:4}}>Activity will appear here when you start</div></div>)}
-      {logs.map((log,i)=>{const s=LOG_STYLES[log.type]||LOG_STYLES.info;return(
-        <div key={i} className="fade-up" style={{display:'flex',alignItems:'flex-start',gap:8}}>
-          <BotAv/>
-          <div style={{background:s.bg,border:s.border,borderLeft:s.borderL||s.border,borderRadius:'10px 10px 10px 3px',padding:'9px 13px',flex:1,lineHeight:1.5,fontSize:13,color:s.color,display:'flex',alignItems:'flex-start',gap:8}}>
-            <span style={{flexShrink:0,marginTop:1,opacity:.7}}>{s.ico}</span>
-            <div style={{flex:1}}><span style={{fontSize:10,color:s.color==='white'?'rgba(255,255,255,.6)':C.muted,marginRight:6}}>{log.ts}</span>{log.message}</div>
+    <div className="fade-up" style={{marginLeft:36,borderRadius:8,overflow:'hidden',border:'1px solid #1e293b',fontSize:12,fontFamily:'monospace'}}>
+      {/* Terminal chrome */}
+      <div onClick={()=>setCollapsed(p=>!p)} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'6px 12px',background:'#1e293b',cursor:'pointer',userSelect:'none'}}>
+        <div style={{display:'flex',alignItems:'center',gap:6}}>
+          <span style={{width:8,height:8,borderRadius:'50%',background:'#ef4444',display:'inline-block'}}/>
+          <span style={{width:8,height:8,borderRadius:'50%',background:'#f59e0b',display:'inline-block'}}/>
+          <span style={{width:8,height:8,borderRadius:'50%',background:'#22c55e',display:'inline-block'}}/>
+          <span style={{marginLeft:10,color:'#94a3b8',fontSize:11}}>shell</span>
+          <span style={{color:'#475569',fontSize:10}}>{lines.length} lines</span>
+        </div>
+        <span style={{color:'#64748b',fontSize:10}}>{collapsed?'▼ expand':'▲ collapse'}</span>
+      </div>
+      {/* Log lines */}
+      <div style={{background:'#0f172a',maxHeight:collapsed?72:280,overflowY:collapsed?'hidden':'auto',transition:'max-height .2s'}}>
+        {visible.map((ln,i)=>(
+          <div key={i} onClick={()=>onLineClick&&onLineClick(ln)} style={{display:'flex',padding:'2px 12px',cursor:onLineClick?'pointer':'default',transition:'background .1s'}} onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.04)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+            <span style={{color:'#334155',minWidth:28,textAlign:'right',paddingRight:12,userSelect:'none',fontSize:11}}>{ln.line||i+1}</span>
+            <span style={{color:lineColor(ln.type),flex:1,wordBreak:'break-all',fontSize:11}}>{ln.text}</span>
+          </div>
+        ))}
+        {collapsed&&lines.length>3&&<div style={{padding:'2px 12px 6px 52px',color:'#475569',fontSize:11}}>… {lines.length-3} more lines</div>}
+      </div>
+    </div>
+  );
+};
+
+/* ══════════════════════════════════════════ */
+/* ═══   INLINE CHAT WIDGETS              ═══ */
+/* ══════════════════════════════════════════ */
+const PHASE_LABELS=['Connect Clouds','Import Data','Map Users','Configure','Migrate','Complete'];
+
+const AuthWidget=({googleAuthed,msAuthed,onSignInGoogle,onSignInMs,googleUsers,msUsers,googleLoading,msLoading})=>(
+  <div style={{background:'#f8fafc',borderRadius:10,border:`1px solid ${C.border}`,padding:14,marginLeft:36,marginTop:4}}>
+    <div style={{fontSize:12,fontWeight:600,color:C.dark,marginBottom:10}}>Connect your cloud accounts</div>
+    <div style={{display:'flex',flexDirection:'column',gap:8}}>
+      <div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:8,border:`1.5px solid ${googleAuthed?'#22c55e':C.border}`,background:googleAuthed?'#f0fdf4':'white',transition:'all .3s'}}>
+        <GoogleIcon/><div style={{flex:1}}><div style={{fontSize:12,fontWeight:600}}>Google Workspace</div><div style={{fontSize:11,color:C.muted}}>{googleAuthed?`${(googleUsers||[]).length} users loaded`:'Source — Gemini conversations'}</div></div>
+        {googleAuthed?<span style={{fontSize:11,color:'#16a34a',fontWeight:600,display:'flex',alignItems:'center',gap:4,whiteSpace:'nowrap'}}><Check s={12} c="#22c55e"/>Connected</span>:<button onClick={onSignInGoogle} disabled={googleLoading} style={{fontSize:12,padding:'6px 14px',borderRadius:6,border:`1px solid ${C.border}`,background:'white',cursor:'pointer',fontFamily:'inherit',fontWeight:500,whiteSpace:'nowrap',display:'flex',alignItems:'center',gap:6,opacity:googleLoading?.6:1}}>{googleLoading?<Spinner s={12}/>:'Sign in'}</button>}
+      </div>
+      <div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:8,border:`1.5px solid ${msAuthed?'#22c55e':C.border}`,background:msAuthed?'#f0fdf4':'white',transition:'all .3s'}}>
+        <MsIcon/><div style={{flex:1}}><div style={{fontSize:12,fontWeight:600}}>Microsoft 365</div><div style={{fontSize:11,color:C.muted}}>{msAuthed?`${(msUsers||[]).length} users loaded`:'Destination — Teams / OneNote'}</div></div>
+        {msAuthed?<span style={{fontSize:11,color:'#16a34a',fontWeight:600,display:'flex',alignItems:'center',gap:4,whiteSpace:'nowrap'}}><Check s={12} c="#22c55e"/>Connected</span>:<button onClick={onSignInMs} disabled={msLoading} style={{fontSize:12,padding:'6px 14px',borderRadius:6,border:`1px solid ${C.border}`,background:'white',cursor:'pointer',fontFamily:'inherit',fontWeight:500,whiteSpace:'nowrap',display:'flex',alignItems:'center',gap:6,opacity:msLoading?.6:1}}>{msLoading?<Spinner s={12}/>:'Sign in'}</button>}
+      </div>
+    </div>
+  </div>
+);
+
+const UploadWidget=({onUpload,uploading,activeUpload})=>{
+  const fRef=useRef(null);const[drag,setDrag]=useState(false);
+  const go=file=>{if(file.name.endsWith('.zip'))onUpload(file)};
+  return(
+    <div style={{marginLeft:36,marginTop:4}}>
+      {activeUpload&&<div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',background:C.tint,border:`1.5px solid ${C.primary}40`,borderRadius:8,marginBottom:8}}><IcoZip s={20} c={C.primary}/><div style={{flex:1,minWidth:0}}><div style={{fontSize:11,fontWeight:600,color:C.primary,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>Active: {activeUpload.original_name||activeUpload.id}</div><div style={{fontSize:11,color:C.muted}}>{activeUpload.total_users} users · {activeUpload.total_conversations} conversations</div></div><Check s={14} c={C.primary}/></div>}
+      <div onDragOver={e=>{e.preventDefault();setDrag(true)}} onDragLeave={()=>setDrag(false)} onDrop={e=>{e.preventDefault();setDrag(false);if(e.dataTransfer.files[0])go(e.dataTransfer.files[0])}}>
+        <div onClick={()=>!uploading&&fRef.current.click()} style={{border:`2px dashed ${drag?C.primary:C.border}`,borderRadius:10,padding:'16px',textAlign:'center',cursor:uploading?'wait':'pointer',background:drag?C.tint:'#f8fafc',transition:'all .2s'}}>
+          <input ref={fRef} type="file" accept=".zip" style={{display:'none'}} onChange={e=>{if(e.target.files[0])go(e.target.files[0])}}/>
+          {uploading?<div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:8,fontSize:12,color:C.muted}}><Spinner s={16}/>Uploading...</div>:<><div style={{display:'flex',justifyContent:'center',marginBottom:6}}><IcoZip s={26} c={drag?C.primary:C.primaryL}/></div><div style={{fontSize:12,fontWeight:500}}><span style={{color:C.primary}}>Click to browse</span> or drag & drop</div><div style={{fontSize:11,color:C.muted,marginTop:2}}>Google Vault .zip file</div></>}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const OptionsWidget=({options,setOptions,config,setConfig,onStart})=>(
+  <div style={{background:'#f8fafc',borderRadius:10,border:`1px solid ${C.border}`,padding:14,marginLeft:36,marginTop:4}}>
+    <div style={{fontSize:12,fontWeight:600,color:C.dark,marginBottom:10}}>Migration Options</div>
+    <div style={{marginBottom:10}}>
+      <label style={{fontSize:12,fontWeight:500,display:'block',marginBottom:4}}>OneNote destination path</label>
+      <input type="text" value={config.filePath||''} onChange={e=>setConfig(p=>({...p,filePath:e.target.value}))} placeholder="/Sites/Migration/GeminiExports" style={{width:'100%',border:`1px solid ${C.border}`,borderRadius:6,padding:'8px 10px',fontSize:12,outline:'none',fontFamily:'inherit',boxSizing:'border-box',transition:'border .2s'}} onFocus={e=>e.target.style.borderColor=C.primary} onBlur={e=>e.target.style.borderColor=C.border}/>
+    </div>
+    <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',marginBottom:12,fontSize:12}}>
+      <input type="checkbox" checked={options.dryRun} onChange={e=>setOptions(p=>({...p,dryRun:e.target.checked}))} style={{accentColor:C.primary,width:14,height:14}}/>
+      Dry run — preview only (recommended first)
+    </label>
+    <button onClick={onStart} disabled={!config.filePath} style={{width:'100%',padding:'9px 0',borderRadius:6,border:'none',background:C.primary,color:'white',fontSize:13,fontWeight:600,cursor:config.filePath?'pointer':'not-allowed',opacity:config.filePath?1:0.5,fontFamily:'inherit',transition:'all .15s'}} onMouseEnter={e=>{if(config.filePath)e.currentTarget.style.background=C.primaryH}} onMouseLeave={e=>e.currentTarget.style.background=C.primary}>
+      {options.dryRun?'Start Dry Run':'Start Live Migration'}
+    </button>
+  </div>
+);
+
+const ChatWidget=({type,widgetProps={}})=>{
+  if(type==='auth')return<AuthWidget {...(widgetProps.auth||{})}/>;
+  if(type==='upload')return<UploadWidget {...(widgetProps.upload||{})}/>;
+  if(type==='options')return<OptionsWidget {...(widgetProps.options||{})}/>;
+  return null;
+};
+
+/* ══════════════════════════════════════════ */
+/* ═══   VISUALIZATION PANEL (left)       ═══ */
+/* ══════════════════════════════════════════ */
+const VisualizationPanel=({step,googleAuthed,msAuthed,uploadData,googleUsers,msUsers,mappings,selectedUsers,stats,live,migDone,lastRunWasDry,leftMode,onSetLeftMode,setMappings,setSelectedUsers,showToast,onMappingDone})=>{
+  const mappedCount=Object.values(mappings).filter(Boolean).length;
+  const unmappedCount=(uploadData?.users?.length||0)-mappedCount;
+  const userCount=uploadData?.total_users||(googleUsers?.length)||0;
+  const totalConvs=uploadData?.total_conversations||0;
+  const ringPct=migDone?100:(totalConvs>0?Math.min(Math.round(((stats.pages||0)+(stats.errors||0))/totalConvs*100),99):0);
+
+  if(leftMode==='mapping'){
+    return(
+      <div style={{display:'flex',flexDirection:'column',height:'100%'}}>
+        <div style={{padding:'10px 16px',borderBottom:`1px solid ${C.border}`,background:'white',display:'flex',alignItems:'center',gap:10,flexShrink:0}}>
+          <button onClick={()=>onSetLeftMode('viz')} style={{fontSize:11,color:C.muted,background:'none',border:`1px solid ${C.border}`,borderRadius:5,padding:'4px 8px',cursor:'pointer',fontFamily:'inherit',display:'flex',alignItems:'center',gap:4,whiteSpace:'nowrap'}}>← Back</button>
+          <span style={{fontSize:13,fontWeight:600}}>User Mapping</span>
+          {unmappedCount>0&&<span style={{fontSize:11,color:C.error,marginLeft:'auto'}}>{unmappedCount} unmapped</span>}
+        </div>
+        <div style={{flex:1,overflowY:'hidden',display:'flex',flexDirection:'column',padding:'0 12px 0'}}>
+          <Step2 uploadData={uploadData} msUsers={msUsers} mappings={mappings} setMappings={setMappings} selectedUsers={selectedUsers} setSelectedUsers={setSelectedUsers} onNext={()=>{onSetLeftMode('viz');if(onMappingDone)onMappingDone()}} onBack={()=>onSetLeftMode('viz')} showToast={showToast}/>
+        </div>
+      </div>
+    );
+  }
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',height:'100%',overflowY:'auto',background:'#f8fafc'}}>
+      {/* Flow diagram */}
+      <div style={{padding:'18px 20px 14px',background:'white',borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+        <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:'uppercase',letterSpacing:.6,marginBottom:12}}>Migration Pipeline</div>
+        <div style={{display:'flex',alignItems:'center'}}>
+          <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:3,flexShrink:0}}>
+            <div style={{width:46,height:46,borderRadius:12,border:`2px solid ${googleAuthed?'#22c55e':C.border}`,background:googleAuthed?'#f0fdf4':'white',display:'flex',alignItems:'center',justifyContent:'center',transition:'all .4s',boxShadow:googleAuthed?'0 0 0 3px rgba(34,197,94,.12)':'none'}}><GoogleIcon/></div>
+            <div style={{fontSize:10,color:C.muted,fontWeight:600}}>Google</div>
+            <div style={{fontSize:9,color:googleAuthed?'#16a34a':'#ef4444',fontWeight:600}}>{googleAuthed?'✓ Connected':'Not connected'}</div>
+          </div>
+          <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:2,padding:'0 6px',paddingBottom:18}}>
+            <div style={{width:'100%',height:3,background:`linear-gradient(to right,${googleAuthed?C.primary:C.border},${msAuthed?C.primary:C.border})`,borderRadius:2,position:'relative'}}>
+              {live&&<div style={{position:'absolute',top:-3,width:9,height:9,borderRadius:'50%',background:'white',border:`2px solid ${C.primary}`,animation:'connectorPulse .8s infinite',left:'50%',transform:'translateX(-50%)',boxShadow:`0 0 6px ${C.primary}`}}/>}
+            </div>
+            <div style={{fontSize:10,color:C.muted,display:'flex',alignItems:'center',gap:3,marginTop:3}}><IcoUser s={10}/>{userCount>0?`${userCount} users`:'No data yet'}</div>
+          </div>
+          <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:3,flexShrink:0}}>
+            <div style={{width:46,height:46,borderRadius:12,border:`2px solid ${msAuthed?'#22c55e':C.border}`,background:msAuthed?'#f0fdf4':'white',display:'flex',alignItems:'center',justifyContent:'center',transition:'all .4s',boxShadow:msAuthed?'0 0 0 3px rgba(34,197,94,.12)':'none'}}><MsIcon/></div>
+            <div style={{fontSize:10,color:C.muted,fontWeight:600}}>Microsoft</div>
+            <div style={{fontSize:9,color:msAuthed?'#16a34a':'#ef4444',fontWeight:600}}>{msAuthed?'✓ Connected':'Not connected'}</div>
           </div>
         </div>
-      )})}
-      {live&&<TypingDots/>}
-      <div ref={endRef}/>
+        {(live||migDone)&&(
+          <div style={{marginTop:12}}>
+            <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:C.muted,marginBottom:3}}>
+              <span>{migDone?'Complete':'In progress...'}</span>
+              <span>{stats.pages} / {totalConvs||'?'} pages</span>
+            </div>
+            <div style={{height:4,background:C.border,borderRadius:99,overflow:'hidden'}}>
+              <div style={{height:'100%',background:stats.errors>0?C.error:C.primary,borderRadius:99,transition:'width .6s',width:`${ringPct}%`}}/>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Phase cards */}
+      <div style={{padding:'14px 16px 10px',flexShrink:0}}>
+        <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:'uppercase',letterSpacing:.6,marginBottom:8}}>Migration Phases</div>
+        <div style={{borderRadius:10,overflow:'hidden',border:`1px solid ${C.border}`,background:'white'}}>
+          {PHASE_LABELS.map((label,i)=>{
+            const done=(migDone&&i<=5)||(i<step);
+            const cur=i===step&&!(migDone&&i>=4);
+            return(
+              <div key={i} style={{display:'flex',alignItems:'center',gap:10,padding:'9px 14px',background:cur?C.tint:'white',borderBottom:i<5?`1px solid ${C.border}`:'none',borderLeft:`3px solid ${done?C.success:cur?C.primary:'transparent'}`,transition:'all .3s'}}>
+                <div style={{width:20,height:20,borderRadius:'50%',background:done?C.success:cur?C.primary:'#e5e7eb',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,transition:'all .3s'}}>
+                  {done?<Check s={10} c="white"/>:<span style={{fontSize:9,fontWeight:700,color:cur?'white':'#9ca3af'}}>{i+1}</span>}
+                </div>
+                <span style={{fontSize:12,fontWeight:cur?600:400,color:cur?C.primary:done?C.dark:'#9ca3af',flex:1}}>{label}</span>
+                {cur&&!done&&<div className="pulse-dot" style={{width:6,height:6,borderRadius:'50%',background:C.primary,flexShrink:0}}/>}
+                {done&&<span style={{fontSize:10,color:'#22c55e',flexShrink:0}}>✓</span>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Loaded data summary */}
+      {uploadData&&!live&&!migDone&&(
+        <div style={{padding:'0 16px 12px',flexShrink:0}}>
+          <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:'uppercase',letterSpacing:.6,marginBottom:8}}>Loaded Data</div>
+          <div style={{background:'white',border:`1px solid ${C.border}`,borderRadius:10,padding:'12px 14px'}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+              <IcoZip s={18} c={C.primary}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:12,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{uploadData.original_name||uploadData.id}</div>
+                <div style={{fontSize:11,color:C.muted}}>{uploadData.total_users} users · {uploadData.total_conversations} conversations</div>
+              </div>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:8}}>
+              <div style={{padding:'6px 0',background:C.bg,borderRadius:6,textAlign:'center'}}>
+                <div style={{fontSize:16,fontWeight:700,color:C.success}}>{mappedCount}</div>
+                <div style={{fontSize:10,color:C.muted}}>Mapped</div>
+              </div>
+              <div style={{padding:'6px 0',background:unmappedCount>0?'#FEF2F2':C.bg,borderRadius:6,textAlign:'center'}}>
+                <div style={{fontSize:16,fontWeight:700,color:unmappedCount>0?C.error:C.muted}}>{unmappedCount}</div>
+                <div style={{fontSize:10,color:C.muted}}>Unmapped</div>
+              </div>
+            </div>
+            <button onClick={()=>onSetLeftMode('mapping')} style={{width:'100%',padding:'6px 0',borderRadius:6,border:`1px solid ${C.primary}`,background:'white',color:C.primary,fontSize:12,fontWeight:500,cursor:'pointer',fontFamily:'inherit',transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.background=C.tint} onMouseLeave={e=>e.currentTarget.style.background='white'}>Review Mapping →</button>
+          </div>
+        </div>
+      )}
+
+      {/* Live stats */}
+      {(live||migDone)&&(
+        <div style={{padding:'0 16px 16px',flexShrink:0}}>
+          <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:'uppercase',letterSpacing:.6,marginBottom:8}}>{live?'Live Stats':'Final Results'}</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+            {[{l:'Users',v:stats.users,c:C.primary},{l:'Pages',v:stats.pages,c:C.success},{l:'Errors',v:stats.errors,c:stats.errors>0?C.error:C.muted},{l:'Flagged',v:stats.flagged,c:C.primaryL}].map((s,i)=>(
+              <div key={i} style={{background:'white',borderRadius:8,padding:'10px 12px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${s.c}`,textAlign:'center'}}>
+                <div style={{fontSize:20,fontWeight:700,color:s.c}}>{s.v}</div>
+                <div style={{fontSize:10,color:C.muted,textTransform:'uppercase',letterSpacing:.3,marginTop:2}}>{s.l}</div>
+              </div>
+            ))}
+          </div>
+          {migDone&&<div style={{marginTop:8,padding:'8px 12px',background:lastRunWasDry?'#FEF3C7':'#DCFCE7',borderRadius:8,textAlign:'center',fontSize:12,fontWeight:600,color:lastRunWasDry?'#92400E':'#166534'}}>{lastRunWasDry?'Dry run complete — no changes made':'Migration complete!'}</div>}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* Agent chat panel */
+const AgentChat=({msgs,typing,input,onInput,onSend,onLogLineClick,onQuickReply,widgetProps={},onShowReports})=>{
+  const endRef=useRef(null);
+  const [plusOpen,setPlusOpen]=useState(false);
+  const plusRef=useRef(null);
+  useEffect(()=>{endRef.current?.scrollIntoView({behavior:'smooth'})},[msgs,typing]);
+  useEffect(()=>{
+    if(!plusOpen)return;
+    const h=(e)=>{if(plusRef.current&&!plusRef.current.contains(e.target))setPlusOpen(false)};
+    document.addEventListener('mousedown',h);
+    return()=>document.removeEventListener('mousedown',h);
+  },[plusOpen]);
+  return(
+    <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',background:C.bg}}>
+      {/* Messages */}
+      <div style={{flex:1,overflowY:'auto',padding:'16px',display:'flex',flexDirection:'column',gap:10}}>
+        {msgs.length===0&&!typing&&(
+          <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',color:C.muted,textAlign:'center',padding:'40px 20px',gap:12}}>
+            <BotAv s={52}/>
+            <div style={{fontSize:14,fontWeight:500,color:C.dark}}>Migration Agent</div>
+            <div style={{fontSize:12,color:C.muted,maxWidth:240}}>Your AI guide for migrating Google Gemini conversations to Microsoft Copilot. Ask me anything or let me guide you through the process.</div>
+          </div>
+        )}
+        {msgs.map(m=>{
+          if(m.shellBlock)return<ShellBlock key={m.id} lines={m.shellBlock} onLineClick={onLogLineClick}/>;
+          if(m.role==='user')return<UserMsg key={m.id}>{m.content}</UserMsg>;
+          return(
+            <div key={m.id}>
+              <BotMsg quickReplies={m.quickReplies} onQuickReply={onQuickReply}>{m.content}</BotMsg>
+              {m.widget&&<ChatWidget type={m.widget.type} widgetProps={widgetProps}/>}
+            </div>
+          );
+        })}
+        {typing&&<TypingDots/>}
+        <div ref={endRef}/>
+      </div>
+      {/* Input */}
+      <div style={{padding:'12px 16px',borderTop:`1px solid ${C.border}`,background:'white',flexShrink:0}}>
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          <div ref={plusRef} style={{position:'relative',flexShrink:0}}>
+            <button onClick={()=>setPlusOpen(p=>!p)} title="More options" style={{width:36,height:36,borderRadius:8,border:`1px solid ${C.border}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:20,color:C.muted,fontFamily:'inherit',transition:'all .15s'}} onMouseEnter={e=>{e.currentTarget.style.background=C.tint;e.currentTarget.style.borderColor=C.primary;e.currentTarget.style.color=C.primary}} onMouseLeave={e=>{e.currentTarget.style.background='white';e.currentTarget.style.borderColor=C.border;e.currentTarget.style.color=C.muted}}>+</button>
+            {plusOpen&&(
+              <div style={{position:'absolute',bottom:'calc(100% + 6px)',left:0,background:'white',border:`1px solid ${C.border}`,borderRadius:10,boxShadow:'0 4px 20px rgba(0,0,0,.1)',minWidth:160,zIndex:200,overflow:'hidden'}}>
+                <button onClick={()=>{setPlusOpen(false);onShowReports&&onShowReports();}} style={{width:'100%',padding:'10px 14px',border:'none',background:'white',cursor:'pointer',fontSize:12,fontFamily:'inherit',color:C.dark,display:'flex',alignItems:'center',gap:8,textAlign:'left',transition:'background .12s'}} onMouseEnter={e=>e.currentTarget.style.background=C.tint} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+                  <IcoReport s={13}/> View Reports
+                </button>
+              </div>
+            )}
+          </div>
+          <input value={input} onChange={e=>onInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&!e.shiftKey&&onSend()} placeholder="Ask me anything or type a command..." style={{flex:1,border:`1px solid ${C.border}`,borderRadius:8,padding:'10px 14px',fontSize:13,outline:'none',fontFamily:'inherit',transition:'border .2s'}} onFocus={e=>e.target.style.borderColor=C.primary} onBlur={e=>e.target.style.borderColor=C.border}/>
+          <button onClick={onSend} disabled={!input.trim()} style={{padding:'10px 18px',borderRadius:8,border:'none',background:C.primary,color:'white',fontSize:13,fontWeight:600,cursor:input.trim()?'pointer':'not-allowed',opacity:input.trim()?1:.5,fontFamily:'inherit',transition:'all .15s',flexShrink:0}} onMouseEnter={e=>{if(input.trim())e.currentTarget.style.background=C.primaryH}} onMouseLeave={e=>e.currentTarget.style.background=C.primary}>Send</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* ═══════════════════════════════════════════ */
+/* ═══  COPILOT→GEMINI: USER MAPPING STEP  ═══ */
+/* ═══════════════════════════════════════════ */
+const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUsers,setC2gSelectedUsers,onNext,onBack,showToast})=>{
+  const csvRef=useRef(null);
+  const [search,setSearch]=useState('');
+  const [csvUploading,setCsvUploading]=useState(false);
+
+  // Auto-map by email local-part on mount
+  useEffect(()=>{
+    if(!msUsers.length)return;
+    const byLocal={};
+    googleUsers.forEach(u=>{const em=(u.email||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
+    const m={...c2gMappings};let changed=false;
+    msUsers.forEach(u=>{
+      const em=(u.mail||u.userPrincipalName||'').toLowerCase();
+      if(!(em in m)){const loc=em.split('@')[0];m[em]=byLocal[loc]||'';changed=true}
+    });
+    if(changed)setC2gMappings(m);
+    if(c2gSelectedUsers.size===0)setC2gSelectedUsers(new Set(msUsers.map(u=>u.mail||u.userPrincipalName||'')));
+  },[msUsers,googleUsers]);
+
+  const downloadCsv=()=>{
+    const rows=msUsers.map(u=>{const e=u.mail||u.userPrincipalName||'';return`"${e}","${c2gMappings[e]||''}"`});
+    const csv='M365 Email,Google Email\n'+rows.join('\n');
+    const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='c2g-user-mappings.csv';a.click();
+    showToast('User mapping CSV downloaded.');
+  };
+
+  const uploadCsv=file=>{
+    setCsvUploading(true);
+    const r=new FileReader();
+    r.onload=e=>{
+      const lines=e.target.result.split(/\r?\n/).slice(1);
+      const m={...c2gMappings};
+      for(const l of lines){if(!l.trim())continue;const c=parseCsvLine(l);if(c.length>=2&&c[0])m[c[0]]=c[1]}
+      setC2gMappings(m);setC2gSelectedUsers(new Set(Object.keys(m)));
+      setCsvUploading(false);showToast('User mapping uploaded.');
+    };
+    r.onerror=()=>setCsvUploading(false);
+    r.readAsText(file);
+  };
+
+  const filtered=msUsers.filter(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();const q=search.toLowerCase();return em.includes(q)||(c2gMappings[em]||'').toLowerCase().includes(q)});
+  const toggleUser=e=>setC2gSelectedUsers(p=>{const n=new Set(p);n.has(e)?n.delete(e):n.add(e);return n});
+  const autoMapped=msUsers.filter(u=>!!c2gMappings[u.mail||u.userPrincipalName||'']).length;
+  const unmapped=msUsers.filter(u=>!c2gMappings[u.mail||u.userPrincipalName||'']).length;
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',height:'100%'}} className="fade-up">
+      <div style={{flexShrink:0,marginBottom:12}}>
+        <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:8}}>
+          <div>
+            <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:2}}>User Mapping</div>
+            <div style={{fontSize:13,color:C.muted}}>
+              Map M365 accounts to Google emails.{' '}
+              {autoMapped>0&&<span style={{color:C.success,fontWeight:500}}>{autoMapped} auto-mapped</span>}
+              {unmapped>0&&<span style={{color:C.error}}>{autoMapped>0?' · ':''}{unmapped} need mapping</span>}
+            </div>
+          </div>
+          <div style={{display:'flex',gap:6,flexShrink:0}}>
+            <input ref={csvRef} type="file" accept=".csv" style={{display:'none'}} onChange={e=>{if(e.target.files[0])uploadCsv(e.target.files[0]);e.target.value=''}}/>
+            <button onClick={()=>csvRef.current.click()} disabled={csvUploading} style={{fontSize:12,color:C.muted,background:'white',border:`1px solid ${C.border}`,borderRadius:5,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,display:'inline-flex',alignItems:'center',gap:4}}>
+              {csvUploading?<Spinner s={10}/>:<IcoUpload s={11}/>} Upload CSV
+            </button>
+            <button onClick={downloadCsv} style={{fontSize:12,color:C.primary,background:'white',border:`1px solid ${C.primary}`,borderRadius:5,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,display:'inline-flex',alignItems:'center',gap:4}}><IcoDownload s={11} c={C.primary}/> Download CSV</button>
+          </div>
+        </div>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+          <div style={{fontSize:12,color:C.muted}}><span style={{fontWeight:600,color:C.primary}}>{c2gSelectedUsers.size}</span> of {msUsers.length} selected</div>
+          <TextBtn onClick={()=>{if(c2gSelectedUsers.size===msUsers.length)setC2gSelectedUsers(new Set());else setC2gSelectedUsers(new Set(msUsers.map(u=>u.mail||u.userPrincipalName||'')))}}>{c2gSelectedUsers.size===msUsers.length?'Deselect All':'Select All'}</TextBtn>
+        </div>
+        <SearchBar value={search} onChange={setSearch} placeholder="Search by email..."/>
+      </div>
+      <div style={{flex:1,overflowY:'auto',minHeight:0,background:'white',border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden'}}>
+        <div style={{display:'grid',gridTemplateColumns:'32px 1fr 1fr',padding:'9px 14px',background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.4,position:'sticky',top:0,zIndex:1}}>
+          <div/><div>M365 Email (Source)</div><div>Google Email (Destination)</div>
+        </div>
+        {filtered.map((u,i)=>{
+          const em=(u.mail||u.userPrincipalName||'').toLowerCase();
+          const mapped=!!c2gMappings[em];
+          return(
+            <div key={em} style={{display:'grid',gridTemplateColumns:'32px 1fr 1fr',alignItems:'center',padding:'9px 14px',borderBottom:i<filtered.length-1?`1px solid ${C.bg}`:'none',background:c2gSelectedUsers.has(em)?C.tint:'white',transition:'background .15s',cursor:'pointer'}} onClick={()=>toggleUser(em)}>
+              <input type="checkbox" checked={c2gSelectedUsers.has(em)} onChange={()=>toggleUser(em)} style={{accentColor:C.primary,width:15,height:15}} onClick={e=>e.stopPropagation()}/>
+              <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}><Avatar name={u.displayName||em} email={em} size={26}/><span style={{fontSize:12,color:C.muted,fontFamily:'monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{em}</span></div>
+              <input value={c2gMappings[em]||''} onChange={e=>{e.stopPropagation();setC2gMappings(p=>({...p,[em]:e.target.value}))}}
+                placeholder="Enter Google email..."
+                style={{border:`1px solid ${mapped?C.primary+'50':C.border}`,borderRadius:5,padding:'5px 9px',fontSize:12,fontFamily:'inherit',outline:'none',marginRight:8,width:'100%',background:mapped?C.tint:'white'}}
+                onFocus={e=>{e.stopPropagation();e.target.style.borderColor=C.primary}} onBlur={e=>e.target.style.borderColor=mapped?C.primary+'50':C.border} onClick={e=>e.stopPropagation()}/>
+            </div>
+          );
+        })}
+        {filtered.length===0&&<div style={{textAlign:'center',padding:'24px',fontSize:13,color:C.muted}}>No users found.</div>}
+      </div>
+      <div style={{flexShrink:0,display:'flex',gap:10,paddingTop:12}}>
+        <Btn variant="ghost" onClick={onBack}>← Back</Btn>
+        <Btn onClick={onNext} style={{flex:1,justifyContent:'center'}}>Continue →</Btn>
+      </div>
+    </div>
+  );
+};
+
+/* ════════════════════════════════════════════ */
+/* ═══  COPILOT→GEMINI: MIGRATE STEP        ═══ */
+/* ════════════════════════════════════════════ */
+const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c2gLive,onChangeDirection})=>{
+  const ring=c2gDone?100:(c2gStats.users>0?Math.min(Math.round((c2gStats.files/(c2gStats.users*2))*100),99):c2gLive?5:0);
+  return(
+    <div className="fade-up">
+      {!c2gDone&&!c2gLive&&(
+        <>
+          <div style={{marginBottom:20}}>
+            <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Ready to Migrate</div>
+            <div style={{fontSize:13,color:C.muted}}>Copilot conversations will be uploaded to Google Drive as DOCX files.</div>
+          </div>
+          <div style={{display:'flex',gap:10}}>
+            <Btn variant="ghost" onClick={onBack}>← Back</Btn>
+            <Btn onClick={onStart} style={{flex:1,justifyContent:'center'}}>Start Migration →</Btn>
+          </div>
+        </>
+      )}
+      {!c2gDone&&c2gLive&&(
+        <>
+          <div style={{marginBottom:20}}>
+            <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Migration in Progress</div>
+            <div style={{fontSize:13,color:C.muted}}>Copilot conversations are being migrated to Google Drive. Watch the log →</div>
+          </div>
+          <div style={{display:'flex',justifyContent:'center',padding:'28px 0 20px'}}>
+            <div style={{position:'relative',display:'inline-flex',alignItems:'center',justifyContent:'center'}}>
+              <Ring pct={ring} size={120} stroke={8} color={C.primary}/>
+              <div style={{position:'absolute',textAlign:'center'}}><div style={{fontSize:22,fontWeight:700,color:C.primary}}>{ring}%</div><div style={{fontSize:10,color:C.muted}}>Progress</div></div>
+            </div>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:16}}>
+            {[{label:'Users',val:c2gStats.users,c:'#0129AC'},{label:'Files Uploaded',val:c2gStats.files,c:'#20CC83'},{label:'Errors',val:c2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
+              <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
+                <div style={{fontSize:22,fontWeight:700,color:e.c}}>{e.val}</div>
+                <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      {c2gDone&&(
+        <>
+          <div style={{marginBottom:20,textAlign:'center'}}>
+            <div style={{display:'flex',justifyContent:'center',marginBottom:8,color:C.success}}><IcoDone s={48}/></div>
+            <div style={{fontSize:18,fontWeight:700,color:C.dark,marginBottom:4}}>Migration Complete!</div>
+            <div style={{fontSize:13,color:C.muted}}>Copilot conversations have been uploaded to Google Drive.</div>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:20}}>
+            {[{label:'Users Processed',val:c2gStats.users,c:'#0129AC'},{label:'Files Uploaded',val:c2gStats.files,c:'#20CC83'},{label:'Errors',val:c2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
+              <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
+                <div style={{fontSize:22,fontWeight:700,color:e.c}}>{e.val}</div>
+                <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{display:'flex',gap:10}}>
+            <Btn variant="ghost" onClick={onBack} style={{flex:1,justifyContent:'center'}}>← Map Again</Btn>
+            <Btn onClick={()=>onRunAnother&&onRunAnother()} style={{flex:1,justifyContent:'center'}}>Start Another</Btn>
+            {onChangeDirection&&<Btn variant="ghost" onClick={onChangeDirection} style={{flex:1,justifyContent:'center'}}>⇄ Change Direction</Btn>}
+          </div>
+        </>
+      )}
     </div>
   );
 };
@@ -1096,8 +1553,26 @@ function App(){
   const wsSaveTimer=useRef(null); // debounce timer for workspace saves
   const sseRef=useRef(null);
   const [splitPct,setSplitPct]=useState(50);
+  const [panelSwapped,setPanelSwapped]=useState(false);
+  const [agentMsgs,setAgentMsgs]=useState(()=>lsGet(K.agentMsgs,[]));
+  const [agentTyping,setAgentTyping]=useState(false);
+  const [agentInput,setAgentInput]=useState('');
+  const [leftMode,setLeftMode]=useState('viz'); // 'viz' | 'mapping'
+  const [migDir,setMigDir]=useState(()=>lsGet(K.migDir,null)); // 'gemini-copilot' | 'copilot-gemini' | null
+  const [c2gMappings,setC2gMappings]=useState(()=>lsGet(K.c2gMappings,{}));
+  const [c2gSelectedUsers,setC2gSelectedUsers]=useState(()=>{const s=lsGet(K.c2gSelUsers,null);return s?new Set(s):new Set()});
+  const [c2gStats,setC2gStats]=useState({users:0,files:0,errors:0});
+  const [c2gDone,setC2gDone]=useState(false);
+  const [c2gLive,setC2gLive]=useState(false);
+  const [chatGLoading,setChatGLoading]=useState(false);
+  const [chatMLoading,setChatMLoading]=useState(false);
+  const [chatUploading,setChatUploading]=useState(false);
   const containerRef=useRef(null);
   const dividerRef=useRef(null);
+  const logBufferRef=useRef([]);
+  const panelDragRef=useRef(null);
+  const greetedRef=useRef(false);
+  const sendToAgentRef=useRef(null);
 
   const showToast=useCallback((message,type='success')=>{
     setToast({message,type});
@@ -1142,6 +1617,7 @@ function App(){
           if(ws.stats){setStats(ws.stats);lsSet(KRef.current.stats,ws.stats)}
           if(ws.currentBatchId!==undefined){setCurrentBatchId(ws.currentBatchId);lsSet(KRef.current.batchId,ws.currentBatchId)}
           if(ws.lastRunWasDry!=null){setLastRunWasDry(ws.lastRunWasDry);lsSet(KRef.current.lastDry,ws.lastRunWasDry)}
+          if(ws.agentMsgs?.length){setAgentMsgs(ws.agentMsgs);lsSet(KRef.current.agentMsgs,ws.agentMsgs)}
         }
         setWsLoaded(true);
 
@@ -1163,11 +1639,25 @@ function App(){
   useEffect(()=>{lsSet(KRef.current.logs,logs.slice(-500))},[logs]);
   useEffect(()=>{lsSet(KRef.current.authG,{signedIn:googleAuthed})},[googleAuthed]);
   useEffect(()=>{lsSet(KRef.current.authMs,{signedIn:msAuthed})},[msAuthed]);
+
+  // Load users at App level as soon as auth is confirmed — not dependent on Step0 being visible
+  useEffect(()=>{
+    if(!googleAuthed||googleUsers.length>0)return;
+    fetch('/api/google/users').then(r=>r.ok?r.json():null).then(d=>{if(d?.users)setGoogleUsers(d.users)}).catch(()=>{});
+  },[googleAuthed]);
+  useEffect(()=>{
+    if(!msAuthed||msUsers.length>0)return;
+    fetch('/api/ms/users').then(r=>r.ok?r.json():null).then(d=>{if(d?.users)setMsUsers(d.users)}).catch(()=>{});
+  },[msAuthed]);
   useEffect(()=>{lsSet(KRef.current.selUsers,[...selectedUsers])},[selectedUsers]);
   useEffect(()=>{lsSet(KRef.current.migDone,migDone)},[migDone]);
   useEffect(()=>{lsSet(KRef.current.stats,stats)},[stats]);
   useEffect(()=>{lsSet(KRef.current.batchId,currentBatchId)},[currentBatchId]);
   useEffect(()=>{lsSet(KRef.current.lastDry,lastRunWasDry)},[lastRunWasDry]);
+  useEffect(()=>{lsSet(KRef.current.agentMsgs,agentMsgs.slice(-100))},[agentMsgs]);
+  useEffect(()=>{lsSet(KRef.current.migDir,migDir)},[migDir]);
+  useEffect(()=>{lsSet(KRef.current.c2gMappings,c2gMappings)},[c2gMappings]);
+  useEffect(()=>{lsSet(KRef.current.c2gSelUsers,[...c2gSelectedUsers])},[c2gSelectedUsers]);
 
   // Cross-device workspace save (debounced 800ms) — only after initial DB hydration
   const saveWorkspace=useCallback(()=>{
@@ -1176,11 +1666,69 @@ function App(){
     wsSaveTimer.current=setTimeout(()=>{
       fetch('/api/workspace',{method:'PUT',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({step,uploadData,config,mappings,selectedUsers:[...selectedUsers],
-          options,migDone,stats,currentBatchId,lastRunWasDry})
+          options,migDone,stats,currentBatchId,lastRunWasDry,agentMsgs:agentMsgs.filter(m=>!m.shellBlock).slice(-50)})
       }).catch(()=>{});
     },800);
   },[wsLoaded,step,uploadData,config,mappings,selectedUsers,options,migDone,stats,currentBatchId,lastRunWasDry]);
   useEffect(()=>{saveWorkspace()},[saveWorkspace]);
+
+  // ── Bidirectional sync: Steps panel events → Agent ──────────────────────────
+  const prevStepRef=useRef(null);
+  // Step change → agent guidance (guard: only after wsLoaded + genuine navigation)
+  useEffect(()=>{
+    if(!wsLoaded)return;
+    if(prevStepRef.current===null){prevStepRef.current=step;return;} // skip first render
+    if(prevStepRef.current===step)return;
+    prevStepRef.current=step;
+    const gc=[
+      'The user is now on the Connect Clouds step. Tell them to connect Google Workspace and Microsoft 365 — both required. Be brief.',
+      'The user is choosing a migration direction. Briefly explain the two options: Gemini→Copilot (Google to Microsoft) and Copilot→Gemini (Microsoft to Google). Ask which they want.',
+      'The user moved to Import Data. Tell them they can upload a Vault ZIP or export from Google Workspace directly.',
+      'The user is on User Mapping. Email accounts were auto-mapped by username match. They can review and fix unmapped users.',
+      'The user is on Migration Options. Ask if they want a dry run first (recommended) or go straight to live migration.',
+      null,null
+    ];
+    const c2g=[
+      'The user is now on the Connect Clouds step. Tell them to connect both accounts.',
+      null,
+      'The user is on User Mapping (Copilot→Gemini direction). M365 users on the left will be mapped to Google accounts. Auto-mapping runs by email match.',
+      null,null
+    ];
+    const triggers=migDir==='copilot-gemini'?c2g:gc;
+    if(triggers[step])sendToAgent(triggers[step],true);
+  },[step,wsLoaded]);
+
+  // Google auth → agent
+  const prevGoogleRef=useRef(null);
+  useEffect(()=>{
+    if(!wsLoaded)return;
+    if(prevGoogleRef.current===null){prevGoogleRef.current=googleAuthed;return;}
+    if(prevGoogleRef.current===googleAuthed)return;
+    prevGoogleRef.current=googleAuthed;
+    if(googleAuthed)sendToAgent(`Google Workspace was just connected (${googleUsers.length} users loaded). Briefly acknowledge and remind them to connect Microsoft 365 next.`,true);
+  },[googleAuthed,wsLoaded]);
+
+  // Microsoft auth → agent
+  const prevMsRef=useRef(null);
+  useEffect(()=>{
+    if(!wsLoaded)return;
+    if(prevMsRef.current===null){prevMsRef.current=msAuthed;return;}
+    if(prevMsRef.current===msAuthed)return;
+    prevMsRef.current=msAuthed;
+    if(msAuthed&&googleAuthed)sendToAgent('Microsoft 365 was just connected. Both clouds are now connected. Tell the user to proceed to Import Data.',true);
+    else if(msAuthed)sendToAgent('Microsoft 365 was just connected. Remind the user they still need to connect Google Workspace.',true);
+  },[msAuthed,wsLoaded]);
+
+  // Data loaded → agent
+  const prevUploadRef=useRef(null);
+  useEffect(()=>{
+    if(!wsLoaded)return;
+    const id=uploadData?.id||null;
+    if(prevUploadRef.current===null){prevUploadRef.current=id;return;}
+    if(prevUploadRef.current===id)return;
+    prevUploadRef.current=id;
+    if(uploadData)sendToAgent(`Vault data was just loaded: ${uploadData.total_users} users, ${uploadData.total_conversations||'unknown'} conversations. Briefly acknowledge and tell them to review user mappings next.`,true);
+  },[uploadData,wsLoaded]);
 
   // Recover migration state after page refresh / laptop shutdown
   useEffect(()=>{
@@ -1196,13 +1744,13 @@ function App(){
           if(doc.status==='completed'&&doc.summary){
             setStats({users:doc.summary.total_users||0,pages:doc.summary.total_pages_created||0,errors:doc.summary.total_errors||0,flagged:doc.summary.total_visual_assets_flagged||0});
             setLastRunWasDry(doc.dryRun||false);
-            setMigDone(true);setStep(5);
+            setMigDone(true);setStep(6);
           } else if(doc.status==='failed'){
             // Server died mid-migration — show done screen with whatever completed
             const s=doc.summary||{};
             setStats({users:s.total_users||0,pages:s.total_pages_created||0,errors:s.total_errors||0,flagged:s.total_visual_assets_flagged||0});
             setLastRunWasDry(doc.dryRun||false);
-            setMigDone(true);setStep(5);
+            setMigDone(true);setStep(6);
           }
           // If status==='running', server may still be active — leave SSE to handle it
         }).catch(()=>{});
@@ -1217,7 +1765,7 @@ function App(){
     // Reset mappings for fresh import so auto-map runs again
     setMappings({});
     setSelectedUsers(new Set());
-    setTimeout(()=>setStep(2),400);
+    setTimeout(()=>setStep(3),400);
   };
 
   const runMigration=async(forceLive=false)=>{
@@ -1225,8 +1773,10 @@ function App(){
     setLastRunWasDry(isDry);
     // If running live after dry-run, update options too
     if(forceLive)setOptions(p=>({...p,dryRun:false}));
-    setStep(4);setMigDone(false);setStats({users:0,pages:0,errors:0,flagged:0});setLogs([]);
+    setStep(5);setMigDone(false);setStats({users:0,pages:0,errors:0,flagged:0});setLogs([]);
     addLog('info',isDry?'Starting dry run...':'Starting live migration...');
+    logBufferRef.current=[];
+    addAgentMsg('bot',isDry?'🔍 Dry run started! Logs will stream below — no changes will be made to your data.':'🚀 Live migration started! I\'ll monitor progress and stream logs here.');
     setLive(true);
     const curStats={users:0,pages:0,errors:0,flagged:0};
 
@@ -1240,10 +1790,21 @@ function App(){
         if(d.type==='info'&&d.message.includes('Processing:'))curStats.users++;
         if(d.type==='warn'&&d.message.includes('flagged')){const m=d.message.match(/(\d+) conversations flagged/);if(m)curStats.flagged+=parseInt(m[1])}
         setStats({...curStats});addLog(d.type,d.message);
+        // Buffer logs → flush as collapsible shell block in agent chat every 10 lines or on phase boundary
+        logBufferRef.current.push({type:d.type,text:d.message,ts:new Date().toTimeString().slice(0,8),line:logBufferRef.current.length+1});
+        if(logBufferRef.current.length>=20||(d.type==='done'||d.type==='error')){
+          const lines=[...logBufferRef.current];logBufferRef.current=[];
+          if(lines.length>0)setAgentMsgs(prev=>[...prev,{id:Date.now()+Math.random(),role:'bot',content:'',shellBlock:lines}]);
+        }
         if(d.type==='done'){
           if(d.batch_id)setCurrentBatchId(d.batch_id);
-          sseRef.current.close();setLive(false);setMigDone(true);setRetrying(false);setStep(5);
-          setReportRefreshKey(p=>p+1); // trigger reports panel to re-fetch
+          sseRef.current.close();setLive(false);setMigDone(true);setRetrying(false);setStep(6);
+          setReportRefreshKey(p=>p+1);
+          // Agent completion summary
+          const s={...curStats};
+          setTimeout(()=>setAgentMsgs(prev=>[...prev,{id:Date.now(),role:'bot',
+            content:`✅ Migration complete!\n\n📊 **${s.users}** users  ·  **${s.pages}** pages created  ·  **${s.errors}** error${s.errors!==1?'s':''}${s.errors>0?'\n\nSome items failed — I recommend retrying.':'\n\nAll items migrated successfully!'}`,
+            quickReplies:s.errors>0?['Retry Failed','Download Report','Start Another']:['Download Report','Start Another']}]),600);
         }
       }catch{}
     };
@@ -1265,9 +1826,9 @@ function App(){
     setMigDone(false);setStats({users:0,pages:0,errors:0,flagged:0});setLogs([]);setCurrentBatchId(null);
     setOptions(p=>({...p,dryRun:true,fromDate:'',toDate:''}));
     if(keepData){
-      setMappings({});setSelectedUsers(new Set());setStep(2);
+      setMappings({});setSelectedUsers(new Set());setStep(3);
     } else {
-      setUploadData(null);setMappings({});setSelectedUsers(new Set());setStep(1);
+      setUploadData(null);setMappings({});setSelectedUsers(new Set());setStep(2);
     }
   };
 
@@ -1289,7 +1850,7 @@ function App(){
 
   const handleRetryWithPath=()=>{
     setRetryMode(true);
-    setStep(3);
+    setStep(4);
   };
 
   const handleGoToConnect=()=>{
@@ -1298,7 +1859,187 @@ function App(){
 
 // Logout: destroy session only — DO NOT clear localStorage so user returns to their last state
   const handleLogout=async()=>{await fetch('/api/logout',{method:'POST'});window.location.href='/login.html'};
-  const handleStepClick=i=>{if(i<step&&!live)setStep(i)};
+
+  /* Copilot→Gemini migration */
+  const runC2GMigration=useCallback(async()=>{
+    if(c2gLive)return;
+    // Build pairs BEFORE changing live state — avoids React 18 batch cancel
+    const keys=c2gSelectedUsers.size>0?[...c2gSelectedUsers]:Object.keys(c2gMappings);
+    const pairs=[];
+    keys.forEach(em=>{if(c2gMappings[em])pairs.push({sourceEmail:em,destEmail:c2gMappings[em]})});
+    if(!pairs.length){
+      addAgentMsg('bot','⚠️ No user mappings found. Go back to the mapping step and fill in the Google destination emails for each M365 user.');
+      return;
+    }
+    setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gLive(true);setStep(3);setLogs([]);
+    addLog('info','Starting Copilot → Gemini migration...');
+    addAgentMsg('bot','🚀 Copilot → Gemini migration started! Logs will stream below.');
+    const curStats={users:0,files:0,errors:0};
+    if(sseRef.current)sseRef.current.close();
+    sseRef.current=new EventSource('/api/c2g/migrate-log');
+    sseRef.current.onmessage=e=>{
+      try{
+        const d=JSON.parse(e.data);
+        if(d.type==='success')curStats.files++;
+        if(d.type==='error')curStats.errors++;
+        if(d.type==='info'&&d.message?.includes('Processing:'))curStats.users++;
+        setC2gStats({...curStats});addLog(d.type,d.message||'');
+        if(d.type==='done'){
+          try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;}catch{}
+          setC2gStats({...curStats});
+          sseRef.current.close();setC2gLive(false);setC2gDone(true);setStep(4);
+          setTimeout(()=>addAgentMsg('bot',`✅ Copilot → Gemini complete!\n\n**${curStats.files}** files uploaded  ·  **${curStats.errors}** error${curStats.errors!==1?'s':''}`,{quickReplies:['Start Another']}),400);
+        }
+      }catch{}
+    };
+    sseRef.current.onerror=()=>{if(sseRef.current){sseRef.current.close();setC2gLive(false)}};
+    try{
+      const res=await fetch('/api/c2g/migrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pairs})});
+      if(!res.ok){const d=await res.json();addLog('error',d.error||'Migration failed');setC2gLive(false);}
+    }catch(err){addLog('error',err.message);setC2gLive(false);}
+  },[c2gLive,c2gSelectedUsers,c2gMappings,addLog,addAgentMsg]);
+
+  const handleChangeDirection=useCallback(()=>{
+    setMigDir(null);setStep(1);
+    setUploadData(null);setMappings({});setSelectedUsers(new Set());setMigDone(false);
+    setStats({users:0,pages:0,errors:0,flagged:0});setCurrentBatchId(null);setLogs([]);
+    setRetryMode(false);setLastRunWasDry(false);
+    setC2gMappings({});setC2gSelectedUsers(new Set());setC2gDone(false);setC2gStats({users:0,files:0,errors:0});
+    if(sseRef.current){sseRef.current.close();sseRef.current=null;}
+    setLive(false);setC2gLive(false);
+  },[]);
+
+  /* Panel drag-to-swap */
+  const handlePanelGripMouseDown=useCallback((side,e)=>{
+    e.preventDefault();e.stopPropagation();
+    panelDragRef.current={side,startX:e.clientX};
+    const onMove=ev=>{
+      if(!panelDragRef.current||!containerRef.current)return;
+      const{side:s,startX}=panelDragRef.current;
+      const delta=ev.clientX-startX;
+      const threshold=containerRef.current.getBoundingClientRect().width*0.25;
+      if((s==='left'&&delta>threshold)||(s==='right'&&delta<-threshold)){
+        setPanelSwapped(p=>!p);panelDragRef.current=null;
+        document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);
+      }
+    };
+    const onUp=()=>{panelDragRef.current=null;document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp)};
+    document.addEventListener('mousemove',onMove);document.addEventListener('mouseup',onUp);
+  },[]);
+
+  /* Agent chat helpers */
+  const addAgentMsg=useCallback((role,content,extras={})=>{
+    setAgentMsgs(prev=>[...prev,{id:Date.now()+Math.random(),role,content,...extras}]);
+  },[]);
+
+  const sendToAgent=useCallback(async(overrideMsg,isSystem=false)=>{
+    const userMsg=overrideMsg||agentInput.trim();
+    if(!userMsg)return;
+    if(!isSystem){setAgentInput('');addAgentMsg('user',userMsg);}
+    setAgentTyping(true);
+    try{
+      const history=agentMsgs.filter(m=>!m.shellBlock).map(m=>({role:m.role==='bot'?'assistant':'user',content:m.content})).slice(-12);
+      const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({message:userMsg,history,isSystemTrigger:isSystem,
+          migrationState:{step,migDir,live,migDone,stats,lastRunWasDry,currentBatchId,
+            uploadData:uploadData?{id:uploadData.id,total_users:uploadData.total_users,total_conversations:uploadData.total_conversations}:null,
+            googleAuthed,msAuthed,
+            mappings_count:Object.keys(mappings).length,
+            selected_users_count:selectedUsers.size,
+            options:{dryRun:options.dryRun,hasFilePath:!!config.filePath}}})});
+      const data=await res.json();
+      if(data.reply)addAgentMsg('bot',data.reply,{quickReplies:data.quickReplies,...(data.widget&&{widget:data.widget})});
+      // Execute real actions returned by agent tools
+      if(data.navigate!=null)setStep(data.navigate);
+      if(data.action==='start_migration_dry'){setOptions(p=>({...p,dryRun:true}));setTimeout(()=>runMigration(false),200);}
+      else if(data.action==='start_migration_live'){setOptions(p=>({...p,dryRun:false}));setTimeout(()=>runMigration(true),200);}
+      else if(data.action==='retry_failed')retryFailed();
+      else if(data.action==='show_reports')setShowReports(true);
+      else if(data.action==='show_mapping')setLeftMode('mapping');
+    }catch{addAgentMsg('bot',"Sorry, I couldn't connect right now. Please try again.");}
+    setAgentTyping(false);
+  },[agentInput,agentMsgs,step,live,migDone,stats,lastRunWasDry,currentBatchId,uploadData,googleAuthed,msAuthed,mappings,selectedUsers,options,config,addAgentMsg]);
+
+  const handleLogLineClick=useCallback(line=>{
+    sendToAgent(`Explain this log line: "${line.text}"`);
+  },[sendToAgent]);
+
+  const handleAgentQuickReply=useCallback(qr=>{
+    if(qr==='Retry Failed')retryFailed();
+    else if(qr==='Start Another Migration')runAnotherBatch(false);
+    else if(qr==='Start Dry Run'){setOptions(p=>({...p,dryRun:true}));addAgentMsg('user','Start dry run');setTimeout(()=>runMigration(false),200);}
+    else if(qr==='Start Migration'){setOptions(p=>({...p,dryRun:false}));addAgentMsg('user','Start live migration');setTimeout(()=>runMigration(true),200);}
+    else if(qr==='Show me the mapping'||qr==='Auto-map users'){setStep(migDir==='copilot-gemini'?2:3);sendToAgent(qr);}
+    else if(qr==='Connect Google Workspace'){setStep(0);sendToAgent('How do I connect Google Workspace?');}
+    else if(qr==='Connect Microsoft 365'){setStep(0);sendToAgent('How do I connect Microsoft 365?');}
+    else if(qr==='Upload a Vault ZIP'){setStep(2);sendToAgent('I want to upload a Vault ZIP file.');}
+    else if(qr==='Export from Google Drive'){setStep(2);sendToAgent('I want to export from Google Workspace directly.');}
+    else{sendToAgent(qr);}
+  },[sendToAgent,retryFailed,runAnotherBatch,runMigration,addAgentMsg,setOptions,setStep]);
+
+  // Always keep sendToAgentRef current so initial greeting can call it without stale closure
+  sendToAgentRef.current=sendToAgent;
+
+  // ── Chat widget auth handlers ────────────────────────────────────────────────
+  const handleChatSignInGoogle=useCallback(()=>{
+    setChatGLoading(true);
+    window.open('/auth/google/login','googleauth','width=500,height=700,left=300,top=100');
+    window.addEventListener('message',function h(e){
+      if(e.data?.type==='google-auth-success'){
+        window.removeEventListener('message',h);
+        setTimeout(()=>{
+          fetch('/api/google/users').then(r=>r.json()).then(d=>{
+            if(d.users)setGoogleUsers(d.users);
+            setGoogleAuthed(true);setChatGLoading(false);
+          }).catch(()=>{setGoogleAuthed(true);setChatGLoading(false);});
+        },500);
+      }
+    });
+  },[]);
+
+  const handleChatSignInMs=useCallback(()=>{
+    setChatMLoading(true);
+    const url=`/auth/login${config.tenantId?`?tenant_id=${config.tenantId}`:''}`;
+    window.open(url,'msauth','width=500,height=700,left=300,top=100');
+    window.addEventListener('message',function h(e){
+      if(e.data?.type==='auth-success'){
+        window.removeEventListener('message',h);
+        setTimeout(()=>{
+          fetch('/api/ms/users').then(r=>r.json()).then(d=>{
+            if(d.users)setMsUsers(d.users);
+            setMsAuthed(true);setChatMLoading(false);
+          }).catch(()=>{setMsAuthed(true);setChatMLoading(false);});
+        },500);
+      }
+    });
+  },[config.tenantId]);
+
+  const handleChatUpload=useCallback(async file=>{
+    setChatUploading(true);
+    const fd=new FormData();fd.append('vault_zip',file);
+    try{
+      const res=await fetch('/api/upload',{method:'POST',body:fd});
+      const data=await res.json();
+      if(res.ok)handleImportComplete(data);
+    }catch{}
+    setChatUploading(false);
+  },[handleImportComplete]);
+
+  // Build widgetProps for inline chat widgets — recreated when relevant state changes
+  const widgetProps=useMemo(()=>({
+    auth:{googleAuthed,msAuthed,onSignInGoogle:handleChatSignInGoogle,onSignInMs:handleChatSignInMs,googleUsers,msUsers,googleLoading:chatGLoading,msLoading:chatMLoading},
+    upload:{onUpload:handleChatUpload,uploading:chatUploading,activeUpload:uploadData},
+    options:{options,setOptions,config,setConfig,onStart:()=>runMigration()}
+  }),[googleAuthed,msAuthed,handleChatSignInGoogle,handleChatSignInMs,googleUsers,msUsers,chatGLoading,chatMLoading,handleChatUpload,chatUploading,uploadData,options,config]);
+
+  // ── Initial greeting (fires once after ws hydration if chat is empty) ────────
+  useEffect(()=>{
+    if(!wsLoaded||greetedRef.current)return;
+    greetedRef.current=true;
+    if(agentMsgs.length===0){
+      sendToAgentRef.current('The user just opened the CloudFuze migration tool for the first time this session. Welcome them warmly. Explain that this tool migrates conversations between Google Workspace and Microsoft 365 in both directions. Tell them to start by connecting both accounts, then choose their migration direction. Keep it under 3 sentences.',true);
+    }
+  },[wsLoaded]);
 
   return(
     <div style={{display:'flex',flexDirection:'column',height:'100vh',fontFamily:'Poppins,system-ui,sans-serif'}}>
@@ -1306,15 +2047,12 @@ function App(){
       <div style={{background:C.primary,height:52,display:'flex',alignItems:'center',padding:'0 24px',gap:12,flexShrink:0,boxShadow:'0 2px 8px rgba(1,41,172,.2)'}}>
         <img src="/assets/logo.png" alt="CloudFuze" style={{height:32,objectFit:'contain'}}/>
         <div style={{width:1,height:24,background:'rgba(255,255,255,.25)',margin:'0 4px'}}/>
-        <div><div style={{color:'white',fontSize:14,fontWeight:600,lineHeight:1.2}}>Gemini → Copilot Migration</div><div style={{color:'rgba(255,255,255,.6)',fontSize:11}}>powered by CloudFuze</div></div>
+        <div style={{color:'white',fontSize:15,fontWeight:700,letterSpacing:.2}}>CloudFuze</div>
         <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:10}}>
           <div style={{display:'flex',alignItems:'center',gap:6}}>
             <div className={live?'pulse-dot':''} style={{width:8,height:8,borderRadius:'50%',background:live?'#4ade80':'rgba(255,255,255,.3)',transition:'background .3s'}}/>
             <span style={{color:'rgba(255,255,255,.7)',fontSize:12}}>{live?'Live':'Idle'}</span>
           </div>
-          <button onClick={()=>setShowReports(true)} style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:'rgba(255,255,255,.8)',background:'rgba(255,255,255,.12)',border:'1px solid rgba(255,255,255,.25)',borderRadius:5,padding:'4px 10px',cursor:'pointer',fontFamily:'inherit',transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.2)'} onMouseLeave={e=>e.currentTarget.style.background='rgba(255,255,255,.12)'}>
-            <IcoReport s={12}/> Reports
-          </button>
           {appUser&&<div style={{display:'flex',alignItems:'center',gap:8,borderLeft:'1px solid rgba(255,255,255,.2)',paddingLeft:10}}>
             <div style={{width:26,height:26,borderRadius:'50%',background:'rgba(255,255,255,.2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:700,color:'white'}}>{(appUser.name||appUser.email).slice(0,2).toUpperCase()}</div>
             <span style={{fontSize:11,color:'rgba(255,255,255,.8)',maxWidth:100,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{appUser.name||appUser.email}</span>
@@ -1325,42 +2063,86 @@ function App(){
         </div>
       </div>
 
-      {/* Step Tracker — clickable backward only, disabled during migration */}
-      <StepTracker active={Math.min(step,5)} onStepClick={handleStepClick} live={live}/>
-
       {/* Draggable Split Panel */}
-      <div ref={containerRef} style={{display:'flex',flex:1,overflow:'hidden'}}>
-        {/* Left Panel */}
-        <div style={{width:`${splitPct}%`,display:'flex',flexDirection:'column',overflow:'hidden',background:'white',flexShrink:0}}>
-          <div style={{padding:'10px 24px',borderBottom:`1px solid ${C.bg}`,background:'white',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-            <span style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.5}}>Step {Math.min(step+1,6)} of 6</span>
-            {migDone&&step===5&&currentBatchId&&<span style={{fontSize:10,color:C.primaryL}}>Batch #{currentBatchId.slice(-6)}</span>}
+      {(()=>{
+        /* Steps panel */
+        const stepsPanel=(side)=>(
+          <div style={{display:'flex',flexDirection:'column',height:'100%',overflow:'hidden',background:'white'}}>
+            {/* Header: CloudFuze Migration */}
+            <div style={{padding:'10px 16px',borderBottom:`1px solid ${C.border}`,background:'white',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+              <div style={{display:'flex',alignItems:'center',gap:10}}>
+                <div onMouseDown={e=>handlePanelGripMouseDown(side,e)} style={{cursor:'grab',color:C.muted,display:'flex',padding:'3px 4px',borderRadius:4,userSelect:'none',transition:'color .15s',flexShrink:0}} title="Drag to swap panels" onMouseEnter={e=>e.currentTarget.style.color=C.primary} onMouseLeave={e=>e.currentTarget.style.color=C.muted}><IcoGrip s={14}/></div>
+                <div style={{width:30,height:30,borderRadius:8,background:`linear-gradient(135deg,${C.primary},${C.primaryL})`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><path d="M12 2a4 4 0 014 4v2H8V6a4 4 0 014-4z"/><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5" fill="white"/><circle cx="15" cy="14" r="1.5" fill="white"/></svg>
+                </div>
+                <div>
+                  <div style={{fontSize:13,fontWeight:600,lineHeight:1.2,color:C.dark}}>CloudFuze Migration</div>
+                </div>
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                {migDone&&currentBatchId&&<span style={{fontSize:9,color:C.primaryL,flexShrink:0,background:C.tint,padding:'2px 6px',borderRadius:4}}>#{currentBatchId.slice(-6)}</span>}
+                {migDir&&<button onClick={handleChangeDirection} style={{fontSize:10,color:C.muted,background:'none',border:`1px solid ${C.border}`,borderRadius:4,padding:'2px 8px',cursor:'pointer',fontFamily:'inherit',flexShrink:0}} onMouseEnter={e=>{e.currentTarget.style.color=C.primary;e.currentTarget.style.borderColor=C.primary}} onMouseLeave={e=>{e.currentTarget.style.color=C.muted;e.currentTarget.style.borderColor=C.border}}>⇄ Change</button>}
+              </div>
+            </div>
+            {/* Step content */}
+            {(()=>{
+              const isMapStep=(step===3&&migDir==='gemini-copilot')||(step===2&&migDir==='copilot-gemini');
+              return(
+                <div style={{flex:1,overflowY:isMapStep?'hidden':'auto',padding:'16px 20px',display:isMapStep?'flex':'block',flexDirection:isMapStep?'column':undefined,minHeight:0}}>
+                  {/* Step 0: Connect — always shown */}
+                  {step===0&&<Step0 googleAuthed={googleAuthed} setGoogleAuthed={setGoogleAuthed} msAuthed={msAuthed} setMsAuthed={setMsAuthed} googleUsers={googleUsers} setGoogleUsers={setGoogleUsers} msUsers={msUsers} setMsUsers={setMsUsers} tenantId={config.tenantId} onComplete={()=>setStep(1)}/>}
+                  {/* Step 1: Direction picker — always shown */}
+                  {step===1&&<StepDirection onSelect={dir=>{setMigDir(dir);setStep(2);}} onBack={()=>setStep(0)}/>}
+                  {/* Gemini → Copilot steps */}
+                  {step===2&&migDir==='gemini-copilot'&&<Step1 googleUsers={googleUsers} googleAuthed={googleAuthed} onComplete={handleImportComplete} onBack={()=>setStep(1)} showToast={showToast} uploadData={uploadData}/>}
+                  {step===3&&migDir==='gemini-copilot'&&<Step2 uploadData={uploadData} msUsers={msUsers} mappings={mappings} setMappings={setMappings} selectedUsers={selectedUsers} setSelectedUsers={setSelectedUsers} onNext={()=>{addLog('info',`User mappings ready — ${selectedUsers.size||Object.keys(mappings).length} users selected`);setStep(4);}} onBack={()=>setStep(2)} showToast={showToast}/>}
+                  {step===4&&migDir==='gemini-copilot'&&<Step3 options={options} setOptions={setOptions} config={config} setConfig={setConfig} msAuthed={msAuthed} googleAuthed={googleAuthed} onRun={retryMode?(()=>retryFailed(config.filePath||undefined)):runMigration} onBack={()=>{setRetryMode(false);setStep(retryMode?5:3)}} retryMode={retryMode}/>}
+                  {(step===5||step===6)&&migDir==='gemini-copilot'&&<StepMigrate stats={stats} done={migDone} lastRunWasDry={lastRunWasDry} batchId={currentBatchId} onStartLive={()=>runMigration(true)} onRunAnother={runAnotherBatch} onRetry={retryFailed} retrying={retrying} hasUploadData={!!uploadData} onGoToConnect={handleGoToConnect} onRetryWithPath={handleRetryWithPath} onChangeDirection={handleChangeDirection} totalExpected={(()=>{if(!uploadData?.users)return 0;const sel=selectedUsers.size>0?[...selectedUsers]:Object.keys(mappings);const emails=sel.length>0?new Set(sel):new Set(uploadData.users.map(u=>u.email));return uploadData.users.filter(u=>emails.has(u.email)).reduce((s,u)=>s+(u.conversation_count||0),0)})()}/>}
+                  {/* Copilot → Gemini steps */}
+                  {step===2&&migDir==='copilot-gemini'&&<StepC2GMap msUsers={msUsers} googleUsers={googleUsers} c2gMappings={c2gMappings} setC2gMappings={setC2gMappings} c2gSelectedUsers={c2gSelectedUsers} setC2gSelectedUsers={setC2gSelectedUsers} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast}/>}
+                  {(step===3||step===4)&&migDir==='copilot-gemini'&&<StepC2GMigrate c2gStats={c2gStats} c2gDone={c2gDone} c2gBatchId={null} onRunAnother={()=>{setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setStep(2);}} onBack={()=>setStep(2)} onStart={runC2GMigration} c2gLive={c2gLive} onChangeDirection={handleChangeDirection}/>}
+                </div>
+              );
+            })()}
           </div>
-          <div style={{flex:1,overflowY:step===2?'hidden':'auto',padding:'20px 24px',display:step===2?'flex':'block',flexDirection:step===2?'column':undefined}}>
-            {/* Render steps inline to avoid component recreation issues */}
-            {step===0&&<Step0 googleAuthed={googleAuthed} setGoogleAuthed={setGoogleAuthed} msAuthed={msAuthed} setMsAuthed={setMsAuthed} googleUsers={googleUsers} setGoogleUsers={setGoogleUsers} msUsers={msUsers} setMsUsers={setMsUsers} tenantId={config.tenantId} onComplete={()=>setStep(1)}/>}
-            {step===1&&<Step1 googleUsers={googleUsers} googleAuthed={googleAuthed} onComplete={handleImportComplete} onBack={()=>setStep(0)} showToast={showToast} uploadData={uploadData}/>}
-            {step===2&&<Step2 uploadData={uploadData} msUsers={msUsers} mappings={mappings} setMappings={setMappings} selectedUsers={selectedUsers} setSelectedUsers={setSelectedUsers} onNext={()=>{addLog('info',`User mappings ready — ${selectedUsers.size||Object.keys(mappings).length} users selected`);setStep(3)}} onBack={()=>setStep(1)} showToast={showToast}/>}
-            {step===3&&<Step3 options={options} setOptions={setOptions} config={config} setConfig={setConfig} msAuthed={msAuthed} googleAuthed={googleAuthed} onRun={retryMode?(()=>retryFailed(config.filePath||undefined)):runMigration} onBack={()=>{setRetryMode(false);setStep(retryMode?4:2)}} retryMode={retryMode}/>}
-            {(step===4||step===5)&&<StepMigrate stats={stats} done={migDone} lastRunWasDry={lastRunWasDry} batchId={currentBatchId} onStartLive={()=>runMigration(true)} onRunAnother={runAnotherBatch} onRetry={retryFailed} retrying={retrying} hasUploadData={!!uploadData} onGoToConnect={handleGoToConnect} onRetryWithPath={handleRetryWithPath} totalExpected={(()=>{if(!uploadData?.users)return 0;const selected=selectedUsers.size>0?[...selectedUsers]:Object.keys(mappings);const emails=selected.length>0?new Set(selected):new Set(uploadData.users.map(u=>u.email));return uploadData.users.filter(u=>emails.has(u.email)).reduce((s,u)=>s+(u.conversation_count||0),0)})()}/>}
+        );
+        /* Chat panel */
+        const chatPanel=(side)=>(
+          <div style={{display:'flex',flexDirection:'column',height:'100%',overflow:'hidden',background:C.bg}}>
+            <div style={{padding:'10px 16px',borderBottom:`1px solid ${C.border}`,background:'white',display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
+              <div style={{display:'flex',alignItems:'center',gap:8}}>
+                <div onMouseDown={e=>handlePanelGripMouseDown(side,e)} style={{cursor:'grab',color:C.muted,display:'flex',padding:'3px 4px',borderRadius:4,userSelect:'none',transition:'color .15s'}} title="Drag to swap panels" onMouseEnter={e=>e.currentTarget.style.color=C.primary} onMouseLeave={e=>e.currentTarget.style.color=C.muted}><IcoGrip s={14}/></div>
+                <div style={{width:30,height:30,borderRadius:8,background:`linear-gradient(135deg,${C.primary},${C.primaryL})`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><path d="M12 2a4 4 0 014 4v2H8V6a4 4 0 014-4z"/><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5" fill="white"/><circle cx="15" cy="14" r="1.5" fill="white"/></svg>
+                </div>
+                <div>
+                  <div style={{fontSize:13,fontWeight:600,lineHeight:1.2,color:C.dark}}>Migration Agent</div>
+                  {migDir&&<div style={{display:'flex',alignItems:'center',gap:4,marginTop:1}}>
+                    {migDir==='gemini-copilot'?<><GoogleIcon/><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg><MsIcon/><span style={{fontSize:10,color:C.muted,marginLeft:2}}>Google → Microsoft</span></>
+                    :<><MsIcon/><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg><GoogleIcon/><span style={{fontSize:10,color:C.muted,marginLeft:2}}>Microsoft → Google</span></>}
+                  </div>}
+                </div>
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                <div className={live?'pulse-dot':''} style={{width:8,height:8,borderRadius:'50%',background:live?'#4ade80':'#d1d5db',transition:'background .3s'}}/>
+                <span style={{fontSize:12,color:live?'#16a34a':C.muted,fontWeight:500}}>{live?'Migrating':'Ready'}</span>
+              </div>
+            </div>
+            <AgentChat msgs={agentMsgs} typing={agentTyping} input={agentInput} onInput={setAgentInput} onSend={()=>sendToAgent()} onLogLineClick={handleLogLineClick} onQuickReply={handleAgentQuickReply} widgetProps={widgetProps} onShowReports={()=>setShowReports(true)}/>
           </div>
-        </div>
-
-        {/* Drag Handle */}
-        <div ref={dividerRef} className="drag-divider" onMouseDown={handleDividerMouseDown}/>
-
-        {/* Right Panel */}
-        <div style={{flex:1,display:'flex',flexDirection:'column',background:C.bg,overflow:'hidden'}}>
-          <div style={{padding:'14px 20px',borderBottom:`1px solid ${C.border}`,background:'white',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-            <span style={{fontSize:14,fontWeight:600}}>Migration Log</span>
-            <div style={{display:'flex',alignItems:'center',gap:6}}>
-              <div className={live?'pulse-dot':''} style={{width:8,height:8,borderRadius:'50%',background:live?'#4ade80':'#d1d5db',transition:'background .3s'}}/>
-              <span style={{fontSize:12,color:live?C.success:C.muted,fontWeight:500}}>{live?'Running':'Waiting'}</span>
+        );
+        return(
+          <div ref={containerRef} style={{display:'flex',flex:1,overflow:'hidden'}}>
+            <div style={{width:`${splitPct}%`,display:'flex',flexDirection:'column',overflow:'hidden',flexShrink:0}}>
+              {panelSwapped?chatPanel('left'):stepsPanel('left')}
+            </div>
+            <div ref={dividerRef} className="drag-divider" onMouseDown={handleDividerMouseDown}/>
+            <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+              {panelSwapped?stepsPanel('right'):chatPanel('right')}
             </div>
           </div>
-          <LogFeed logs={logs} live={live}/>
-        </div>
-      </div>
+        );
+      })()}
 
       {/* Reports side panel */}
       {showReports&&<ReportsPanel onClose={()=>setShowReports(false)} refreshKey={reportRefreshKey} liveStats={stats} liveBatchId={currentBatchId} isLive={live}/>}

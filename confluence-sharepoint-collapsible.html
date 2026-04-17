@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CloudFuze — Confluence → SharePoint Migration (Collapsible Panel)</title>
+<style>
+  @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+  @keyframes scaleIn{from{transform:scale(.94);opacity:0}to{transform:scale(1);opacity:1}}
+  @keyframes checkPop{0%{transform:scale(0)}60%{transform:scale(1.2)}100%{transform:scale(1)}}
+  @keyframes typing{0%{opacity:.2}20%{opacity:1}100%{opacity:.2}}
+  @keyframes slideR{from{opacity:0;transform:translateX(-12px)}to{opacity:1;transform:translateX(0)}}
+  @keyframes countUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes pulseGlow{0%,100%{box-shadow:0 0 4px rgba(99,102,241,.2)}50%{box-shadow:0 0 14px rgba(99,102,241,.45)}}
+  @keyframes shake{0%,100%{transform:translateX(0)}10%,30%,50%,70%,90%{transform:translateX(-3px)}20%,40%,60%,80%{transform:translateX(3px)}}
+
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',sans-serif;background:#f8fafc;color:#1e293b}
+  button{font-family:inherit;cursor:pointer}
+  select{font-family:inherit;cursor:pointer}
+  ::-webkit-scrollbar{width:4px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:#d1d5db;border-radius:99px}
+  .spinner{animation:spin 1s linear infinite}
+  .td{width:5px;height:5px;border-radius:50%;background:#94a3b8;display:inline-block;animation:typing 1.4s infinite both}
+  .td:nth-child(2){animation-delay:.2s}.td:nth-child(3){animation-delay:.4s}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script type="text/babel">
+const {useState,useEffect,useRef,useCallback,Fragment}=React;
+
+/* ═══ ICONS ═══ */
+const ConfIcon=({s=18})=><svg width={s} height={s} viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="#1868DB"/><text x="12" y="16.5" textAnchor="middle" fill="white" fontSize="11" fontWeight="bold" fontFamily="serif">C</text></svg>;
+const SPIcon=({s=18})=><svg width={s} height={s} viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="#038387"/><text x="12" y="16.5" textAnchor="middle" fill="white" fontSize="11" fontWeight="bold">S</text></svg>;
+const Chk=({s=14,c='#22c55e'})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>;
+const XMark=({s=14,c='#ef4444'})=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="3" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>;
+const Arr=()=><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>;
+const BotAv=({s=28})=><div style={{width:s,height:s,borderRadius:'50%',background:'linear-gradient(135deg,#6366f1,#8b5cf6)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><svg width={s*.5} height={s*.5} viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5"><path d="M12 2a4 4 0 014 4v2H8V6a4 4 0 014-4z"/><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5" fill="white"/><circle cx="15" cy="14" r="1.5" fill="white"/></svg></div>;
+const Ring=({pct,size=40,stroke=3,color='#6366f1'})=>{const r=(size-stroke)/2,c=2*Math.PI*r,o=c-(pct/100)*c;return<svg width={size} height={size} style={{transform:'rotate(-90deg)'}}><circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#e2e8f0" strokeWidth={stroke}/><circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={c} strokeDashoffset={o} style={{transition:'stroke-dashoffset .5s ease'}}/></svg>};
+
+/* Collapse/Expand chevrons */
+const ChevL=()=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>;
+const ChevR=()=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="9 6 15 12 9 18"/></svg>;
+
+/* ═══ DATA ═══ */
+const OBJECT_MAP=[
+  {src:'Spaces',tgt:'SharePoint Sites',srcI:'🏢',tgtI:'🌐',count:14,st:'auto',note:'1:1 — each Space becomes a Site'},
+  {src:'Pages',tgt:'SharePoint Pages',srcI:'📄',tgtI:'📄',count:2847,st:'auto',note:'Stored in Site Pages library'},
+  {src:'Page Hierarchy',tgt:'SP Navigation + Parent',srcI:'🌳',tgtI:'🗂️',count:2847,st:'auto',note:'Nested tree → flat pages with nav'},
+  {src:'Blog Posts',tgt:'News Posts',srcI:'📰',tgtI:'📣',count:186,st:'auto',note:'Blog → News post format'},
+  {src:'Comments',tgt:'SP Page Comments',srcI:'💬',tgtI:'💬',count:9842,st:'auto',note:'Inline → page-level comments'},
+  {src:'Attachments',tgt:'Document Library',srcI:'📎',tgtI:'📁',count:4218,st:'auto',note:'Moved to Document Library'},
+  {src:'Labels / Tags',tgt:'Managed Metadata',srcI:'🏷️',tgtI:'🏷️',count:342,st:'auto',note:'Labels → term set'},
+  {src:'Page Templates',tgt:'SP Page Layouts',srcI:'📋',tgtI:'📋',count:12,st:'review',note:'Manual — macros inside templates'},
+  {src:'Macros',tgt:'Web Parts',srcI:'🧩',tgtI:'🧩',count:1536,st:'review',note:'23% have no SP equivalent'},
+  {src:'Space Permissions',tgt:'SP Permission Groups',srcI:'🔒',tgtI:'🔒',count:14,st:'auto',note:'Space perms → Site groups'},
+  {src:'Page Restrictions',tgt:'Item Permissions',srcI:'🔐',tgtI:'🔐',count:89,st:'review',note:'Granular locks → item-level perms'},
+  {src:'Page Versions',tgt:'SP Page Versions',srcI:'📜',tgtI:'📜',count:18420,st:'auto',note:'Full history preserved'},
+];
+const MACROS=[
+  {macro:'Table of Contents',count:284,st:'auto',sp:'TOC Web Part',options:null},
+  {macro:'Code Block',count:198,st:'auto',sp:'Code Snippet Web Part',options:null},
+  {macro:'Info/Warning Panels',count:412,st:'auto',sp:'Text Web Part + formatting',options:null},
+  {macro:'Jira Issue/Filter',count:156,st:'warn',sp:'No direct equivalent',options:['Static snapshot + link','Power Automate connector','Embed via iframe','Skip']},
+  {macro:'Draw.io Diagrams',count:87,st:'warn',sp:'No native support',options:['Export as PNG + link','Convert to Visio (.vsdx)','Skip']},
+  {macro:'Gliffy Diagrams',count:42,st:'warn',sp:'No native support',options:['Export as PNG','Convert to Visio','Skip']},
+  {macro:'Excerpt / Include',count:63,st:'fail',sp:'Not supported',options:['Inline content','Convert to SP List','Skip']},
+  {macro:'Page Properties',count:48,st:'fail',sp:'Not supported',options:['Convert to SP List','Inline as table','Skip']},
+  {macro:'User Profile',count:31,st:'auto',sp:'People Web Part',options:null},
+  {macro:'Expand/Collapse',count:215,st:'auto',sp:'Collapsible section',options:null},
+];
+const LARGE_FILES=[
+  {name:'product-demo-full.mp4',size:'1.2 GB',loc:'Engineering/Demos',options:['Move to Stream','OneDrive + link','Skip']},
+  {name:'Q4-analytics-export.zip',size:'680 MB',loc:'Analytics/Reports',options:['Compress & split','OneDrive + link','Skip']},
+  {name:'design-system-assets.zip',size:'420 MB',loc:'Design/Assets',options:['Compress & split','OneDrive + link','Skip']},
+  {name:'training-recording.mp4',size:'380 MB',loc:'HR/Training',options:['Move to Stream','OneDrive + link','Skip']},
+  {name:'database-backup.sql.gz',size:'310 MB',loc:'Engineering/Backups',options:['Azure Blob + link','Skip']},
+  {name:'raw-survey-data.csv',size:'290 MB',loc:'Research/Data',options:['Azure Blob + link','Split into parts','Skip']},
+  {name:'brand-video-final.mov',size:'270 MB',loc:'Marketing/Videos',options:['Move to Stream','OneDrive + link','Skip']},
+];
+const PERM_ISSUES=[
+  {space:'HR Confidential',issue:'Needs isolated SP site with broken inheritance',severity:'high'},
+  {space:'89 Page Restrictions',issue:'Creates 89 unique item-level permissions',severity:'med'},
+  {space:'Public Docs (Anonymous)',issue:'Requires External Sharing on SP site',severity:'med'},
+  {space:'Engineering (SSO)',issue:'SP group must mirror Confluence SSO group',severity:'low'},
+];
+const ENTITIES=[
+  {label:'Spaces → Sites',count:14,icon:'🏢',color:'#1868DB'},
+  {label:'Pages',count:2847,icon:'📄',color:'#6366f1'},
+  {label:'Blog → News',count:186,icon:'📰',color:'#8b5cf6'},
+  {label:'Attachments',count:4218,icon:'📎',color:'#06b6d4'},
+  {label:'Comments',count:9842,icon:'💬',color:'#f59e0b'},
+  {label:'Metadata',count:342,icon:'🏷️',color:'#10b981'},
+  {label:'Permissions',count:103,icon:'🔒',color:'#ec4899'},
+  {label:'Versions',count:18420,icon:'📜',color:'#64748b'},
+];
+
+/* Chat components */
+const BotMsg=({children})=><div style={{display:'flex',alignItems:'flex-start',gap:8,animation:'fadeUp .4s ease both'}}><BotAv/><div style={{background:'#f1f5f9',borderRadius:'14px 14px 14px 4px',padding:'10px 14px',maxWidth:'88%',lineHeight:1.6,fontSize:13,color:'#1e293b'}}>{children}</div></div>;
+const UserMsg=({children})=><div style={{display:'flex',justifyContent:'flex-end',animation:'fadeUp .3s ease both'}}><div style={{background:'linear-gradient(135deg,#6366f1,#8b5cf6)',borderRadius:'14px 14px 4px 14px',padding:'10px 14px',maxWidth:'80%',color:'white',fontSize:13,lineHeight:1.5}}>{children}</div></div>;
+const TypInd=()=><div style={{display:'flex',alignItems:'flex-start',gap:8,animation:'fadeIn .3s'}}><BotAv/><div style={{background:'#f1f5f9',borderRadius:'14px 14px 14px 4px',padding:'12px 16px',display:'flex',gap:4}}><span className="td"/><span className="td"/><span className="td"/></div></div>;
+
+const STEPS=[
+  {id:'landing',label:'Start',icon:'🏠'},
+  {id:'connect',label:'Connect',icon:'🔌'},
+  {id:'scan',label:'Scan',icon:'🔍'},
+  {id:'objects',label:'Objects',icon:'🗺️'},
+  {id:'macros',label:'Macros',icon:'🧩'},
+  {id:'perms',label:'Perms',icon:'🔒'},
+  {id:'files',label:'Files',icon:'📦'},
+  {id:'migrate',label:'Migrate',icon:'🚀'},
+  {id:'report',label:'Report',icon:'📋'},
+];
+
+/* ═══════════════════ MAIN APP ═══════════════════ */
+function App(){
+  /* Panel state */
+  const [panelWidth,setPanelWidth]=useState(520);
+  const [collapsed,setCollapsed]=useState(false);
+  const [dragging,setDragging]=useState(false);
+  const dragRef=useRef(null);
+  const MIN_W=380;const MAX_W=700;const COLLAPSED_W=56;
+
+  /* Drag resize */
+  const onDragStart=useCallback((e)=>{
+    e.preventDefault();setDragging(true);
+    const startX=e.clientX;const startW=panelWidth;
+    const onMove=(ev)=>{const nw=Math.min(MAX_W,Math.max(MIN_W,startW+(ev.clientX-startX)));setPanelWidth(nw)};
+    const onUp=()=>{setDragging(false);window.removeEventListener('mousemove',onMove);window.removeEventListener('mouseup',onUp)};
+    window.addEventListener('mousemove',onMove);window.addEventListener('mouseup',onUp);
+  },[panelWidth]);
+
+  /* Migration state */
+  const [step,setStep]=useState('landing');
+  const [msgs,setMsgs]=useState([]);
+  const [isTyping,setIsTyping]=useState(false);
+  const [connected,setConnected]=useState({conf:false,sp:false});
+  const [scanned,setScanned]=useState(false);
+  const [objApproved,setObjApproved]=useState(false);
+  const [macroChoices,setMacroChoices]=useState(MACROS.map(m=>m.st==='auto'?'auto':null));
+  const [macrosLocked,setMacrosLocked]=useState(false);
+  const [permResolved,setPermResolved]=useState([false,false,false,false]);
+  const [permsLocked,setPermsLocked]=useState(false);
+  const [fileChoices,setFileChoices]=useState(LARGE_FILES.map(()=>null));
+  const [filesLocked,setFilesLocked]=useState(false);
+  const [migrating,setMigrating]=useState(false);
+  const [migPct,setMigPct]=useState(0);
+  const [migStep,setMigStep]=useState(-1);
+  const [ePcts,setEPcts]=useState(ENTITIES.map(()=>0));
+  const [migDone,setMigDone]=useState(false);
+  const endRef=useRef(null);
+
+  useEffect(()=>{endRef.current?.scrollIntoView({behavior:'smooth'})},[msgs,isTyping]);
+  const wait=ms=>new Promise(r=>setTimeout(r,ms));
+  const botSay=(c,d=800)=>new Promise(r=>{setIsTyping(true);setTimeout(()=>{setIsTyping(false);setMsgs(p=>[...p,{t:'bot',c}]);r()},d)});
+  const userSay=(t,d=200)=>new Promise(r=>{setTimeout(()=>{setMsgs(p=>[...p,{t:'user',c:t}]);r()},d)});
+
+  /* ═══ HANDLERS ═══ */
+  const handleConnect=async(platform)=>{
+    if(step==='landing')setStep('connect');
+    if(platform==='conf'&&!connected.conf){
+      setConnected(p=>({...p,conf:true}));
+      await userSay('Connect to Confluence');
+      await botSay(<span>✅ Connected to <strong>Confluence Cloud</strong> — read access to all 14 spaces, 2,847 pages.</span>,900);
+      if(!connected.sp)await botSay(<span>Now connect SharePoint to continue. 👉</span>,500);
+    }
+    if(platform==='sp'&&!connected.sp){
+      setConnected(p=>({...p,sp:true}));
+      await userSay('Connect to SharePoint Online');
+      await botSay(<span>✅ Connected to <strong>SharePoint Online</strong> — Site Collection Admin access confirmed.</span>,900);
+      if(!connected.conf)await botSay(<span>Now connect Confluence to continue. 👉</span>,500);
+    }
+    if((platform==='conf'&&connected.sp)||(platform==='sp'&&connected.conf)){
+      setStep('scan');
+      await botSay(<span>Both platforms connected! Click <strong>"Scan Confluence"</strong> on the left to discover your content.</span>,700);
+    }
+  };
+
+  const handleScan=async()=>{
+    if(scanned)return;
+    await userSay('Scan my Confluence instance');
+    await botSay(<span>🔍 Scanning all spaces, pages, macros, attachments...</span>,800);
+    await wait(1500);
+    setScanned(true);
+    await botSay(
+      <div><strong>📊 Scan complete!</strong> Here's what I found:
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:4,marginTop:8}}>
+          {[{l:'Spaces',v:'14'},{l:'Pages',v:'2,847'},{l:'Blogs',v:'186'},{l:'Attachments',v:'4,218'},{l:'Comments',v:'9,842'},{l:'Macros',v:'1,536'},{l:'Labels',v:'342'},{l:'Versions',v:'18,420'}].map((s,i)=>(
+            <div key={i} style={{background:'white',borderRadius:6,padding:'4px 6px',border:'1px solid #e2e8f0',textAlign:'center'}}>
+              <div style={{fontSize:13,fontWeight:700,color:'#0f172a'}}>{s.v}</div><div style={{fontSize:8,color:'#64748b'}}>{s.l}</div>
+            </div>
+          ))}
+        </div>
+      </div>,1200);
+    setStep('objects');
+    await botSay(<span>I've mapped 12 object types. Review the mapping table on the left — click any row for details, then <strong>approve</strong> when ready.</span>,1000);
+  };
+
+  const handleObjectClick=async(obj)=>{
+    if(objApproved)return;
+    await userSay(`Tell me about "${obj.src}" → "${obj.tgt}"`);
+    const details={
+      'Spaces':`Each of your 14 Confluence Spaces becomes a dedicated SharePoint Site with matching names, descriptions, and logos.`,
+      'Pages':`2,847 pages will be stored in each site's "Site Pages" library. Rich text, images, and inline attachments are preserved.`,
+      'Page Hierarchy':`Confluence allows unlimited nesting. I'll map using SharePoint's page parent property + site navigation. Depth >7 addressed later.`,
+      'Macros':`1,536 macro instances across 10 types. 5 auto-convert (1,140). 3 need workaround (285). 2 unsupported (111). Handled in Macros step.`,
+      'Page Restrictions':`89 pages with view/edit restrictions become item-level permissions in SP. Addressed in the Permissions step.`,
+    };
+    const key=Object.keys(details).find(k=>obj.src.includes(k));
+    await botSay(<span>{key?details[key]:<span><strong>{obj.src}</strong> ({obj.count.toLocaleString()}) → <strong>{obj.tgt}</strong>. {obj.note}.</span>}</span>,1000);
+  };
+
+  const handleApproveObjects=async()=>{
+    setObjApproved(true);
+    await userSay('Approve all object mappings');
+    await botSay(<span>✅ Approved! Now let's handle <strong>macros</strong>. Pick a strategy from each dropdown for the items marked ⚠ or ✗.</span>,1200);
+    setStep('macros');
+  };
+
+  const handleMacroChoice=(i,v)=>setMacroChoices(p=>{const n=[...p];n[i]=v;return n});
+
+  const handleLockMacros=async()=>{
+    setMacrosLocked(true);
+    const summary=macroChoices.map((c,i)=>c&&c!=='auto'?`${MACROS[i].macro}: ${c}`:null).filter(Boolean);
+    await userSay(`Confirm: ${summary.join(', ')}`);
+    await botSay(
+      <div>✅ Macro plan locked:
+        <div style={{marginTop:6,fontSize:12,lineHeight:1.7}}>
+          <strong>Auto:</strong> 1,140 | <strong>Workaround:</strong> {summary.filter(s=>!s.includes('Skip')).length} types | <strong>Skip:</strong> {summary.filter(s=>s.includes('Skip')).length} types
+        </div>
+      </div>,1100);
+    setStep('perms');
+    await botSay(<span>Now review <strong>4 permission issues</strong>. Toggle each to "Resolved" on the left panel.</span>,900);
+  };
+
+  const handlePermToggle=(i)=>setPermResolved(p=>{const n=[...p];n[i]=!n[i];return n});
+
+  const handleLockPerms=async()=>{
+    setPermsLocked(true);
+    await userSay('All permission issues resolved');
+    await botSay(<div>✅ Permissions set: HR isolated, 89 item-level perms, external sharing enabled, SSO mirrored.</div>,1000);
+    setStep('files');
+    await botSay(<span>📦 <strong>7 oversized files</strong> (&gt;250 MB). Choose what to do with each on the left.</span>,800);
+  };
+
+  const handleFileChoice=(i,v)=>setFileChoices(p=>{const n=[...p];n[i]=v;return n});
+
+  const handleLockFiles=async()=>{
+    setFilesLocked(true);
+    await userSay('Confirm file handling strategy');
+    await botSay(<div>✅ File plan set. 4,211 standard files + 7 oversized handled per your selections.</div>,900);
+    setStep('migrate');
+    await botSay(<span>🚀 All configured! Hit <strong>"Start Migration"</strong> when ready.</span>,700);
+  };
+
+  const handleStartMigration=async()=>{
+    setMigrating(true);
+    if(!collapsed)setCollapsed(true); /* auto-collapse to give chat more room during migration */
+    await userSay('🚀 Start the migration!');
+    await botSay(<span>🚀 <strong>Migration started!</strong> Expand the left panel anytime to see detailed progress.</span>,700);
+    for(let i=0;i<ENTITIES.length;i++){
+      setMigStep(i);
+      for(let f=0;f<=12;f++){
+        await wait(80);
+        const ov=((i/ENTITIES.length)+(1/ENTITIES.length)*(f/12))*100;
+        setMigPct(ov);
+        setEPcts(prev=>{const n=[...prev];n[i]=Math.round((f/12)*100);return n;});
+      }
+      setEPcts(prev=>{const n=[...prev];n[i]=100;return n;});
+      await botSay(<span>✅ <strong>{ENTITIES[i].label}</strong> — {ENTITIES[i].count.toLocaleString()} migrated</span>,150);
+    }
+    setMigStep(ENTITIES.length);setMigPct(100);setMigDone(true);setStep('report');
+    await botSay(<span>🎉 <strong>Migration complete!</strong> 35,872 objects in <strong>40 min</strong>. Zero data loss. Expand the panel for the full report!</span>,1200);
+  };
+
+  /* ═══ Step index helpers ═══ */
+  const stepIdx=STEPS.findIndex(s=>s.id===step);
+  const isStepDone=(id)=>{const si=STEPS.findIndex(s=>s.id===id);return si<stepIdx||(step==='report');};
+  const isStepActive=(id)=>step===id;
+
+  /* ═══════ SECTION HELPERS ═══════ */
+  const secStyle={background:'white',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden',animation:'scaleIn .4s ease both',marginBottom:10};
+  const secHead=(text,badge)=>(<div style={{padding:'10px 14px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:4}}><span style={{fontWeight:700,fontSize:12,color:'#334155'}}>{text}</span>{badge}</div>);
+
+  /* ═══════ COLLAPSED MINI-RAIL ═══════ */
+  const MiniRail=()=>(
+    <div style={{width:COLLAPSED_W,minWidth:COLLAPSED_W,background:'white',borderRight:'1px solid #e5e7eb',display:'flex',flexDirection:'column',height:'100vh',alignItems:'center',transition:'width .3s ease'}}>
+      {/* Logo */}
+      <div style={{padding:'12px 0',borderBottom:'1px solid #f1f5f9',width:'100%',display:'flex',justifyContent:'center'}}>
+        <div style={{width:30,height:30,borderRadius:8,background:'linear-gradient(135deg,#6366f1,#8b5cf6)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5"><path d="M12 2a4 4 0 014 4v2H8V6a4 4 0 014-4z"/><rect x="4" y="8" width="16" height="12" rx="2"/></svg>
+        </div>
+      </div>
+
+      {/* Step icons (vertical) */}
+      <div style={{flex:1,overflowY:'auto',padding:'8px 0',display:'flex',flexDirection:'column',alignItems:'center',gap:2,width:'100%'}}>
+        {STEPS.map((s,i)=>{
+          const done=isStepDone(s.id);const active=isStepActive(s.id);
+          return(
+            <div key={s.id} title={s.label} style={{width:36,height:36,borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',fontSize:15,background:active?'#eef2ff':done?'#f0fdf4':'transparent',border:active?'1.5px solid #c7d2fe':done?'1.5px solid #bbf7d0':'1.5px solid transparent',opacity:(!done&&!active)?.35:1,transition:'all .3s',cursor:'default',position:'relative'}}>
+              {done?<Chk s={12}/>:s.icon}
+              {active&&<div style={{position:'absolute',right:-4,width:3,height:16,borderRadius:3,background:'#6366f1'}}/>}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Mini migration progress */}
+      {migrating&&!migDone&&(
+        <div style={{padding:'8px 0',borderTop:'1px solid #f1f5f9',width:'100%',display:'flex',flexDirection:'column',alignItems:'center',gap:4}}>
+          <Ring pct={migPct} size={32} stroke={3} color="#6366f1"/>
+          <div style={{fontSize:9,fontWeight:700,color:'#6366f1'}}>{Math.round(migPct)}%</div>
+        </div>
+      )}
+      {migDone&&(
+        <div style={{padding:'8px 0',borderTop:'1px solid #f1f5f9',width:'100%',textAlign:'center'}}>
+          <div style={{fontSize:18}}>✅</div>
+          <div style={{fontSize:8,color:'#166534',fontWeight:600}}>Done</div>
+        </div>
+      )}
+
+      {/* Expand button */}
+      <div style={{padding:'8px 0',borderTop:'1px solid #f1f5f9',width:'100%',display:'flex',justifyContent:'center'}}>
+        <button onClick={()=>setCollapsed(false)} title="Expand panel" style={{width:32,height:32,borderRadius:8,border:'1px solid #e2e8f0',background:'#f8fafc',display:'flex',alignItems:'center',justifyContent:'center',color:'#64748b',transition:'all .15s'}}
+          onMouseEnter={e=>{e.currentTarget.style.background='#eef2ff';e.currentTarget.style.color='#6366f1'}}
+          onMouseLeave={e=>{e.currentTarget.style.background='#f8fafc';e.currentTarget.style.color='#64748b'}}
+        ><ChevR/></button>
+      </div>
+    </div>
+  );
+
+  /* ═══════ EXPANDED LEFT PANEL ═══════ */
+  const ExpandedPanel=()=>(
+    <div style={{width:panelWidth,minWidth:MIN_W,background:'#f8fafc',borderRight:'none',display:'flex',flexDirection:'column',height:'100vh',transition:dragging?'none':'width .3s ease',position:'relative'}}>
+      {/* Header */}
+      <div style={{padding:'10px 14px',borderBottom:'1px solid #e2e8f0',background:'white',display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
+        <div style={{width:28,height:28,borderRadius:8,background:'linear-gradient(135deg,#6366f1,#8b5cf6)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5"><path d="M12 2a4 4 0 014 4v2H8V6a4 4 0 014-4z"/><rect x="4" y="8" width="16" height="12" rx="2"/></svg>
+        </div>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:12,fontWeight:700,color:'#0f172a'}}>CloudFuze Migration</div>
+          <div style={{fontSize:9,color:'#64748b',display:'flex',alignItems:'center',gap:4}}><ConfIcon s={10}/> → <SPIcon s={10}/></div>
+        </div>
+        <button onClick={()=>setCollapsed(true)} title="Collapse panel" style={{width:28,height:28,borderRadius:6,border:'1px solid #e2e8f0',background:'#f8fafc',display:'flex',alignItems:'center',justifyContent:'center',color:'#64748b',flexShrink:0}}
+          onMouseEnter={e=>{e.currentTarget.style.background='#eef2ff';e.currentTarget.style.color='#6366f1'}}
+          onMouseLeave={e=>{e.currentTarget.style.background='#f8fafc';e.currentTarget.style.color='#64748b'}}
+        ><ChevL/></button>
+      </div>
+
+      {/* Step tracker */}
+      <div style={{padding:'6px 12px',borderBottom:'1px solid #e2e8f0',background:'white',display:'flex',gap:2,flexShrink:0,flexWrap:'wrap'}}>
+        {STEPS.filter(s=>s.id!=='landing').map((s)=>{
+          const done=isStepDone(s.id);const active=isStepActive(s.id);
+          return(
+            <div key={s.id} style={{padding:'2px 7px',borderRadius:5,fontSize:9,fontWeight:600,display:'flex',alignItems:'center',gap:2,background:active?'#eef2ff':done?'#f0fdf4':'#f8fafc',color:active?'#4338ca':done?'#166534':'#94a3b8',border:`1px solid ${active?'#c7d2fe':done?'#bbf7d0':'#e2e8f0'}`,transition:'all .3s'}}>
+              {done?<Chk s={7}/>:<span style={{fontSize:8}}>{s.icon}</span>}{s.label}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Scrollable content */}
+      <div style={{flex:1,overflowY:'auto',padding:14}}>
+
+        {/* LANDING / CONNECT */}
+        {(step==='landing'||step==='connect')&&(
+          <div style={{animation:'fadeUp .5s ease both'}}>
+            <div style={{textAlign:'center',padding:'20px 10px',marginBottom:12}}>
+              <div style={{display:'inline-flex',alignItems:'center',gap:6,marginBottom:10}}><ConfIcon s={24}/><span style={{color:'#94a3b8',fontSize:16}}>→</span><SPIcon s={24}/></div>
+              <h2 style={{fontSize:17,fontWeight:800,color:'#0f172a',marginBottom:6}}>Connect Platforms</h2>
+              <p style={{fontSize:11,color:'#64748b',lineHeight:1.5}}>Connect both platforms to begin the migration process.</p>
+            </div>
+            <div style={{display:'flex',gap:8,marginBottom:12}}>
+              <button onClick={()=>handleConnect('conf')} disabled={connected.conf} style={{flex:1,padding:'14px 10px',borderRadius:10,border:connected.conf?'2px solid #22c55e':'2px solid #1868DB',background:connected.conf?'#f0fdf4':'white',fontSize:11,fontWeight:600,color:connected.conf?'#166534':'#1868DB',display:'flex',alignItems:'center',justifyContent:'center',gap:6,opacity:connected.conf?.7:1,transition:'all .2s'}}>
+                <ConfIcon s={14}/>{connected.conf?'✓ Connected':'Connect Confluence'}
+              </button>
+              <button onClick={()=>handleConnect('sp')} disabled={connected.sp} style={{flex:1,padding:'14px 10px',borderRadius:10,border:connected.sp?'2px solid #22c55e':'2px solid #038387',background:connected.sp?'#f0fdf4':'white',fontSize:11,fontWeight:600,color:connected.sp?'#166534':'#038387',display:'flex',alignItems:'center',justifyContent:'center',gap:6,opacity:connected.sp?.7:1,transition:'all .2s'}}>
+                <SPIcon s={14}/>{connected.sp?'✓ Connected':'Connect SharePoint'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* SCAN */}
+        {step==='scan'&&(
+          <div style={{textAlign:'center',padding:'30px 16px',animation:'fadeUp .5s ease both'}}>
+            <div style={{fontSize:40,marginBottom:10}}>🔍</div>
+            <h2 style={{fontSize:16,fontWeight:700,color:'#0f172a',marginBottom:6}}>Ready to Scan</h2>
+            <p style={{fontSize:11,color:'#64748b',marginBottom:16}}>Discover all content, macros, permissions, and attachments.</p>
+            <button onClick={handleScan} disabled={scanned} style={{padding:'10px 24px',borderRadius:10,border:'none',background:scanned?'#dcfce7':'linear-gradient(135deg,#6366f1,#8b5cf6)',color:scanned?'#166534':'white',fontSize:12,fontWeight:600}}>
+              {scanned?'✓ Scan Complete':'Scan Confluence'}
+            </button>
+          </div>
+        )}
+
+        {/* OBJECT MAPPING */}
+        {step==='objects'&&(
+          <div style={{animation:'fadeUp .4s ease both'}}>
+            <div style={secStyle}>
+              {secHead('🗺️ Object Mapping',<div style={{display:'flex',gap:3,fontSize:9}}><span style={{background:'#dcfce7',color:'#166534',padding:'1px 6px',borderRadius:99}}>9 auto</span><span style={{background:'#fef3c7',color:'#92400e',padding:'1px 6px',borderRadius:99}}>3 review</span></div>)}
+              <div style={{maxHeight:340,overflowY:'auto'}}>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
+                  <thead><tr style={{background:'#f8fafc'}}>
+                    <th style={{textAlign:'left',padding:'5px 10px',color:'#1868DB',fontWeight:600,borderBottom:'1px solid #e2e8f0',fontSize:9}}>CONFLUENCE</th>
+                    <th style={{width:20,borderBottom:'1px solid #e2e8f0'}}></th>
+                    <th style={{textAlign:'left',padding:'5px 10px',color:'#038387',fontWeight:600,borderBottom:'1px solid #e2e8f0',fontSize:9}}>SHAREPOINT</th>
+                    <th style={{textAlign:'right',padding:'5px 8px',borderBottom:'1px solid #e2e8f0',fontSize:9,width:48}}>COUNT</th>
+                    <th style={{width:36,borderBottom:'1px solid #e2e8f0'}}></th>
+                  </tr></thead>
+                  <tbody>{OBJECT_MAP.map((o,i)=>(
+                    <tr key={i} onClick={()=>handleObjectClick(o)} style={{borderBottom:'1px solid #f1f5f9',cursor:objApproved?'default':'pointer',background:o.st==='review'?'#fffbeb':'white',transition:'background .15s'}}
+                      onMouseEnter={e=>{if(!objApproved)e.currentTarget.style.background='#eef2ff'}}
+                      onMouseLeave={e=>{e.currentTarget.style.background=o.st==='review'?'#fffbeb':'white'}}>
+                      <td style={{padding:'6px 10px'}}><span style={{marginRight:2}}>{o.srcI}</span>{o.src}</td>
+                      <td style={{textAlign:'center',color:'#c7d2fe',fontSize:10}}>→</td>
+                      <td style={{padding:'6px 10px',color:o.st==='review'?'#92400e':'#1e293b'}}><span style={{marginRight:2}}>{o.tgtI}</span>{o.tgt}</td>
+                      <td style={{textAlign:'right',padding:'6px 8px',fontWeight:600,color:'#334155',fontSize:10}}>{o.count.toLocaleString()}</td>
+                      <td style={{textAlign:'center',padding:'6px 4px'}}>
+                        {o.st==='auto'?<span style={{color:'#22c55e',fontSize:8,background:'#f0fdf4',padding:'1px 4px',borderRadius:99}}>✓</span>
+                        :<span style={{color:'#f59e0b',fontSize:8,background:'#fffbeb',padding:'1px 4px',borderRadius:99}}>⚠</span>}
+                      </td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+              {!objApproved&&<div style={{padding:'5px 12px',borderTop:'1px solid #e2e8f0',fontSize:9,color:'#64748b',background:'#f8fafc'}}>💡 Click any row to ask the agent</div>}
+            </div>
+            {!objApproved?<button onClick={handleApproveObjects} style={{width:'100%',padding:'9px',borderRadius:10,border:'none',background:'linear-gradient(135deg,#22c55e,#16a34a)',color:'white',fontSize:12,fontWeight:600}}>✅ Approve All Mappings</button>
+            :<div style={{textAlign:'center',padding:8,color:'#22c55e',fontWeight:600,fontSize:11}}>✓ Approved</div>}
+          </div>
+        )}
+
+        {/* MACROS */}
+        {step==='macros'&&(
+          <div style={{animation:'fadeUp .4s ease both'}}>
+            <div style={secStyle}>
+              {secHead('🧩 Macro Decisions',<div style={{display:'flex',gap:3,fontSize:9}}><span style={{background:'#dcfce7',color:'#166534',padding:'1px 6px',borderRadius:99}}>5 auto</span><span style={{background:'#fef3c7',color:'#92400e',padding:'1px 6px',borderRadius:99}}>3 warn</span><span style={{background:'#fef2f2',color:'#991b1b',padding:'1px 6px',borderRadius:99}}>2 fail</span></div>)}
+              <div style={{maxHeight:340,overflowY:'auto'}}>
+                {MACROS.map((m,i)=>(
+                  <div key={i} style={{display:'flex',alignItems:'center',gap:6,padding:'7px 12px',borderBottom:'1px solid #f1f5f9',background:m.st==='fail'?'#fef2f2':m.st==='warn'?'#fffbeb':'white'}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:11,fontWeight:500,color:'#1e293b'}}>{m.macro} <span style={{color:'#94a3b8',fontWeight:400}}>×{m.count}</span></div>
+                      <div style={{fontSize:9,color:m.st==='fail'?'#991b1b':m.st==='warn'?'#92400e':'#64748b'}}>{m.sp}</div>
+                    </div>
+                    {m.st==='auto'?<span style={{fontSize:9,color:'#22c55e',background:'#f0fdf4',padding:'2px 7px',borderRadius:99,fontWeight:500,flexShrink:0}}>Auto ✓</span>
+                    :<select disabled={macrosLocked} value={macroChoices[i]||''} onChange={e=>handleMacroChoice(i,e.target.value)} style={{padding:'3px 5px',fontSize:9,borderRadius:5,border:`1px solid ${macroChoices[i]?'#22c55e':'#fbbf24'}`,background:macroChoices[i]?'#f0fdf4':'white',color:'#1e293b',minWidth:110,flexShrink:0}}>
+                      <option value="">Choose...</option>
+                      {m.options.map(o=><option key={o} value={o}>{o}</option>)}
+                    </select>}
+                  </div>
+                ))}
+              </div>
+            </div>
+            {!macrosLocked?<button onClick={handleLockMacros} disabled={macroChoices.some(c=>c===null)} style={{width:'100%',padding:'9px',borderRadius:10,border:'none',background:macroChoices.some(c=>c===null)?'#e2e8f0':'linear-gradient(135deg,#22c55e,#16a34a)',color:macroChoices.some(c=>c===null)?'#94a3b8':'white',fontSize:12,fontWeight:600,cursor:macroChoices.some(c=>c===null)?'not-allowed':'pointer'}}>
+              {macroChoices.some(c=>c===null)?`Select all (${macroChoices.filter(c=>c!==null).length}/${MACROS.length})`:'✅ Confirm Macros'}
+            </button>
+            :<div style={{textAlign:'center',padding:8,color:'#22c55e',fontWeight:600,fontSize:11}}>✓ Locked</div>}
+          </div>
+        )}
+
+        {/* PERMISSIONS */}
+        {step==='perms'&&(
+          <div style={{animation:'fadeUp .4s ease both'}}>
+            <div style={secStyle}>
+              {secHead('🔒 Permission Issues',<span style={{fontSize:10,color:permResolved.every(Boolean)?'#22c55e':'#f59e0b',fontWeight:600}}>{permResolved.filter(Boolean).length}/4</span>)}
+              <div style={{padding:8}}>
+                {PERM_ISSUES.map((p,i)=>(
+                  <div key={i} style={{padding:'8px 10px',marginBottom:5,borderRadius:8,border:`1px solid ${permResolved[i]?'#bbf7d0':p.severity==='high'?'#fecaca':'#fde68a'}`,background:permResolved[i]?'#f0fdf4':p.severity==='high'?'#fef2f2':'#fffbeb',display:'flex',alignItems:'flex-start',gap:8,transition:'all .3s'}}>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:11,fontWeight:600,color:permResolved[i]?'#166534':'#1e293b',display:'flex',alignItems:'center',gap:3}}>
+                        {permResolved[i]?'✅':p.severity==='high'?'🔴':p.severity==='med'?'🟡':'🟢'}{p.space}
+                      </div>
+                      <div style={{fontSize:9,color:permResolved[i]?'#15803d':'#64748b',marginTop:1}}>{p.issue}</div>
+                    </div>
+                    <button onClick={()=>!permsLocked&&handlePermToggle(i)} disabled={permsLocked} style={{padding:'3px 8px',borderRadius:5,border:'none',background:permResolved[i]?'#22c55e':'#e2e8f0',color:permResolved[i]?'white':'#64748b',fontSize:9,fontWeight:600,flexShrink:0,cursor:permsLocked?'default':'pointer'}}>
+                      {permResolved[i]?'Resolved':'Resolve'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {!permsLocked?<button onClick={handleLockPerms} disabled={!permResolved.every(Boolean)} style={{width:'100%',padding:'9px',borderRadius:10,border:'none',background:!permResolved.every(Boolean)?'#e2e8f0':'linear-gradient(135deg,#22c55e,#16a34a)',color:!permResolved.every(Boolean)?'#94a3b8':'white',fontSize:12,fontWeight:600,cursor:!permResolved.every(Boolean)?'not-allowed':'pointer'}}>
+              {!permResolved.every(Boolean)?`Resolve all (${permResolved.filter(Boolean).length}/4)`:'✅ Confirm Permissions'}
+            </button>
+            :<div style={{textAlign:'center',padding:8,color:'#22c55e',fontWeight:600,fontSize:11}}>✓ Confirmed</div>}
+          </div>
+        )}
+
+        {/* FILES */}
+        {step==='files'&&(
+          <div style={{animation:'fadeUp .4s ease both'}}>
+            <div style={secStyle}>
+              {secHead('📦 Oversized Files (>250MB)',<span style={{fontSize:10,color:fileChoices.every(Boolean)?'#22c55e':'#ef4444',fontWeight:600}}>{fileChoices.filter(Boolean).length}/7</span>)}
+              <div style={{padding:8}}>
+                {LARGE_FILES.map((f,i)=>(
+                  <div key={i} style={{padding:'7px 10px',marginBottom:4,borderRadius:8,border:`1px solid ${fileChoices[i]?'#bbf7d0':'#fecaca'}`,background:fileChoices[i]?'#f0fdf4':'#fef2f2',transition:'all .3s'}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
+                      <div style={{fontSize:10,fontWeight:600,color:'#1e293b',fontFamily:'monospace'}}>{f.name}</div>
+                      <span style={{fontSize:9,fontWeight:700,color:'#ef4444',background:'#fef2f2',padding:'1px 5px',borderRadius:99}}>{f.size}</span>
+                    </div>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                      <span style={{fontSize:8,color:'#64748b'}}>{f.loc}</span>
+                      <select disabled={filesLocked} value={fileChoices[i]||''} onChange={e=>handleFileChoice(i,e.target.value)} style={{padding:'2px 5px',fontSize:9,borderRadius:5,border:`1px solid ${fileChoices[i]?'#22c55e':'#fbbf24'}`,background:fileChoices[i]?'#f0fdf4':'white',color:'#1e293b',minWidth:105}}>
+                        <option value="">Choose...</option>
+                        {f.options.map(o=><option key={o} value={o}>{o}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {!filesLocked?<button onClick={handleLockFiles} disabled={!fileChoices.every(Boolean)} style={{width:'100%',padding:'9px',borderRadius:10,border:'none',background:!fileChoices.every(Boolean)?'#e2e8f0':'linear-gradient(135deg,#22c55e,#16a34a)',color:!fileChoices.every(Boolean)?'#94a3b8':'white',fontSize:12,fontWeight:600,cursor:!fileChoices.every(Boolean)?'not-allowed':'pointer'}}>
+              {!fileChoices.every(Boolean)?`Assign all (${fileChoices.filter(Boolean).length}/7)`:'✅ Confirm Files'}
+            </button>
+            :<div style={{textAlign:'center',padding:8,color:'#22c55e',fontWeight:600,fontSize:11}}>✓ Locked</div>}
+          </div>
+        )}
+
+        {/* MIGRATE */}
+        {step==='migrate'&&!migDone&&(
+          <div style={{animation:'fadeUp .4s ease both'}}>
+            {!migrating?(
+              <div style={{textAlign:'center',padding:'24px 16px'}}>
+                <div style={{fontSize:40,marginBottom:10}}>🚀</div>
+                <h2 style={{fontSize:16,fontWeight:700,color:'#0f172a',marginBottom:6}}>Ready to Migrate</h2>
+                <p style={{fontSize:11,color:'#64748b',marginBottom:6}}>35,872 objects will be migrated.</p>
+                <div style={{display:'flex',gap:4,justifyContent:'center',marginBottom:16,flexWrap:'wrap'}}>
+                  {['Objects ✓','Macros ✓','Perms ✓','Files ✓'].map(t=><span key={t} style={{fontSize:9,background:'#f0fdf4',color:'#166534',padding:'2px 7px',borderRadius:99,border:'1px solid #bbf7d0'}}>{t}</span>)}
+                </div>
+                <button onClick={handleStartMigration} style={{padding:'12px 36px',borderRadius:12,border:'none',background:'linear-gradient(135deg,#6366f1,#8b5cf6)',color:'white',fontSize:13,fontWeight:700,animation:'pulseGlow 2s infinite'}}>🚀 Start Migration</button>
+                <div style={{marginTop:10,fontSize:9,color:'#94a3b8'}}>Panel will auto-collapse during migration</div>
+              </div>
+            ):(
+              <div style={secStyle}>
+                {secHead('Migration Progress',<span style={{fontSize:12,color:'#6366f1',fontWeight:700}}>{Math.round(migPct)}%</span>)}
+                <div style={{padding:12}}>
+                  <div style={{height:7,background:'#e2e8f0',borderRadius:99,overflow:'hidden',marginBottom:12}}><div style={{height:'100%',background:'linear-gradient(90deg,#1868DB,#038387)',borderRadius:99,width:`${migPct}%`,transition:'width .4s'}}/></div>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:5}}>
+                    {ENTITIES.map((e,i)=>{const done=ePcts[i]===100;const act=i===migStep;return(
+                      <div key={i} style={{textAlign:'center',padding:6,borderRadius:8,background:done?'#f0fdf4':act?'#eef2ff':'#f8fafc',border:`1px solid ${done?'#bbf7d0':act?'#c7d2fe':'#e2e8f0'}`,transition:'all .3s'}}>
+                        <div style={{position:'relative',display:'inline-block',marginBottom:3}}>
+                          <Ring pct={ePcts[i]} size={34} stroke={3} color={done?'#22c55e':e.color}/>
+                          <div style={{position:'absolute',top:'50%',left:'50%',transform:'translate(-50%,-50%)',fontSize:12}}>{done?'✅':e.icon}</div>
+                        </div>
+                        <div style={{fontSize:8,fontWeight:600,color:done?'#166534':act?'#4338ca':'#64748b'}}>{e.label}</div>
+                        <div style={{fontSize:7,color:done?'#22c55e':act?'#6366f1':'#94a3b8'}}>{done?e.count.toLocaleString():act?'Migrating...':'Pending'}</div>
+                      </div>
+                    )})}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* REPORT */}
+        {(step==='report'||migDone)&&(
+          <div style={{animation:'fadeUp .5s ease both'}}>
+            <div style={{background:'linear-gradient(135deg,#f0fdf4,#ecfdf5)',borderRadius:12,border:'1px solid #86efac',padding:16,textAlign:'center',marginBottom:10}}>
+              <div style={{width:44,height:44,borderRadius:'50%',background:'#22c55e',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 6px',animation:'checkPop .4s ease both'}}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+              <h3 style={{fontSize:16,fontWeight:800,color:'#166534'}}>Migration Complete</h3>
+              <p style={{fontSize:10,color:'#15803d'}}>35,872 objects · 40 minutes · Zero errors</p>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:4,marginBottom:10}}>
+              {ENTITIES.map((e,i)=>(
+                <div key={i} style={{background:'white',borderRadius:8,padding:'6px 3px',border:'1px solid #e2e8f0',textAlign:'center',animation:'countUp .3s ease both',animationDelay:`${i*50}ms`}}>
+                  <span style={{fontSize:12}}>{e.icon}</span>
+                  <div style={{fontSize:12,fontWeight:700,color:'#0f172a'}}>{e.count.toLocaleString()}</div>
+                  <div style={{fontSize:7,color:'#64748b'}}>{e.label}</div>
+                </div>
+              ))}
+            </div>
+            <div style={secStyle}>
+              <div style={{padding:'7px 12px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',fontWeight:700,fontSize:10,color:'#334155'}}>Integrity Checks</div>
+              <div style={{padding:8}}>
+                {[
+                  {c:'Page count match',d:'2,847 → 2,847'},
+                  {c:'Hierarchy preserved',d:'All parent-child intact'},
+                  {c:'Attachments verified',d:'4,218 checksums OK'},
+                  {c:'Permissions applied',d:'14 space + 89 page'},
+                  {c:'Macros processed',d:'1,536 per strategy'},
+                  {c:'Versions preserved',d:'18,420 histories'},
+                ].map((c,i)=>(
+                  <div key={i} style={{display:'flex',alignItems:'center',gap:6,padding:'4px 0',borderBottom:i<5?'1px solid #f1f5f9':'none'}}>
+                    <div style={{width:16,height:16,borderRadius:'50%',background:'#f0fdf4',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><Chk s={8}/></div>
+                    <div style={{flex:1}}><div style={{fontSize:10,fontWeight:500,color:'#1e293b'}}>{c.c}</div><div style={{fontSize:8,color:'#64748b'}}>{c.d}</div></div>
+                    <span style={{fontSize:7,color:'#22c55e',background:'#f0fdf4',padding:'1px 5px',borderRadius:99,fontWeight:600}}>PASS</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Drag handle */}
+      <div onMouseDown={onDragStart} style={{position:'absolute',top:0,right:-3,width:6,height:'100%',cursor:'col-resize',zIndex:10,display:'flex',alignItems:'center',justifyContent:'center'}}>
+        <div style={{width:3,height:40,borderRadius:3,background:dragging?'#6366f1':'#d1d5db',transition:'background .15s'}}/>
+      </div>
+    </div>
+  );
+
+  /* ═══ RIGHT PANEL (CHAT) ═══ */
+  const ChatPanel=()=>(
+    <div style={{flex:1,display:'flex',flexDirection:'column',height:'100vh',background:'#fafbfc',minWidth:0}}>
+      <div style={{padding:'10px 20px',borderBottom:'1px solid #e5e7eb',display:'flex',alignItems:'center',gap:10,background:'white',flexShrink:0}}>
+        <BotAv s={30}/>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:600,fontSize:13,color:'#0f172a'}}>Migration Agent</div>
+          <div style={{fontSize:10,color:'#22c55e',display:'flex',alignItems:'center',gap:3}}><div style={{width:5,height:5,borderRadius:'50%',background:'#22c55e'}}/>Confluence → SharePoint</div>
+        </div>
+        {collapsed&&(
+          <button onClick={()=>setCollapsed(false)} style={{padding:'5px 10px',borderRadius:6,border:'1px solid #e2e8f0',background:'#f8fafc',fontSize:10,color:'#6366f1',fontWeight:600,display:'flex',alignItems:'center',gap:4}}
+            onMouseEnter={e=>{e.currentTarget.style.background='#eef2ff'}}
+            onMouseLeave={e=>{e.currentTarget.style.background='#f8fafc'}}
+          ><ChevR/> Control Panel</button>
+        )}
+      </div>
+      <div style={{flex:1,overflowY:'auto',padding:'14px 20px',display:'flex',flexDirection:'column',gap:10}}>
+        {msgs.length===0&&(
+          <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',color:'#94a3b8',fontSize:13,textAlign:'center',padding:20}}>
+            <div>
+              <BotAv s={44}/>
+              <div style={{marginTop:12,fontWeight:600,color:'#64748b',fontSize:14}}>Migration Agent</div>
+              <div style={{fontSize:11,marginTop:4,maxWidth:300}}>Connect your platforms using the {collapsed?'control panel (click the button above)':'left panel'} to begin. I'll guide you through each step here.</div>
+            </div>
+          </div>
+        )}
+        {msgs.map((m,i)=><Fragment key={i}>{m.t==='bot'?<BotMsg>{m.c}</BotMsg>:<UserMsg>{m.c}</UserMsg>}</Fragment>)}
+        {isTyping&&<TypInd/>}
+        <div ref={endRef}/>
+      </div>
+      <div style={{padding:'10px 20px',borderTop:'1px solid #e5e7eb',background:'white',flexShrink:0}}>
+        <div style={{display:'flex',gap:8}}>
+          <input disabled placeholder={collapsed?"Use the control panel button above to interact...":"Use the left panel controls to interact..."} style={{flex:1,padding:'10px 14px',borderRadius:10,border:'1.5px solid #e2e8f0',fontSize:13,background:'#f8fafc',color:'#94a3b8'}}/>
+          <button disabled style={{background:'#e2e8f0',border:'none',borderRadius:10,width:38,height:38,display:'flex',alignItems:'center',justifyContent:'center',color:'#94a3b8'}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  return(
+    <div style={{display:'flex',height:'100vh',userSelect:dragging?'none':'auto'}}>
+      {collapsed?<MiniRail/>:<ExpandedPanel/>}
+      <ChatPanel/>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

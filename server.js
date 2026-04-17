@@ -467,6 +467,15 @@ app.get('/api/google/users', requireGoogleAuth, async (req, res) => {
 
     res.json({ total: users.length, users });
   } catch (err) {
+    console.error('[google/users]', err.message);
+    // If Admin SDK fails (insufficient permissions), fall back to cloudMembers cache
+    try {
+      const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
+      const cached = await db().collection('cloudMembers').find({ source: 'google', appUserId }).toArray();
+      if (cached.length > 0) {
+        return res.json({ total: cached.length, users: cached.map(u => ({ email: u.email, name: u.displayName || u.email })), cached: true, warning: err.message });
+      }
+    } catch (_) {}
     res.status(500).json({ error: err.message });
   }
 });
@@ -881,6 +890,116 @@ app.get('/api/migration-logs/:batchId', async (req, res) => {
   res.json(logs);
 });
 
+// ════════════════════════════════════════════════════════════════════
+// ─── COPILOT → GEMINI (C2G) ROUTES ──────────────────────────────────
+// ════════════════════════════════════════════════════════════════════
+
+// C2G SSE log emitter (separate from G→C)
+const c2gLogEmitter = new EventEmitter();
+c2gLogEmitter.setMaxListeners(50);
+
+function c2gLog(type, message) {
+  c2gLogEmitter.emit('log', { type, message, ts: new Date().toISOString() });
+}
+
+// GET /api/c2g/migrate-log — SSE stream for C2G migration
+app.get('/api/c2g/migrate-log', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+  const send = d => res.write(`data: ${JSON.stringify(d)}\n\n`);
+  const handler = d => send(d);
+  c2gLogEmitter.on('log', handler);
+  req.on('close', () => c2gLogEmitter.off('log', handler));
+});
+
+// POST /api/c2g/migrate — run Copilot→Gemini migration
+app.post('/api/c2g/migrate', requireAuth, async (req, res) => {
+  try {
+    const { appUserId } = getWorkspaceContext(req);
+    const { pairs } = req.body; // [{sourceEmail, destEmail}]
+    if (!pairs?.length) return res.status(400).json({ error: 'No user pairs provided' });
+
+    res.json({ started: true });
+
+    // Run migration async — stream progress via SSE
+    setImmediate(async () => {
+      let files = 0, errors = 0;
+      try {
+        // Dynamically import migration logic from copilot folder
+        let migModule;
+        try {
+          migModule = await import('./copilot/copilot/server/src/migration/migrate.js');
+        } catch(importErr) {
+          c2gLog('error', `Failed to load migration module: ${importErr.message}`);
+          c2gLog('error', 'Run: npm install (from GEM_CO root) to install required packages.');
+          c2gLog('done', JSON.stringify({ files: 0, errors: 1, users: 0 }));
+          return;
+        }
+        const { runMigration: runC2G } = migModule;
+        if (!runC2G) {
+          c2gLog('error', 'C2G migration module did not export runMigration.');
+          c2gLog('done', JSON.stringify({ files: 0, errors: 1, users: 0 }));
+          return;
+        }
+
+        // Bridge tenant ID — copilot module reads SOURCE_AZURE_TENANT_ID || AZURE_TENANT_ID
+        if (currentTenantId) {
+          if (!process.env.SOURCE_AZURE_TENANT_ID) process.env.SOURCE_AZURE_TENANT_ID = currentTenantId;
+          if (!process.env.AZURE_TENANT_ID) process.env.AZURE_TENANT_ID = currentTenantId;
+        }
+
+        // Build pairs in the format the copilot migration expects
+        const msToken = isAuthenticated(appUserId) ? await getValidToken(appUserId).catch(() => null) : null;
+        if (!msToken) { c2gLog('error', 'Microsoft auth token unavailable.'); c2gLog('done', 'ended'); return; }
+
+        // Get user IDs from email list
+        let allMsUsers = [];
+        try {
+          let url = 'https://graph.microsoft.com/v1.0/users?$select=id,displayName,mail,userPrincipalName&$top=999';
+          while (url) {
+            const r = await fetch(url, { headers: { Authorization: `Bearer ${msToken}` } });
+            const d = await r.json();
+            allMsUsers = allMsUsers.concat(d.value || []);
+            url = d['@odata.nextLink'] || null;
+          }
+        } catch (e) { c2gLog('error', `Failed to fetch MS users: ${e.message}`); }
+
+        const userMap = {};
+        allMsUsers.forEach(u => { userMap[(u.mail || u.userPrincipalName || '').toLowerCase()] = u; });
+
+        const migPairs = pairs.map(p => {
+          const u = userMap[p.sourceEmail.toLowerCase()];
+          return { sourceUserId: u?.id, sourceDisplayName: u?.displayName || p.sourceEmail, destUserEmail: p.destEmail, sourceEmail: p.sourceEmail };
+        }).filter(p => p.sourceUserId);
+
+        if (!migPairs.length) { c2gLog('error', 'No valid user pairs with MS user IDs found.'); c2gLog('done', 'ended'); return; }
+
+        c2gLog('info', `Starting C2G migration for ${migPairs.length} user pair(s)...`);
+        const results = await runC2G(migPairs);
+        for (const r of results) {
+          if (r.errors?.length) {
+            console.error(`[C2G] ${r.sourceDisplayName} errors:`, r.errors.join(' | '));
+            r.errors.forEach(err => c2gLog('warn', `  Error: ${err}`));
+          }
+          c2gLog('info', `Processing: ${r.sourceDisplayName}`);
+          files += r.filesUploaded || 0;
+          errors += (r.errors || []).length;
+          c2gLog(errors > 0 ? 'warn' : 'success', `${r.sourceDisplayName}: ${r.filesUploaded || 0} files uploaded, ${(r.errors||[]).length} errors`);
+        }
+        c2gLog('done', JSON.stringify({ files, errors, users: migPairs.length }));
+      } catch (e) {
+        c2gLog('error', e.message);
+        c2gLog('done', JSON.stringify({ files, errors, users: 0 }));
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── SSE — live log stream ────────────────────────────────────────────────────
 app.get('/api/migration-log', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -1192,6 +1311,7 @@ async function runMigration({ extract_path, tenant_id, customer_name, user_mappi
       failedUsers: fullReport.summary?.total_errors > 0 ? 1 : 0,
       totalConversations: fullReport.summary?.total_conversations || 0,
       migratedConversations: fullReport.summary?.total_pages_created || 0,
+      flaggedAssets: fullReport.summary?.total_flagged || Object.values(visualReports || {}).reduce((s, v) => s + (v?.length || 0), 0),
       report: fullReport,
     };
 
@@ -1345,6 +1465,257 @@ async function runRetry({ batchId, retryBatchId, extractPath, tenantId, customer
   currentBatchId = null;
   _currentAppUserId = null;
 }
+
+// ─── Migration Agent Chat ─────────────────────────────────────────────────────
+const AGENT_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'navigate_to_step',
+      description: 'Navigate the user to a specific migration step in the UI',
+      parameters: {
+        type: 'object',
+        properties: {
+          step_index: { type: 'number', description: '0=Connect Clouds, 1=Import Data, 2=Map Users, 3=Options, 4=Migrate, 5=Complete' },
+          reason: { type: 'string', description: 'Brief reason for navigating' }
+        },
+        required: ['step_index']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'start_migration',
+      description: 'Start a migration run. Only call when user explicitly asks to start or run migration.',
+      parameters: {
+        type: 'object',
+        properties: { dry_run: { type: 'boolean', description: 'true = preview only (recommended first), false = live migration' } },
+        required: ['dry_run']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'retry_failed',
+      description: 'Retry failed migration items from the last batch',
+      parameters: { type: 'object', properties: {}, required: [] }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'show_reports',
+      description: 'Open the migration reports panel',
+      parameters: { type: 'object', properties: {}, required: [] }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'show_mapping',
+      description: 'Open the user mapping grid in the left panel so user can review/edit Google-to-M365 email mappings',
+      parameters: { type: 'object', properties: {}, required: [] }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_migration_status',
+      description: 'Get current migration progress, stats, and state details',
+      parameters: { type: 'object', properties: {}, required: [] }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'explain_log',
+      description: 'Explain what a migration log line means and suggest action',
+      parameters: {
+        type: 'object',
+        properties: { log_line: { type: 'string', description: 'The exact log message text' } },
+        required: ['log_line']
+      }
+    }
+  }
+];
+
+const STEP_NAMES = ['Connect Clouds', 'Import Data', 'Map Users', 'Options', 'Migration in Progress', 'Migration Complete'];
+
+const STEP_QUICK_REPLIES = [
+  ['Connect Google Workspace', 'Connect Microsoft 365', 'Do I need admin access?'],
+  ['Upload a Vault ZIP', 'Export from Google Drive', 'What format is needed?'],
+  ['Show me the mapping', 'Auto-map users', 'How do I fix unmapped users?'],
+  ['Start Dry Run', 'Start Migration', 'What does dry run do?'],
+  ['How long will this take?', 'Show live stats', 'Stop migration'],
+  ['Download Report', 'Start Another Migration', 'What happens next?']
+];
+
+async function callAI(messages, tools) {
+  const azureEndpoint = process.env.AZURE_OPENAI_ENDPOINT;
+  const azureKey = process.env.AZURE_OPENAI_API_KEY;
+  const azureDeployment = process.env.AZURE_OPENAI_DEPLOYMENT || 'gpt-4o';
+  const openaiKey = process.env.OPENAI_API_KEY;
+
+  if (azureEndpoint && azureKey) {
+    const url = `${azureEndpoint.replace(/\/$/, '')}/openai/deployments/${azureDeployment}/chat/completions?api-version=2024-02-15-preview`;
+    const body = { messages, max_tokens: 700, temperature: 0.35 };
+    if (tools) body.tools = tools;
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'api-key': azureKey },
+      body: JSON.stringify(body)
+    });
+    if (!r.ok) throw new Error(`Azure OpenAI error ${r.status}: ${await r.text()}`);
+    return await r.json();
+  }
+
+  if (openaiKey) {
+    const body = { model: 'gpt-4o', messages, max_tokens: 700, temperature: 0.35 };
+    if (tools) body.tools = tools;
+    const r = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
+      body: JSON.stringify(body)
+    });
+    if (!r.ok) throw new Error(`OpenAI error ${r.status}`);
+    return await r.json();
+  }
+
+  throw new Error('No AI provider configured. Set AZURE_OPENAI_API_KEY or OPENAI_API_KEY in .env');
+}
+
+app.post('/api/chat', requireAuth, async (req, res) => {
+  const { message, history = [], migrationState = {}, isSystemTrigger = false } = req.body;
+  if (!message) return res.status(400).json({ error: 'message required' });
+
+  const {
+    step = 0, live = false, migDone = false, stats = {}, lastRunWasDry = false,
+    uploadData = null, googleAuthed = false, msAuthed = false,
+    mappings_count = 0, selected_users_count = 0, options = {}
+  } = migrationState;
+
+  const systemPrompt = `You are the Migration Agent for CloudFuze GEM — a Google Gemini to Microsoft Copilot migration tool.
+
+Current migration state:
+- Step: ${step} — ${STEP_NAMES[step] || 'Unknown'}
+- Google Workspace connected: ${googleAuthed}
+- Microsoft 365 connected: ${msAuthed}
+- Vault data loaded: ${uploadData ? `yes (${uploadData.total_users} users, ${uploadData.total_conversations || '?'} conversations)` : 'no'}
+- User mappings configured: ${mappings_count} (${selected_users_count} selected)
+- File path set: ${options.hasFilePath ? 'yes' : 'no'}
+- Dry run mode: ${options.dryRun ? 'yes' : 'no'}
+- Migration running: ${live}
+- Migration done: ${migDone}
+- Last run was dry run: ${lastRunWasDry}
+- Stats: ${stats.users || 0} users, ${stats.pages || 0} pages created, ${stats.errors || 0} errors, ${stats.flagged || 0} flagged
+
+You work alongside the left panel which shows the current migration step's UI (Connect Clouds, Import Data, Map Users, Options, Migration). You are synced — when you navigate to a step, the left panel updates automatically.
+You CAN take real actions: navigate to steps, start migration, retry failures, show reports, show user mapping.
+Use tools when the user wants to DO something (navigate, start migration, etc.). Answer questions directly without tools.
+Guide the user proactively: acknowledge what they just did, tell them what to do next, offer action quick replies. Be like a helpful co-pilot — the left panel is the "what to fill in", you are the "guide telling them what to do and why".
+
+IMPORTANT: Use plain text only in replies. No markdown asterisks, no bold syntax, no bullet symbols. Use line breaks for structure. Keep replies concise — 2-4 sentences max unless explaining something complex.`;
+
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    ...history.slice(-12),
+    { role: 'user', content: message }
+  ];
+
+  try {
+    let response = await callAI(messages, AGENT_TOOLS);
+    let choice = response.choices?.[0];
+    let actionToExecute = null;
+    let navigateToStep = null;
+
+    // Handle tool calls
+    if (choice?.finish_reason === 'tool_calls' && choice.message?.tool_calls) {
+      const toolResults = [];
+      for (const tc of choice.message.tool_calls) {
+        let result = '';
+        try {
+          const args = JSON.parse(tc.function.arguments || '{}');
+          switch (tc.function.name) {
+            case 'navigate_to_step': {
+              const idx = Math.max(0, Math.min(5, args.step_index));
+              navigateToStep = idx;
+              result = JSON.stringify({ execute: 'navigate', step: idx, name: STEP_NAMES[idx] });
+              break;
+            }
+            case 'start_migration': {
+              actionToExecute = args.dry_run ? 'start_migration_dry' : 'start_migration_live';
+              result = JSON.stringify({ execute: actionToExecute, dry_run: args.dry_run });
+              break;
+            }
+            case 'retry_failed': {
+              actionToExecute = 'retry_failed';
+              result = JSON.stringify({ execute: 'retry_failed' });
+              break;
+            }
+            case 'show_reports': {
+              actionToExecute = 'show_reports';
+              result = JSON.stringify({ execute: 'show_reports' });
+              break;
+            }
+            case 'show_mapping': {
+              actionToExecute = 'show_mapping';
+              result = JSON.stringify({ execute: 'show_mapping' });
+              break;
+            }
+            case 'get_migration_status': {
+              result = `Step ${step} (${STEP_NAMES[step]}). Running: ${live}. Done: ${migDone}. Users: ${stats.users || 0}, Pages: ${stats.pages || 0}, Errors: ${stats.errors || 0}.`;
+              break;
+            }
+            case 'explain_log': {
+              const line = args.log_line || '';
+              const isErr = /error|fail|exception/i.test(line);
+              const isWarn = /warn|skip|flag/i.test(line);
+              const isSuc = /success|created|complete/i.test(line);
+              result = isErr ? `This is an error: the migration engine encountered a problem processing this item. If this repeats, use Retry Failed.`
+                : isWarn ? `This is a warning: something was skipped or needs attention but migration continued.`
+                : isSuc ? `This is a success message: the item was migrated successfully.`
+                : `This is an informational log from the migration engine showing normal progress.`;
+              break;
+            }
+            default:
+              result = 'Unknown tool.';
+          }
+        } catch (e) { result = 'Tool execution error.'; }
+        toolResults.push({ tool_call_id: tc.id, role: 'tool', content: result });
+      }
+
+      const followUpMessages = [...messages, choice.message, ...toolResults];
+      response = await callAI(followUpMessages);
+      choice = response.choices?.[0];
+    }
+
+    const reply = choice?.message?.content || "I couldn't generate a response. Please try again.";
+    const quickReplies = STEP_QUICK_REPLIES[step] || [];
+
+    // Auto-inject widget based on current migration state + agent action
+    let widget = null;
+    const navStep = navigateToStep !== null ? navigateToStep : step;
+    if (!googleAuthed || !msAuthed) {
+      widget = { type: 'auth' };
+    } else if (navStep === 1 && !uploadData) {
+      widget = { type: 'upload' };
+    } else if ((navStep === 3 || actionToExecute === 'start_migration_dry' || actionToExecute === 'start_migration_live') && !options.hasFilePath) {
+      widget = { type: 'options' };
+    }
+
+    const payload = { reply, quickReplies };
+    if (actionToExecute) payload.action = actionToExecute;
+    if (navigateToStep !== null) payload.navigate = navigateToStep;
+    if (widget) payload.widget = widget;
+
+    res.json(payload);
+  } catch (err) {
+    console.error('[/api/chat]', err.message);
+    res.status(500).json({ error: err.message, reply: `I'm having trouble connecting right now. Please try again in a moment.` });
+  }
+});
 
 // ─── Auth Disconnect endpoints ────────────────────────────────────────────────
 app.post('/api/auth/google/disconnect', requireAuth, async (req, res) => {
