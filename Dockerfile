@@ -16,6 +16,9 @@ COPY src/ ./src/
 COPY ui/ ./ui/
 COPY copilot/ ./copilot/
 
+# Copy service account to root for both G2C and C2G
+COPY copilot/copilot/service_account.json ./service_account.json
+
 # Create directories for runtime data
 RUN mkdir -p uploads customers
 

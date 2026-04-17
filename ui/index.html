@@ -860,11 +860,6 @@ const StepMigrate=({stats,done,lastRunWasDry,batchId,onStartLive,onRunAnother,on
                 <IcoRocket s={14}/> Start Migration (Live)
               </Btn>
             )}
-            {hasUploadData&&(
-              <Btn variant="outline" onClick={()=>onRunAnother(true)} style={{flex:'1 1 120px',justifyContent:'center'}}>
-                Another Batch (Same Data)
-              </Btn>
-            )}
             <Btn variant="ghost" onClick={()=>onRunAnother(false)} style={{flex:'1 1 100px',justifyContent:'center'}}>
               New Migration
             </Btn>
@@ -2177,7 +2172,7 @@ function App(){
       const history=agentMsgs.filter(m=>!m.shellBlock).map(m=>({role:m.role==='bot'?'assistant':'user',content:m.content})).slice(-12);
       const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({message:userMsg,history,isSystemTrigger:isSystem,
-          migrationLogs:logs.slice(-100).map(l=>`[${l.ts}][${l.type}] ${l.message}`),
+          migrationLogs:(live||c2gLive)?logs.slice(-100).map(l=>`[${l.ts}][${l.type}] ${l.message}`):[],
           migrationState:{step,migDir,live,migDone,stats,lastRunWasDry,currentBatchId,
             uploadData:uploadData?{id:uploadData.id,total_users:uploadData.total_users,total_conversations:uploadData.total_conversations}:null,
             googleAuthed,msAuthed,
