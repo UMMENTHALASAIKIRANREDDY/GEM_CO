@@ -1836,8 +1836,8 @@ function App(){
       uploadData
         ? `Vault loaded — **${uploadData.total_users} users** ready. Want me to auto-map by email match, or would you prefer to set mappings manually?`
         : `Ready to import. Upload a **Vault ZIP** or pull directly from Google Drive — which works better for you?`,
-      mappings_count>0
-        ? `**${mappings_count} user${mappings_count!==1?'s':''} mapped**. Head to Options to configure a dry run or live migration.`
+      Object.keys(mappings).length>0
+        ? `**${Object.keys(mappings).length} user${Object.keys(mappings).length!==1?'s':''} mapped**. Head to Options to configure a dry run or live migration.`
         : `Time to map users. I can auto-match by email — want me to explain what this step does?`,
       options?.dryRun
         ? `Dry run mode is on — no data will be changed. Ready to preview the migration?`
@@ -1853,7 +1853,7 @@ function App(){
     const triggers=migDir==='copilot-gemini'?c2g:gc;
     const msg=triggers[step];
     if(msg)sendToAgent(msg,true);
-  },[step,wsLoaded]);
+  },[step,wsLoaded,migDir,uploadData,mappings,options]);
 
   // Google auth → agent
   const prevGoogleRef=useRef(null);
