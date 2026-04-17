@@ -32,10 +32,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 const migrationEvents = new EventEmitter();
-migrationEvents.setMaxListeners(50);
-const logBuffers = new Map();      // appUserId → log entries array
-const g2cInFlightFor = new Set();  // appUserIds with an active G→C migration
-const G2C_BUFFER_MAX = 2000;
+const logBuffers = new Map(); // appUserId → log entries array
 
 // Store tenant ID for auth flow
 let currentTenantId = null;
@@ -58,20 +55,10 @@ app.use(session({
   saveUninitialized: false,
   cookie: { maxAge: 24 * 60 * 60 * 1000 } // 24 hours
 }));
-// Debug request logger — only enabled when DEBUG_REQUESTS=1 in the environment
-if (process.env.DEBUG_REQUESTS === '1') {
-  app.use((req, res, next) => {
-    if (req.path.startsWith('/api/')) {
-      console.log(`[req] ${req.method} ${req.path} authed=${!!req.session?.appUser}`);
-    }
-    next();
-  });
-}
 
 // ─── App Auth (login gate) ──────────────────────────────────────────────────
 function requireAuth(req, res, next) {
   if (req.session?.appUser) return next();
-  if (process.env.DEBUG_REQUESTS === '1') console.log(`[auth] 401 on ${req.method} ${req.path}`);
   res.status(401).json({ error: 'Not logged in' });
 }
 
@@ -517,12 +504,16 @@ app.post('/api/google/vault-export', requireGoogleAuth, async (req, res) => {
     const matter = await exporter.createMatter(`GEM_CO Export ${new Date().toISOString()}`);
     const exportData = await exporter.createExport(matter.matterId, user_emails);
 
+    const { msEmail } = getWorkspaceContext(req);
     activeExport = {
       matterId: matter.matterId,
       exportId: exportData.id,
       status: 'IN_PROGRESS',
       userEmails: user_emails,
       exporter,
+      appUserId,
+      googleEmail,
+      msEmail,
     };
 
     // Persist to vaultExports
@@ -598,11 +589,30 @@ app.get('/api/google/vault-export/status', async (_req, res) => {
       );
       dbLog.info(`vaultExports.update — export ${exportId} COMPLETED`);
 
+      // Save to uploads collection so it appears in Previous Uploads list
+      const uploadId = path.basename(destDir);
+      const usersArr = users.map(u => ({ email: u.email, displayName: u.displayName, conversationCount: u.conversationCount }));
+      const uploadDoc = {
+        _id: uploadId,
+        originalName: `vault_export_${new Date().toISOString().slice(0,10)}.zip`,
+        uploadTime: new Date(),
+        extractPath: destDir,
+        totalUsers: users.length,
+        totalConversations: users.reduce((s, u) => s + u.conversationCount, 0),
+        users: usersArr,
+        appUserId: activeExport.appUserId,
+        googleEmail: activeExport.googleEmail,
+        msEmail: activeExport.msEmail,
+      };
+      await db().collection('uploads').updateOne({ _id: uploadId }, { $set: uploadDoc }, { upsert: true });
+      dbLog.info(`uploads.upsert (vault export) — ${uploadDoc.totalUsers} users`);
+
       activeExport = null;
 
       return res.json({
         status,
-        upload_id: path.basename(destDir),
+        id: uploadId,
+        original_name: uploadDoc.originalName,
         extract_path: destDir,
         total_users: users.length,
         total_conversations: users.reduce((s, u) => s + u.conversationCount, 0),
@@ -741,10 +751,10 @@ app.post('/api/upload', requireGoogleAuth, upload.single('vault_zip'), async (re
 
 // ─── Upload Management ────────────────────────────────────────────────────────
 app.get('/api/uploads', async (req, res) => {
-  const wsFilter = getWorkspaceFilter(req);
-  if (!wsFilter) return res.json({ uploads: [] });
-  // Match current workspace OR legacy uploads (no googleEmail/msEmail fields) for this appUser
-  const uploads = await db().collection('uploads').find({ $or: [wsFilter, { appUserId: wsFilter.appUserId, googleEmail: { $exists: false } }] }).sort({ uploadTime: -1 }).toArray();
+  const { appUserId, googleEmail } = getWorkspaceContext(req);
+  if (!appUserId || !googleEmail) return res.json({ uploads: [] });
+  // Show all uploads for this user+google account regardless of MS connection
+  const uploads = await db().collection('uploads').find({ appUserId, $or: [{ googleEmail }, { googleEmail: { $exists: false } }] }).sort({ uploadTime: -1 }).toArray();
   res.json({
     uploads: uploads.map(u => ({
       id: u._id,
@@ -822,14 +832,17 @@ app.get('/api/reports/:id/csv', async (req, res) => {
   const doc = await db().collection('reportsWorkspace').findOne({ _id: req.params.id });
   if (!doc) return res.status(404).json({ error: 'Batch not found' });
   const users = doc.report?.users || [];
+  const isC2G = doc.direction === 'c2g';
   const customerName = doc.customerName || 'Gemini';
-  const destFor = (email) => `${email}/OneDrive/Notebooks/${customerName}/${customerName} Conversations`;
-  const rows = ['Email,Destination Path,Status,Pages Created,Conversations,Errors,Error Message'];
+  const destFor = (email, destEmail) => isC2G ? (destEmail || '') : `${email}/OneDrive/Notebooks/${customerName}/${customerName} Conversations`;
+  const header = isC2G ? 'Source Email,Destination Email,Status,Files Uploaded,Conversations,Errors,Error Message' : 'Email,Destination Path,Status,Pages Created,Conversations,Errors,Error Message';
+  const rows = [header];
   users.forEach(u => {
+    const dest = destFor(u.email, u.destEmail);
     if (u.errors?.length > 0) {
-      u.errors.forEach(e => rows.push([u.email, destFor(u.email), u.status, u.pages_created, u.conversations_processed, u.error_count, e.error_message || ''].map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(',')));
+      u.errors.forEach(e => rows.push([u.email, dest, u.status, u.pages_created, u.conversations_processed, u.error_count, e.error_message || ''].map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(',')));
     } else {
-      rows.push([u.email, destFor(u.email), u.status, u.pages_created, u.conversations_processed, u.error_count, ''].map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(','));
+      rows.push([u.email, dest, u.status, u.pages_created, u.conversations_processed, u.error_count, ''].map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(','));
     }
   });
   res.setHeader('Content-Type', 'text/csv');
@@ -912,21 +925,12 @@ app.get('/api/migration-logs/:batchId', async (req, res) => {
 // ─── COPILOT → GEMINI (C2G) ROUTES ──────────────────────────────────
 // ════════════════════════════════════════════════════════════════════
 
-// C2G SSE log emitter + replay buffer
-// Replay buffer solves the race "POST finishes before SSE connects", but only
-// replays while a migration is actually in-flight so a NEW SSE never sees a
-// stale `done` from a prior run (which would close the stream immediately).
-const C2G_BUFFER_MAX = 2000; // cap memory for long runs
+// C2G SSE log emitter (separate from G→C)
 const c2gLogEmitter = new EventEmitter();
 c2gLogEmitter.setMaxListeners(50);
-let c2gLogBuffer = [];
-let c2gInFlight = false;
 
 function c2gLog(type, message) {
-  const entry = { type, message, ts: new Date().toISOString() };
-  c2gLogBuffer.push(entry);
-  if (c2gLogBuffer.length > C2G_BUFFER_MAX) c2gLogBuffer.splice(0, c2gLogBuffer.length - C2G_BUFFER_MAX);
-  c2gLogEmitter.emit('log', entry);
+  c2gLogEmitter.emit('log', { type, message, ts: new Date().toISOString() });
 }
 
 // GET /api/c2g/migrate-log — SSE stream for C2G migration
@@ -936,12 +940,8 @@ app.get('/api/c2g/migrate-log', (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
-  // Only replay logs if a migration is actively running — otherwise fresh
-  // clients would receive the previous run's `done` event and close immediately.
-  if (c2gInFlight) {
-    c2gLogBuffer.forEach(d => res.write(`data: ${JSON.stringify(d)}\n\n`));
-  }
-  const handler = d => res.write(`data: ${JSON.stringify(d)}\n\n`);
+  const send = d => res.write(`data: ${JSON.stringify(d)}\n\n`);
+  const handler = d => send(d);
   c2gLogEmitter.on('log', handler);
   req.on('close', () => c2gLogEmitter.off('log', handler));
 });
@@ -950,63 +950,75 @@ app.get('/api/c2g/migrate-log', (req, res) => {
 app.post('/api/c2g/migrate', requireAuth, async (req, res) => {
   try {
     const { appUserId } = getWorkspaceContext(req);
-    const { pairs } = req.body; // [{sourceEmail, destEmail}]
-    if (process.env.DEBUG_REQUESTS === '1') console.log(`[C2G] /api/c2g/migrate hit — appUserId=${appUserId}, pairs=${pairs?.length} pairs`);
+    const { pairs, folderName, dryRun, fromDate, toDate } = req.body;
     if (!pairs?.length) return res.status(400).json({ error: 'No user pairs provided' });
-    if (c2gInFlight) return res.status(409).json({ error: 'A C2G migration is already running' });
+    const isDryRun = dryRun === true;
+    const c2gFolderName = folderName || 'CopilotChats';
 
-    c2gLogBuffer = [];
-    c2gInFlight = true;
     res.json({ started: true });
 
     // Run migration async — stream progress via SSE
+    const batchId = `c2g_${Date.now()}`;
+    const { googleEmail, msEmail } = getWorkspaceContext(req);
+    const startTime = new Date();
+
     setImmediate(async () => {
-      let files = 0, errors = 0, users = 0;
-      const emitDone = (reason) => c2gLog('done', JSON.stringify({ files, errors, users, reason: reason || 'ok' }));
+      let files = 0, errors = 0;
+
+      // Create report doc in DB (same schema as G2C)
+      try {
+        await db().collection('reportsWorkspace').updateOne(
+          { _id: batchId },
+          { $set: { customerName: c2gFolderName, tenantId: process.env.SOURCE_AZURE_TENANT_ID || '', startTime, status: 'running', dryRun: isDryRun, direction: 'c2g', appUserId, googleEmail, msEmail } },
+          { upsert: true }
+        );
+        dbLog.info(`reportsWorkspace.insert — C2G batch ${batchId} status=running (dryRun=${isDryRun})`);
+      } catch (dbErr) { console.error('[C2G] DB insert error:', dbErr.message); }
 
       try {
-        // Dynamically import migration logic from copilot folder
-        let migModule;
+        let migModule, svcModule;
         try {
-          migModule = await import('./copilot/copilot/server/src/migration/migrate.js');
-        } catch (importErr) {
-          c2gLog('error', `Failed to load migration module: ${importErr.message}`);
-          c2gLog('error', 'Run: npm install (from GEM_CO root) to install required packages.');
-          errors = 1;
-          return emitDone('import-failed');
+          migModule = await import('./src/modules/c2g/migration/migrate.js');
+          svcModule = await import('./src/modules/c2g/copilotService.js');
+        } catch(importErr) {
+          console.error('[C2G] Import error:', importErr);
+          c2gLog('error', `Failed to load C2G module: ${importErr.message}`);
+          await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: { status: 'failed', endTime: new Date(), error: importErr.message } }).catch(() => {});
+          c2gLog('done', JSON.stringify({ files: 0, errors: 1, users: 0, batchId }));
+          return;
         }
         const { runMigration: runC2G } = migModule;
-        if (!runC2G) {
-          c2gLog('error', 'C2G migration module did not export runMigration.');
-          errors = 1;
-          return emitDone('bad-module');
-        }
+        const { createSourceGraphClient, listDirectoryUsers } = svcModule;
 
-        // Bridge tenant ID — copilot module reads SOURCE_AZURE_TENANT_ID || AZURE_TENANT_ID
         if (currentTenantId) {
           if (!process.env.SOURCE_AZURE_TENANT_ID) process.env.SOURCE_AZURE_TENANT_ID = currentTenantId;
           if (!process.env.AZURE_TENANT_ID) process.env.AZURE_TENANT_ID = currentTenantId;
         }
 
-        // Build pairs in the format the copilot migration expects
-        const msToken = isAuthenticated(appUserId) ? await getValidToken(appUserId).catch(() => null) : null;
-        if (!msToken) {
-          c2gLog('error', 'Microsoft auth token unavailable. Sign in with Microsoft and try again.');
-          errors = 1;
-          return emitDone('no-ms-token');
-        }
-
-        // Get user IDs from email list
+        c2gLog('info', 'Resolving user IDs from Microsoft directory...');
         let allMsUsers = [];
         try {
-          let url = 'https://graph.microsoft.com/v1.0/users?$select=id,displayName,mail,userPrincipalName&$top=999';
-          while (url) {
-            const r = await fetch(url, { headers: { Authorization: `Bearer ${msToken}` } });
-            const d = await r.json();
-            allMsUsers = allMsUsers.concat(d.value || []);
-            url = d['@odata.nextLink'] || null;
+          const { accessToken } = await createSourceGraphClient();
+          allMsUsers = await listDirectoryUsers(accessToken);
+        } catch (appTokenErr) {
+          const msToken = isAuthenticated(appUserId) ? await getValidToken(appUserId).catch(() => null) : null;
+          if (msToken) {
+            let url = 'https://graph.microsoft.com/v1.0/users?$select=id,displayName,mail,userPrincipalName&$top=999';
+            while (url) {
+              const r = await fetch(url, { headers: { Authorization: `Bearer ${msToken}` } });
+              const d = await r.json();
+              allMsUsers = allMsUsers.concat(d.value || []);
+              url = d['@odata.nextLink'] || null;
+            }
+          } else {
+            c2gLog('error', `Cannot fetch MS users: ${appTokenErr.message}. Connect Microsoft account first.`);
+            await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: { status: 'failed', endTime: new Date(), error: appTokenErr.message } }).catch(() => {});
+            c2gLog('done', JSON.stringify({ files: 0, errors: 1, users: 0, batchId }));
+            return;
           }
-        } catch (e) { c2gLog('error', `Failed to fetch MS users: ${e.message}`); }
+        }
+
+        c2gLog('info', `Found ${allMsUsers.length} users in directory`);
 
         const userMap = {};
         allMsUsers.forEach(u => { userMap[(u.mail || u.userPrincipalName || '').toLowerCase()] = u; });
@@ -1017,70 +1029,121 @@ app.post('/api/c2g/migrate', requireAuth, async (req, res) => {
         }).filter(p => p.sourceUserId);
 
         if (!migPairs.length) {
-          c2gLog('error', 'No valid user pairs with MS user IDs found.');
-          errors = 1;
-          return emitDone('no-valid-pairs');
+          c2gLog('error', 'No valid user pairs found. Check that the M365 emails exist in the tenant.');
+          await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: { status: 'failed', endTime: new Date(), error: 'No valid user pairs', totalUsers: 0 } }).catch(() => {});
+          c2gLog('done', JSON.stringify({ files: 0, errors: 1, users: 0, batchId }));
+          return;
         }
 
-        // Pre-check: verify service account key file exists
-        const saKeyPath = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE || './copilot/copilot/service_account.json';
-        if (!fs.existsSync(path.resolve(saKeyPath))) {
-          c2gLog('error', `Service account key file not found: ${saKeyPath}`);
-          c2gLog('error', 'Set GOOGLE_SERVICE_ACCOUNT_KEY_FILE in .env to point to your Google service account JSON file.');
-          errors = 1;
-          return emitDone('no-sa-key');
+        // Update report with user count
+        await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: { totalUsers: migPairs.length } }).catch(() => {});
+
+        c2gLog('info', `Starting C2G ${isDryRun ? 'dry run' : 'migration'} for ${migPairs.length} user pair(s)...`);
+        if (isDryRun) {
+          // Dry run: fetch interactions count but don't upload
+          const { getCopilotInteractionsForUser } = svcModule;
+          const reportUsers = [];
+          for (const p of migPairs) {
+            try {
+              const { accessToken: at } = await createSourceGraphClient();
+              const interactions = await getCopilotInteractionsForUser(at, p.sourceUserId, {});
+              const sessions = new Map();
+              for (const item of interactions) { const sid = item.sessionId || 'unknown'; if (!sessions.has(sid)) sessions.set(sid, []); sessions.get(sid).push(item); }
+              c2gLog('info', `${p.sourceDisplayName} → ${p.destUserEmail}: ${interactions.length} interactions, ${sessions.size} conversations`);
+              reportUsers.push({ email: p.sourceEmail, destEmail: p.destUserEmail, displayName: p.sourceDisplayName, status: 'success', pages_created: sessions.size, conversations_processed: sessions.size, error_count: 0, errors: [] });
+              files += sessions.size;
+            } catch (e) {
+              c2gLog('warn', `${p.sourceDisplayName}: ${e.message}`);
+              reportUsers.push({ email: p.sourceEmail, destEmail: p.destUserEmail, displayName: p.sourceDisplayName, status: 'failed', pages_created: 0, conversations_processed: 0, error_count: 1, errors: [{ error_message: e.message }] });
+              errors++;
+            }
+          }
+          await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: {
+            status: 'completed', endTime: new Date(), dryRun: true, totalUsers: migPairs.length,
+            migratedConversations: files, migratedUsers: reportUsers.filter(u => u.status === 'success').length,
+            failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors,
+            report: { summary: { total_users: migPairs.length, total_pages_created: files, total_errors: errors }, users: reportUsers }
+          } }).catch(() => {});
+          c2gLog('done', JSON.stringify({ files, errors, users: migPairs.length, batchId }));
+          return;
         }
 
-        users = migPairs.length;
-        c2gLog('info', `Starting C2G migration for ${migPairs.length} user pair(s)...`);
+        // Pass folder name and date filters to migrator
+        const migOpts = { folderName: c2gFolderName };
+        if (fromDate) migOpts.fromDate = fromDate;
+        if (toDate) migOpts.toDate = toDate;
+        const results = await runC2G(migPairs, migOpts);
 
-        // Forward migrate.js console.log/error to the SSE chat log for the run.
-        // Use try/finally so restoration happens even if runC2G throws — otherwise
-        // the process-wide console stays patched and future [Migration] logs leak
-        // into a dead c2gLog sink.
-        const origLog = console.log;
-        const origErr = console.error;
-        console.log = (...args) => { origLog(...args); const msg = args.join(' '); if (msg.includes('[Migration]')) c2gLog('info', msg); };
-        console.error = (...args) => { origErr(...args); const msg = args.join(' '); if (msg.includes('[Migration]')) c2gLog('warn', msg); };
-
-        let results;
-        try {
-          results = await runC2G(migPairs);
-        } finally {
-          console.log = origLog;
-          console.error = origErr;
-        }
-
+        // Build per-user report (same schema as G2C)
+        const reportUsers = [];
         for (const r of results) {
-          c2gLog('info', `Processing: ${r.sourceDisplayName}`);
+          c2gLog('info', `Processing: ${r.sourceDisplayName} → ${r.destUserEmail}`);
+
+          const userReport = {
+            email: r.sourceEmail || r.sourceDisplayName,
+            destEmail: r.destUserEmail,
+            displayName: r.sourceDisplayName,
+            status: r.errors?.length ? (r.filesUploaded > 0 ? 'partial' : 'failed') : 'success',
+            pages_created: r.filesUploaded || 0,
+            conversations_processed: r.conversationsCount || 0,
+            error_count: (r.errors || []).length,
+            errors: (r.errors || []).map(e => ({ error_message: e })),
+            files: r.files || [],
+          };
+          reportUsers.push(userReport);
+
           if (r.errors?.length) {
-            origErr(`[C2G] ${r.sourceDisplayName} errors:`, r.errors.join(' | '));
-            r.errors.forEach(e => c2gLog('warn', `  ↳ ${e}`));
+            console.error(`[C2G] ${r.sourceDisplayName} errors:`, r.errors.join(' | '));
+            r.errors.forEach(err => {
+              let friendly = err;
+              if (err.includes('invalid_grant') || err.includes('Invalid email or User ID')) {
+                friendly = `Google rejected destination "${r.destUserEmail}". Verify the email exists in Google Workspace and the service account has Domain-Wide Delegation.`;
+              } else if (err.includes('Service account key file not found')) {
+                friendly = `Service account JSON file is missing. Check GOOGLE_SERVICE_ACCOUNT_KEY_FILE in .env.`;
+              } else if (err.includes('Copilot license')) {
+                friendly = `${r.sourceDisplayName} does not have a Microsoft 365 Copilot license assigned.`;
+              } else if (err.includes('No Copilot conversations')) {
+                friendly = `${r.sourceDisplayName} has no Copilot chat history to migrate.`;
+              }
+              c2gLog('warn', friendly);
+            });
           }
           files += r.filesUploaded || 0;
           errors += (r.errors || []).length;
-          c2gLog(r.errors?.length ? 'warn' : 'success', `${r.sourceDisplayName}: ${r.filesUploaded || 0} files uploaded, ${(r.errors||[]).length} errors`);
+          c2gLog(r.errors?.length ? 'warn' : 'success', `${r.sourceDisplayName} → ${r.destUserEmail}: ${r.filesUploaded || 0} files uploaded, ${(r.errors||[]).length} error(s)`);
         }
-        emitDone('ok');
+
+        // Save completed report to DB
+        const reportUpdate = {
+          status: errors > 0 && files === 0 ? 'failed' : 'completed',
+          endTime: new Date(),
+          totalUsers: migPairs.length,
+          migratedConversations: files,
+          migratedUsers: reportUsers.filter(u => u.status === 'success' || u.status === 'partial').length,
+          failedUsers: reportUsers.filter(u => u.status === 'failed').length,
+          totalErrors: errors,
+          report: {
+            summary: { total_users: migPairs.length, total_pages_created: files, total_errors: errors, total_conversations: reportUsers.reduce((s, u) => s + u.conversations_processed, 0) },
+            users: reportUsers,
+          },
+        };
+        await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: reportUpdate }).catch(() => {});
+        dbLog.info(`reportsWorkspace.update — C2G batch ${batchId} status=${reportUpdate.status} (${files} files, ${migPairs.length} users)`);
+
+        c2gLog('done', JSON.stringify({ files, errors, users: migPairs.length, batchId }));
       } catch (e) {
-        c2gLog('error', e.message);
-        errors = errors || 1;
-        emitDone('exception');
-      } finally {
-        c2gInFlight = false;
+        console.error('[C2G] Unhandled error:', e);
+        c2gLog('error', e.message || String(e));
+        await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: { status: 'failed', endTime: new Date(), error: e.message } }).catch(() => {});
+        c2gLog('done', JSON.stringify({ files, errors, users: 0, batchId }));
       }
     });
   } catch (err) {
-    c2gInFlight = false;
-    if (!res.headersSent) res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
 // ─── SSE — live log stream ────────────────────────────────────────────────────
-// Same gating as C2G: only replay buffered logs while this user has an
-// active G→C migration running. Otherwise a fresh SSE would receive the
-// prior run's `done` event and close immediately — which is exactly what
-// caused "logs not showing" on a second migration.
 app.get('/api/migration-log', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -1089,13 +1152,12 @@ app.get('/api/migration-log', (req, res) => {
 
   const appUserId = req.session?.appUser?._id?.toString() || null;
 
-  if (g2cInFlightFor.has(appUserId)) {
-    const userBuffer = logBuffers.get(appUserId) || [];
-    for (const entry of userBuffer) {
-      res.write(`data: ${JSON.stringify(entry)}\n\n`);
-    }
-    if (typeof res.flush === 'function') res.flush();
+  // Replay buffered logs for THIS user only
+  const userBuffer = logBuffers.get(appUserId) || [];
+  for (const entry of userBuffer) {
+    res.write(`data: ${JSON.stringify(entry)}\n\n`);
   }
+  if (typeof res.flush === 'function') res.flush();
 
   // Only forward live logs that belong to this user
   const onLog = (data) => {
@@ -1114,12 +1176,9 @@ let _currentAppUserId = null;
 
 function emit(type, message, extra = {}) {
   const entry = { type, message, ts: new Date().toISOString(), ...extra };
-  // Buffer per user (bounded)
+  // Buffer per user
   if (!logBuffers.has(_currentAppUserId)) logBuffers.set(_currentAppUserId, []);
-  const buf = logBuffers.get(_currentAppUserId);
-  buf.push(entry);
-  if (buf.length > G2C_BUFFER_MAX) buf.splice(0, buf.length - G2C_BUFFER_MAX);
-  if (type === 'done' || type === 'error-fatal') g2cInFlightFor.delete(_currentAppUserId);
+  logBuffers.get(_currentAppUserId).push(entry);
   // Emit with appUserId tag for SSE filtering
   migrationEvents.emit('log', { ...entry, _appUserId: _currentAppUserId });
   // Persist to MongoDB (fire-and-forget)
@@ -1173,10 +1232,6 @@ async function withConcurrency(items, limit, fn) {
 
 async function runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id, upload_id, appUserId, googleEmail, msEmail }) {
   logBuffers.set(appUserId, []); // clear previous run's logs for this user
-  g2cInFlightFor.add(appUserId);
-  // The in-flight flag is cleared inside emit() whenever a `done` entry is
-  // emitted (see emit above). This avoids needing to wrap the entire large
-  // runMigration body in try/finally.
   const batchId = batch_id || Date.now().toString();
   currentBatchId = batchId;
   _currentAppUserId = appUserId;
@@ -1626,19 +1681,48 @@ const AGENT_TOOLS = [
         required: ['log_line']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'show_status_card',
+      description: 'Display a visual status card with migration stats. Use when summarizing migration results or answering questions about counts.',
+      parameters: {
+        type: 'object',
+        properties: {
+          users:  { type: 'number', description: 'Users processed' },
+          files:  { type: 'number', description: 'Files/pages migrated' },
+          errors: { type: 'number', description: 'Error count' },
+          label:  { type: 'string', description: 'Card title, e.g. "Migration Results"' }
+        },
+        required: ['users', 'files', 'errors']
+      }
+    }
   }
 ];
 
 const STEP_NAMES = ['Connect Clouds', 'Import Data', 'Map Users', 'Options', 'Migration in Progress', 'Migration Complete'];
 
-const STEP_QUICK_REPLIES = [
-  ['Connect Google Workspace', 'Connect Microsoft 365', 'Do I need admin access?'],
-  ['Upload a Vault ZIP', 'Export from Google Drive', 'What format is needed?'],
-  ['Show me the mapping', 'Auto-map users', 'How do I fix unmapped users?'],
-  ['Start Dry Run', 'Start Migration', 'What does dry run do?'],
-  ['How long will this take?', 'Show live stats', 'Stop migration'],
-  ['Download Report', 'Start Another Migration', 'What happens next?']
-];
+function getContextualReplies({migDir,migDone,live,googleAuthed,msAuthed,uploadData,mappings_count,stats,lastRunWasDry}={}) {
+  if(!googleAuthed||!msAuthed) return ['Connect Google Workspace','Connect Microsoft 365','How does this work?'];
+  if(!migDir) return ['Migrate Gemini → Copilot','Migrate Copilot → Gemini','What\'s the difference?'];
+  if(migDir==='gemini-copilot'){
+    if(!uploadData) return ['Upload Vault ZIP','Export from Google Drive','What format do I need?'];
+    if(!mappings_count) return ['Auto-map users','Map manually','What is user mapping?'];
+    if(!migDone&&!live) return ['Start dry run','Start live migration','What does dry run do?'];
+    if(live) return ['Check migration status','What\'s happening?'];
+    if(migDone&&(stats?.errors||0)>0) return ['Retry failed','Download report','What failed and why?'];
+    if(migDone) return ['Download report','Start another','Change direction'];
+  }
+  if(migDir==='copilot-gemini'){
+    if(!mappings_count) return ['Map C2G users','How does C2G migration work?'];
+    if(!migDone&&!live) return ['Start dry run','Start live migration'];
+    if(live) return ['Check migration status'];
+    if(migDone&&(stats?.errors||0)>0) return ['What errors occurred?','Download report'];
+    if(migDone) return ['Download report','Start another','Change direction'];
+  }
+  return ['What can you do?','Show migration status'];
+}
 
 async function callAI(messages, tools) {
   const azureEndpoint = process.env.AZURE_OPENAI_ENDPOINT;
@@ -1648,7 +1732,7 @@ async function callAI(messages, tools) {
 
   if (azureEndpoint && azureKey) {
     const url = `${azureEndpoint.replace(/\/$/, '')}/openai/deployments/${azureDeployment}/chat/completions?api-version=2024-02-15-preview`;
-    const body = { messages, max_tokens: 700, temperature: 0.35 };
+    const body = { messages, max_tokens: 900, temperature: 0.4 };
     if (tools) body.tools = tools;
     const r = await fetch(url, {
       method: 'POST',
@@ -1675,36 +1759,41 @@ async function callAI(messages, tools) {
 }
 
 app.post('/api/chat', requireAuth, async (req, res) => {
-  const { message, history = [], migrationState = {}, isSystemTrigger = false } = req.body;
+  const { message, history = [], migrationState = {}, migrationLogs = [], isSystemTrigger = false } = req.body;
   if (!message) return res.status(400).json({ error: 'message required' });
 
   const {
-    step = 0, live = false, migDone = false, stats = {}, lastRunWasDry = false,
+    step = 0, migDir = null, live = false, migDone = false, stats = {}, lastRunWasDry = false,
     uploadData = null, googleAuthed = false, msAuthed = false,
     mappings_count = 0, selected_users_count = 0, options = {}
   } = migrationState;
 
-  const systemPrompt = `You are the Migration Agent for CloudFuze GEM — a Google Gemini to Microsoft Copilot migration tool.
+  const logsSection = migrationLogs.length > 0
+    ? `\nRecent migration log (${migrationLogs.length} entries):\n${migrationLogs.join('\n')}\n`
+    : '';
+
+  const systemPrompt = `You are the CloudFuze Migration Agent — a knowledgeable, conversational co-pilot for migrating conversations between Google Workspace and Microsoft 365 in both directions.
 
 Current migration state:
+- Direction: ${migDir === 'gemini-copilot' ? 'Google Gemini → Microsoft Copilot' : migDir === 'copilot-gemini' ? 'Microsoft Copilot → Google Drive' : 'not selected'}
 - Step: ${step} — ${STEP_NAMES[step] || 'Unknown'}
 - Google Workspace connected: ${googleAuthed}
 - Microsoft 365 connected: ${msAuthed}
 - Vault data loaded: ${uploadData ? `yes (${uploadData.total_users} users, ${uploadData.total_conversations || '?'} conversations)` : 'no'}
 - User mappings configured: ${mappings_count} (${selected_users_count} selected)
-- File path set: ${options.hasFilePath ? 'yes' : 'no'}
 - Dry run mode: ${options.dryRun ? 'yes' : 'no'}
 - Migration running: ${live}
 - Migration done: ${migDone}
-- Last run was dry run: ${lastRunWasDry}
-- Stats: ${stats.users || 0} users, ${stats.pages || 0} pages created, ${stats.errors || 0} errors, ${stats.flagged || 0} flagged
+- Last run: ${lastRunWasDry ? 'dry run' : 'live'}
+- Stats: ${stats.users || 0} users · ${stats.pages || 0} pages/files migrated · ${stats.errors || 0} errors
+${logsSection}
+Use the state and logs above to give specific, relevant answers. When the user asks about progress, results, or errors — answer from the actual data above, citing real numbers.
 
-You work alongside the left panel which shows the current migration step's UI (Connect Clouds, Import Data, Map Users, Options, Migration). You are synced — when you navigate to a step, the left panel updates automatically.
-You CAN take real actions: navigate to steps, start migration, retry failures, show reports, show user mapping.
-Use tools when the user wants to DO something (navigate, start migration, etc.). Answer questions directly without tools.
-Guide the user proactively: acknowledge what they just did, tell them what to do next, offer action quick replies. Be like a helpful co-pilot — the left panel is the "what to fill in", you are the "guide telling them what to do and why".
+Formatting: use markdown freely — **bold** for key numbers and values, - bullet lists for steps or options, ## headers only for longer structured answers. Match length to need.
 
-IMPORTANT: Use plain text only in replies. No markdown asterisks, no bold syntax, no bullet symbols. Use line breaks for structure. Keep replies concise — 2-4 sentences max unless explaining something complex.`;
+Personality: direct, warm, expert. Like a senior engineer helping a colleague. Never narrate what step the user is on — offer to help them move forward instead. Ask one focused question when you notice something worth exploring.
+
+You CAN take real actions via tools: navigate steps, start migration, retry, show reports, show mapping, show_status_card.`;
 
   const messages = [
     { role: 'system', content: systemPrompt },
@@ -1717,6 +1806,7 @@ IMPORTANT: Use plain text only in replies. No markdown asterisks, no bold syntax
     let choice = response.choices?.[0];
     let actionToExecute = null;
     let navigateToStep = null;
+    let statusCardData = null;
 
     // Handle tool calls
     if (choice?.finish_reason === 'tool_calls' && choice.message?.tool_calls) {
@@ -1753,7 +1843,8 @@ IMPORTANT: Use plain text only in replies. No markdown asterisks, no bold syntax
               break;
             }
             case 'get_migration_status': {
-              result = `Step ${step} (${STEP_NAMES[step]}). Running: ${live}. Done: ${migDone}. Users: ${stats.users || 0}, Pages: ${stats.pages || 0}, Errors: ${stats.errors || 0}.`;
+              const logSummary = migrationLogs.length > 0 ? ` Recent logs: ${migrationLogs.slice(-20).join(' | ')}` : '';
+              result = `Step ${step} (${STEP_NAMES[step]}). Direction: ${migDir||'none'}. Running: ${live}. Done: ${migDone}. Users: ${stats.users || 0}, Pages/Files: ${stats.pages || 0}, Errors: ${stats.errors || 0}.${logSummary}`;
               break;
             }
             case 'explain_log': {
@@ -1765,6 +1856,12 @@ IMPORTANT: Use plain text only in replies. No markdown asterisks, no bold syntax
                 : isWarn ? `This is a warning: something was skipped or needs attention but migration continued.`
                 : isSuc ? `This is a success message: the item was migrated successfully.`
                 : `This is an informational log from the migration engine showing normal progress.`;
+              break;
+            }
+            case 'show_status_card': {
+              actionToExecute = actionToExecute || null;
+              statusCardData = { users: args.users || 0, files: args.files || 0, errors: args.errors || 0, label: args.label || 'Migration Results' };
+              result = `Status card shown: ${args.users||0} users, ${args.files||0} files, ${args.errors||0} errors.`;
               break;
             }
             default:
@@ -1780,7 +1877,7 @@ IMPORTANT: Use plain text only in replies. No markdown asterisks, no bold syntax
     }
 
     const reply = choice?.message?.content || "I couldn't generate a response. Please try again.";
-    const quickReplies = STEP_QUICK_REPLIES[step] || [];
+    const quickReplies = [];
 
     // Auto-inject widget based on current migration state + agent action
     let widget = null;
@@ -1797,6 +1894,7 @@ IMPORTANT: Use plain text only in replies. No markdown asterisks, no bold syntax
     if (actionToExecute) payload.action = actionToExecute;
     if (navigateToStep !== null) payload.navigate = navigateToStep;
     if (widget) payload.widget = widget;
+    if (statusCardData) payload.statusCard = statusCardData;
 
     res.json(payload);
   } catch (err) {
@@ -1821,24 +1919,21 @@ app.post('/api/auth/ms/disconnect', requireAuth, async (req, res) => {
 });
 
 connectMongo().then(async () => {
-  // Also connect copilot's Mongoose cogem DB. We temporarily swap MONGO_URI to
-  // point at the /cogem database, but must ALWAYS restore it — even if
-  // connectDB() throws — otherwise the rest of the process sees the wrong URI.
-  const origUri = process.env.MONGO_URI;
+  // Connect copilot's Mongoose cogem DB
   try {
-    const cogemUri = (origUri || '').replace(/\/gemco(\?|$)/, '/cogem$1');
+    const cogemUri = (process.env.MONGO_URI || '').replace(/\/gemco(\?|$)/, '/cogem$1');
+    const origUri = process.env.MONGO_URI;
     process.env.MONGO_URI = cogemUri || origUri;
     const { connectDB } = await import('./copilot/copilot/server/src/db/connection.js');
     await connectDB();
+    process.env.MONGO_URI = origUri;
   } catch (e) {
     console.warn('[cogem] Copilot DB connect failed (non-fatal):', e.message);
-  } finally {
-    if (origUri !== undefined) process.env.MONGO_URI = origUri;
   }
   await restoreGoogleSessions();
   await restoreMsSessions();
   app.listen(PORT, () => {
-    console.log(`\nGemini → Copilot Migration UI`);
+    console.log(`\nCloudFuze Migration`);
     console.log(`Open: http://localhost:${PORT}\n`);
   });
 }).catch(err => {

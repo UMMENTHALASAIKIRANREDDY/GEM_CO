@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Gemini → Copilot Migration | CloudFuze</title>
+  <title>CloudFuze Migration</title>
   <link rel="icon" type="image/png" href="/assets/CloudFuze blue.png"/>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet"/>
   <style>
@@ -31,6 +31,14 @@
     .drag-divider{width:6px;background:#EBEBEB;cursor:col-resize;flex-shrink:0;transition:background .15s;position:relative;z-index:10;display:flex;align-items:center;justify-content:center;user-select:none}
     .drag-divider:hover,.drag-divider.active{background:#809EFC}
     .drag-divider::after{content:'';position:absolute;width:2px;height:36px;border-radius:99px;background:rgba(1,41,172,.3);pointer-events:none}
+    .agent-md{font-size:13px;line-height:1.6;color:#1e293b}
+    .agent-md p{margin:0 0 8px}.agent-md p:last-child{margin-bottom:0}
+    .agent-md ul,.agent-md ol{margin:4px 0 8px 18px;padding:0}.agent-md li{margin-bottom:3px}
+    .agent-md strong{font-weight:600;color:#0129AC}
+    .agent-md h2,.agent-md h3{font-size:13px;font-weight:700;color:#0f172a;margin:10px 0 4px}
+    .agent-md code{background:#f1f5f9;border-radius:4px;padding:1px 5px;font-family:monospace;font-size:12px}
+    .agent-md hr{border:none;border-top:1px solid #e2e8f0;margin:10px 0}
+    .agent-md a{color:#0129AC;text-decoration:underline}
   </style>
 </head>
 <body>
@@ -38,6 +46,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <script type="text/babel">
 const {useState,useEffect,useRef,useCallback,useMemo}=React;
 
@@ -184,7 +194,7 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
           <GoogleIcon/>
           <div style={{flex:1}}>
             <div style={{fontSize:14,fontWeight:600}}>Google Workspace</div>
-            <div style={{fontSize:12,color:C.muted}}>Source — Gemini conversations <span style={{fontSize:11,color:'#DC2626',fontWeight:600}}>(required)</span></div>
+            <div style={{fontSize:12,color:C.muted}}>Gemini conversations <span style={{fontSize:11,color:'#DC2626',fontWeight:600}}>(required)</span></div>
           </div>
           {googleAuthed?<span style={{display:'inline-flex',alignItems:'center',gap:5,fontSize:12,padding:'4px 12px',borderRadius:20,background:C.tint,color:C.primary,fontWeight:600,flexShrink:0}}><Check s={12} c={C.primary}/>Connected</span>:<span style={{fontSize:12,padding:'4px 12px',borderRadius:20,background:'#FEF2F2',color:'#DC2626',fontWeight:600,flexShrink:0}}>Required</span>}
         </div>
@@ -211,7 +221,7 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
           <MsIcon/>
           <div style={{flex:1}}>
             <div style={{fontSize:14,fontWeight:600}}>Microsoft Teams / 365</div>
-            <div style={{fontSize:12,color:C.muted}}>Destination — Copilot / OneNote <span style={{fontSize:11,color:C.error,fontWeight:600}}>(required)</span></div>
+            <div style={{fontSize:12,color:C.muted}}>Copilot / OneNote <span style={{fontSize:11,color:C.error,fontWeight:600}}>(required)</span></div>
           </div>
           {msAuthed?<span style={{display:'inline-flex',alignItems:'center',gap:5,fontSize:12,padding:'4px 12px',borderRadius:20,background:C.tint,color:C.primary,fontWeight:600,flexShrink:0}}><Check s={12} c={C.primary}/>Connected</span>:<span style={{fontSize:12,padding:'4px 12px',borderRadius:20,background:'#FEF2F2',color:C.error,fontWeight:500,flexShrink:0}}>Required</span>}
         </div>
@@ -417,7 +427,7 @@ const Step1=({googleUsers,googleAuthed,onComplete,onBack,showToast,uploadData:ac
               </div>
             </div>
             <div style={{fontWeight:600,fontSize:14,marginBottom:4}}>Exporting Gemini Data</div>
-            <div style={{fontSize:12,color:C.muted}}>{exportStatus}</div>
+            <div style={{fontSize:12,color:exportStatus.startsWith('Error')||exportStatus.startsWith('Failed')?C.error:C.muted,fontWeight:exportStatus.startsWith('Error')||exportStatus.startsWith('Failed')?600:400}}>{exportStatus}</div>
           </Card>
         ):googleUsers.length>0?(
           <UserSelectPanel users={googleUsers} selected={selected} toggleUser={toggleUser} toggleAll={toggleAll} startExport={startExport}/>
@@ -533,24 +543,25 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
               {unmapped>0&&<span style={{color:C.error}}>{autoMapped>0?' · ':''}{unmapped} need mapping</span>}
             </div>
           </div>
-          <div style={{display:'flex',gap:6,flexShrink:0}}>
+          <div style={{display:'flex',gap:4,flexShrink:0}}>
             <input ref={csvRef} type="file" accept=".csv" style={{display:'none'}} onChange={e=>{if(e.target.files[0])uploadCsv(e.target.files[0]);e.target.value=''}}/>
-            <button onClick={()=>csvRef.current.click()} disabled={csvUploading} style={{fontSize:12,color:C.muted,background:'white',border:`1px solid ${C.border}`,borderRadius:5,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,display:'inline-flex',alignItems:'center',gap:4}}>
-              {csvUploading?<Spinner s={10}/>:<IcoUpload s={11}/>} Upload CSV
+            <button onClick={()=>csvRef.current.click()} disabled={csvUploading} title="Upload CSV" style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.border}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}} onMouseEnter={e=>e.currentTarget.style.background=C.bg} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+              {csvUploading?<Spinner s={12}/>:<IcoUpload s={13} c={C.muted}/>}
             </button>
-            <button onClick={downloadCsv} style={{fontSize:12,color:C.primary,background:'white',border:`1px solid ${C.primary}`,borderRadius:5,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,display:'inline-flex',alignItems:'center',gap:4}}><IcoDownload s={11} c={C.primary}/> Download CSV</button>
+            <button onClick={downloadCsv} title="Download CSV" style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.primary}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}} onMouseEnter={e=>e.currentTarget.style.background=C.tint} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+              <IcoDownload s={13} c={C.primary}/>
+            </button>
           </div>
         </div>
-        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+        <div style={{display:'flex',alignItems:'center',marginBottom:8}}>
           <div style={{fontSize:12,color:C.muted}}><span style={{fontWeight:600,color:C.primary}}>{selectedUsers.size}</span> of {users.length} selected</div>
-          <TextBtn onClick={toggleAll}>{selectedUsers.size===users.length?'Deselect All':'Select All'}</TextBtn>
         </div>
         <SearchBar value={search} onChange={setSearch} placeholder="Search by email..."/>
       </div>
 
-      <div style={{flex:1,overflowY:'auto',minHeight:0,background:'white',border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden'}}>
+      <div style={{flex:1,overflowY:'auto',minHeight:0,background:'white',border:`1px solid ${C.border}`,borderRadius:10}}>
         <div style={{display:'grid',gridTemplateColumns:'32px 1fr 1fr 60px',padding:'9px 14px',background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.4,position:'sticky',top:0,zIndex:1}}>
-          <div/><div>Google Email</div><div>M365 Email</div><div style={{textAlign:'right'}}>Chats</div>
+          <input type="checkbox" checked={selectedUsers.size>0&&selectedUsers.size===users.length} onChange={()=>{if(selectedUsers.size===users.length)setSelectedUsers(new Set());else setSelectedUsers(new Set(users.map(u=>u.email)))}} style={{accentColor:C.primary,width:15,height:15,cursor:'pointer'}}/><div>Google Email</div><div>M365 Email</div><div style={{textAlign:'right'}}>Chats</div>
         </div>
         {filtered.map((u,i)=>{
           const mapped=!!(mappings[u.email]);
@@ -607,14 +618,13 @@ const Step3=({options,setOptions,config,setConfig,msAuthed,googleAuthed,onRun,on
         </div>
       )}
 
-      <Field label="File Name *" hint="OneNote path where migrated pages will be created (required)">
-        <input ref={filePathRef} type="text" value={config.filePath||''} onChange={e=>setConfig(p=>({...p,filePath:e.target.value}))} placeholder="e.g. /Sites/Migration/GeminiExports" style={{width:'100%',border:`2px solid ${retryMode?'#EA580C':C.border}`,borderRadius:6,padding:'9px 12px',fontSize:13,outline:'none',transition:'border .2s',boxSizing:'border-box'}} onFocus={e=>e.target.style.borderColor=retryMode?'#C2410C':C.primary} onBlur={e=>e.target.style.borderColor=retryMode?'#EA580C':C.border}/>
+      <Field label="File Name *">
+        <input ref={filePathRef} type="text" value={config.filePath||''} onChange={e=>setConfig(p=>({...p,filePath:e.target.value}))} placeholder="GeminiChats" style={{width:'100%',border:`2px solid ${retryMode?'#EA580C':C.border}`,borderRadius:6,padding:'9px 12px',fontSize:13,outline:'none',transition:'border .2s',boxSizing:'border-box'}} onFocus={e=>e.target.style.borderColor=retryMode?'#C2410C':C.primary} onBlur={e=>e.target.style.borderColor=retryMode?'#EA580C':C.border}/>
       </Field>
 
       <Card style={{marginBottom:16}}>
         <div style={{fontSize:13,fontWeight:600,marginBottom:4,color:C.dark}}>Behavior</div>
         <Chk label="Dry run (preview only — no pages created)" hint="Recommended before first live migration" checked={options.dryRun} onChange={e=>setOptions(p=>({...p,dryRun:e.target.checked}))}/>
-        <Chk label="Disable Azure OpenAI (GPT-4o) responses" hint="Skip AI-generated Copilot responses — migrate Gemini content only. Faster and avoids OpenAI costs." checked={options.skipAiResponse} onChange={e=>setOptions(p=>({...p,skipAiResponse:e.target.checked}))}/>
       </Card>
 
       <Card style={{marginBottom:20}}>
@@ -856,7 +866,7 @@ const StepMigrate=({stats,done,lastRunWasDry,batchId,onStartLive,onRunAnother,on
               </Btn>
             )}
             <Btn variant="ghost" onClick={()=>onRunAnother(false)} style={{flex:'1 1 100px',justifyContent:'center'}}>
-              New Import
+              New Migration
             </Btn>
             {onChangeDirection&&<Btn variant="ghost" onClick={onChangeDirection} style={{flex:'1 1 120px',justifyContent:'center'}}>⇄ Change Direction</Btn>}
           </div>
@@ -873,21 +883,52 @@ const StepMigrate=({stats,done,lastRunWasDry,batchId,onStartLive,onRunAnother,on
 /* Bot avatar */
 const BotAv=({s=28})=><div style={{width:s,height:s,borderRadius:'50%',background:`linear-gradient(135deg,${C.primary},${C.primaryL})`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><svg width={s*.48} height={s*.48} viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><path d="M12 2a4 4 0 014 4v2H8V6a4 4 0 014-4z"/><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5" fill="white"/><circle cx="15" cy="14" r="1.5" fill="white"/></svg></div>;
 
-/* Parse agent text: **bold** → <strong>, \n → <br/> */
-function parseAgentText(text){
+/* Markdown renderer — uses marked.js + DOMPurify if available */
+function renderMarkdown(text){
   if(!text)return null;
-  return text.split('\n').map((line,li)=>{
-    const parts=line.split(/\*\*(.*?)\*\*/g).map((p,pi)=>pi%2===1?<strong key={pi}>{p}</strong>:p);
-    return<React.Fragment key={li}>{parts}{li<text.split('\n').length-1&&<br/>}</React.Fragment>;
-  });
+  const html=typeof marked!=='undefined'?marked.parse(text):text.replace(/\n/g,'<br/>');
+  const clean=typeof DOMPurify!=='undefined'?DOMPurify.sanitize(html):html;
+  return<div className="agent-md" dangerouslySetInnerHTML={{__html:clean}}/>;
 }
 
+/* Migration results status card */
+const StatusCard=({users=0,files=0,errors=0,label='Migration Results'})=>{
+  const items=[{v:users,l:'users',c:'#0129AC'},{v:files,l:'files',c:'#20CC83'},{v:errors,l:'errors',c:'#FF1F1F'}].filter(i=>i.v>0);
+  if(!items.length)return null;
+  return(
+    <div style={{borderRadius:10,border:'1px solid #e2e8f0',padding:'10px 14px',marginTop:8,background:'#f8fafc'}}>
+      <div style={{fontSize:10,fontWeight:600,color:'#64748b',textTransform:'uppercase',letterSpacing:.6,marginBottom:8}}>{label}</div>
+      <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+        {items.map(i=>(
+          <div key={i.l} style={{background:'white',border:`1px solid ${i.c}33`,borderLeft:`3px solid ${i.c}`,borderRadius:8,padding:'6px 12px',textAlign:'center',minWidth:60}}>
+            <div style={{fontSize:22,fontWeight:700,color:i.c,lineHeight:1}}>{i.v}</div>
+            <div style={{fontSize:10,color:'#64748b',textTransform:'uppercase',letterSpacing:.4}}>{i.l}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+/* Inline progress chips */
+const MsgChips=({chips})=>chips?.length>0?(
+  <div style={{display:'flex',gap:6,flexWrap:'wrap',marginTop:6}}>
+    {chips.map(c=>(
+      <span key={c.label} style={{background:`${c.color}18`,color:c.color,border:`1px solid ${c.color}44`,borderRadius:20,padding:'2px 10px',fontSize:11,fontWeight:600}}>{c.value} {c.label}</span>
+    ))}
+  </div>
+):null;
+
 /* Bot message bubble */
-const BotMsg=({children,quickReplies,onQuickReply})=>(
+const BotMsg=({children,quickReplies,onQuickReply,statusCard,chips})=>(
   <div className="fade-up" style={{display:'flex',alignItems:'flex-start',gap:8}}>
     <BotAv/>
     <div style={{flex:1,minWidth:0}}>
-      <div style={{background:'#f1f5f9',borderRadius:'12px 12px 12px 3px',padding:'10px 14px',fontSize:13,lineHeight:1.6,color:'#1e293b'}}>{parseAgentText(children)||children}</div>
+      <div style={{background:'#f1f5f9',borderRadius:'12px 12px 12px 3px',padding:'10px 14px'}}>
+        {renderMarkdown(children)||children}
+        <MsgChips chips={chips}/>
+      </div>
+      {statusCard&&<StatusCard {...statusCard}/>}
       {quickReplies&&quickReplies.length>0&&(
         <div style={{display:'flex',flexWrap:'wrap',gap:6,marginTop:8}}>
           {quickReplies.map((qr,i)=>(
@@ -906,48 +947,71 @@ const UserMsg=({children})=>(
   </div>
 );
 
-/* Migration activity log — clean, chat-friendly, live-updating */
-const MigrationLog=({lines=[],onLineClick})=>{
-  const [collapsed,setCollapsed]=useState(false);
-  const scrollRef=useRef(null);
-  const safeLines=Array.isArray(lines)?lines:[];
-  const dotColor=t=>t==='error'?C.error:t==='warn'?'#F59E0B':t==='success'?'#10B981':t==='done'?C.primary:C.primaryL;
-  const isDone=safeLines.some(l=>l.type==='done');
-  const hasError=safeLines.some(l=>l.type==='error');
-  const isLive=safeLines.length>0&&!isDone;
-  const headerDot=hasError?C.error:isDone?'#10B981':isLive?C.primary:C.muted;
-  const headerLabel=hasError?'Completed with errors':isDone?'Completed':isLive?'Running…':'Waiting to start';
-  useEffect(()=>{if(!collapsed&&scrollRef.current)scrollRef.current.scrollTop=scrollRef.current.scrollHeight},[safeLines.length,collapsed]);
+/* Collapsible shell/terminal log block */
+const ShellBlock=({lines,onLineClick})=>{
+  const [open,setOpen]=useState(false);
+  const scrollRef=React.useRef(null);
+  const lineColor=t=>t==='error'?'#f87171':t==='warn'?'#fbbf24':t==='success'?'#4ade80':t==='done'?'#60a5fa':'#94a3b8';
+  // Auto-scroll modal when new lines arrive
+  React.useEffect(()=>{if(open&&scrollRef.current)scrollRef.current.scrollTop=scrollRef.current.scrollHeight;},[lines,open]);
+  const errCount=lines.filter(l=>l.type==='error').length;
+  const warnCount=lines.filter(l=>l.type==='warn').length;
+  const doneItem=lines.find(l=>l.type==='done');
+  const lastLine=lines[lines.length-1];
+  const preview=lastLine?lastLine.text:'Waiting for logs…';
   return(
-    <div className="fade-up" style={{marginLeft:36,borderRadius:10,overflow:'hidden',border:`1px solid ${C.border}`,background:C.white,boxShadow:'0 1px 2px rgba(0,0,0,.04)'}}>
-      <div onClick={()=>setCollapsed(p=>!p)} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 14px',background:C.tint,cursor:'pointer',userSelect:'none',borderBottom:collapsed?'none':`1px solid ${C.border}`}}>
-        <div style={{display:'flex',alignItems:'center',gap:10}}>
-          <span style={{width:8,height:8,borderRadius:'50%',background:headerDot,boxShadow:isLive?`0 0 0 3px ${C.primary}26`:'none',animation:isLive?'pulse 1.4s ease-in-out infinite':'none',display:'inline-block'}}/>
-          <span style={{fontSize:12,fontWeight:600,color:C.dark}}>Migration Activity</span>
-          <span style={{fontSize:11,color:C.muted}}>·</span>
-          <span style={{fontSize:11,color:C.muted}}>{headerLabel}</span>
-          {safeLines.length>0&&<span style={{fontSize:11,color:C.muted}}>· {safeLines.length} {safeLines.length===1?'event':'events'}</span>}
+    <>
+      {/* Compact inline card — click to open modal */}
+      <div className="fade-up" onClick={()=>setOpen(true)} style={{marginLeft:36,borderRadius:8,overflow:'hidden',border:'1px solid #1e293b',fontSize:12,fontFamily:'monospace',cursor:'pointer'}}>
+        {/* Terminal chrome */}
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'6px 12px',background:'#1e293b',userSelect:'none'}}>
+          <div style={{display:'flex',alignItems:'center',gap:6}}>
+            <span style={{width:8,height:8,borderRadius:'50%',background:'#ef4444',display:'inline-block'}}/>
+            <span style={{width:8,height:8,borderRadius:'50%',background:'#f59e0b',display:'inline-block'}}/>
+            <span style={{width:8,height:8,borderRadius:'50%',background:'#22c55e',display:'inline-block'}}/>
+            <span style={{marginLeft:10,color:'#94a3b8',fontSize:11}}>shell</span>
+            <span style={{color:'#475569',fontSize:10}}>{lines.length} lines</span>
+            {errCount>0&&<span style={{color:'#f87171',fontSize:10}}>· {errCount} error{errCount!==1?'s':''}</span>}
+            {warnCount>0&&<span style={{color:'#fbbf24',fontSize:10}}>· {warnCount} warn{warnCount!==1?'s':''}</span>}
+          </div>
+          <span style={{color:'#64748b',fontSize:10}}>▼ open</span>
         </div>
-        <span style={{fontSize:11,color:C.primary,fontWeight:500}}>{collapsed?'Show':'Hide'}</span>
+        {/* Preview: last log line */}
+        <div style={{background:'#0f172a',padding:'5px 12px 6px 52px',color:lastLine?lineColor(lastLine.type):'#475569',fontSize:11,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+          {doneItem?<span style={{color:'#60a5fa'}}>✓ Done — {lines.length} lines logged</span>:preview}
+        </div>
       </div>
-      {!collapsed&&(
-        <div ref={scrollRef} style={{maxHeight:260,overflowY:'auto',background:C.white}}>
-          {safeLines.length===0&&(
-            <div style={{padding:'14px 16px',color:C.muted,fontSize:12,display:'flex',alignItems:'center',gap:10}}>
-              <span style={{display:'inline-block',width:6,height:6,borderRadius:'50%',background:C.primary,animation:'pulse 1s ease-in-out infinite',flexShrink:0}}/>
-              <span style={{fontStyle:'italic'}}>Waiting for activity…</span>
+
+      {/* Modal overlay */}
+      {open&&ReactDOM.createPortal(
+        <div style={{position:'fixed',inset:0,zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,.6)',backdropFilter:'blur(3px)'}} onClick={()=>setOpen(false)}>
+          <div onClick={e=>e.stopPropagation()} style={{width:'min(860px,94vw)',height:'min(560px,85vh)',display:'flex',flexDirection:'column',background:'#0f172a',borderRadius:12,overflow:'hidden',border:'1px solid #1e293b',boxShadow:'0 24px 64px rgba(0,0,0,.6)'}}>
+            {/* Modal header */}
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 14px',background:'#1e293b',flexShrink:0}}>
+              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                <span style={{width:8,height:8,borderRadius:'50%',background:'#ef4444',display:'inline-block'}}/>
+                <span style={{width:8,height:8,borderRadius:'50%',background:'#f59e0b',display:'inline-block'}}/>
+                <span style={{width:8,height:8,borderRadius:'50%',background:'#22c55e',display:'inline-block'}}/>
+                <span style={{marginLeft:10,color:'#94a3b8',fontSize:12,fontFamily:'monospace'}}>migration log</span>
+                <span style={{color:'#475569',fontSize:11,fontFamily:'monospace'}}>{lines.length} lines</span>
+              </div>
+              <button onClick={()=>setOpen(false)} style={{background:'none',border:'none',cursor:'pointer',color:'#64748b',fontSize:18,lineHeight:1,padding:'2px 6px',borderRadius:4}} onMouseEnter={e=>e.currentTarget.style.color='#f87171'} onMouseLeave={e=>e.currentTarget.style.color='#64748b'}>✕</button>
             </div>
-          )}
-          {safeLines.map((ln,i)=>(
-            <div key={i} onClick={()=>onLineClick&&onLineClick(ln)} style={{display:'flex',alignItems:'flex-start',gap:10,padding:'8px 14px',borderTop:i>0?`1px solid ${C.border}`:'none',cursor:onLineClick?'pointer':'default',transition:'background .12s'}} onMouseEnter={e=>e.currentTarget.style.background=C.tint} onMouseLeave={e=>e.currentTarget.style.background=C.white}>
-              <span style={{display:'inline-block',width:7,height:7,marginTop:6,borderRadius:'50%',background:dotColor(ln.type),flexShrink:0}}/>
-              <span style={{flex:1,fontSize:12,color:C.dark,lineHeight:1.45,wordBreak:'break-word'}}>{ln.text}</span>
-              {ln.ts&&<span style={{fontSize:10,color:C.muted,flexShrink:0,fontVariantNumeric:'tabular-nums',marginTop:2}}>{ln.ts}</span>}
+            {/* Log lines */}
+            <div ref={scrollRef} style={{flex:1,overflowY:'auto',padding:'6px 0'}}>
+              {lines.length===0&&<div style={{padding:'16px 52px',color:'#475569',fontSize:12,fontFamily:'monospace'}}>Waiting for logs…</div>}
+              {lines.map((ln,i)=>(
+                <div key={i} onClick={()=>onLineClick&&onLineClick(ln)} style={{display:'flex',padding:'2px 14px',cursor:onLineClick?'pointer':'default',transition:'background .1s',fontFamily:'monospace'}} onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.04)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                  <span style={{color:'#334155',minWidth:32,textAlign:'right',paddingRight:12,userSelect:'none',fontSize:11,flexShrink:0}}>{ln.line||i+1}</span>
+                  <span style={{color:lineColor(ln.type),flex:1,wordBreak:'break-all',fontSize:12}}>{ln.text}</span>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          </div>
+        </div>,
+        document.body
       )}
-    </div>
+    </>
   );
 };
 
@@ -961,11 +1025,11 @@ const AuthWidget=({googleAuthed,msAuthed,onSignInGoogle,onSignInMs,googleUsers,m
     <div style={{fontSize:12,fontWeight:600,color:C.dark,marginBottom:10}}>Connect your cloud accounts</div>
     <div style={{display:'flex',flexDirection:'column',gap:8}}>
       <div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:8,border:`1.5px solid ${googleAuthed?'#22c55e':C.border}`,background:googleAuthed?'#f0fdf4':'white',transition:'all .3s'}}>
-        <GoogleIcon/><div style={{flex:1}}><div style={{fontSize:12,fontWeight:600}}>Google Workspace</div><div style={{fontSize:11,color:C.muted}}>{googleAuthed?`${(googleUsers||[]).length} users loaded`:'Source — Gemini conversations'}</div></div>
+        <GoogleIcon/><div style={{flex:1}}><div style={{fontSize:12,fontWeight:600}}>Google Workspace</div><div style={{fontSize:11,color:C.muted}}>{googleAuthed?`${(googleUsers||[]).length} users loaded`:'Gemini conversations'}</div></div>
         {googleAuthed?<span style={{fontSize:11,color:'#16a34a',fontWeight:600,display:'flex',alignItems:'center',gap:4,whiteSpace:'nowrap'}}><Check s={12} c="#22c55e"/>Connected</span>:<button onClick={onSignInGoogle} disabled={googleLoading} style={{fontSize:12,padding:'6px 14px',borderRadius:6,border:`1px solid ${C.border}`,background:'white',cursor:'pointer',fontFamily:'inherit',fontWeight:500,whiteSpace:'nowrap',display:'flex',alignItems:'center',gap:6,opacity:googleLoading?.6:1}}>{googleLoading?<Spinner s={12}/>:'Sign in'}</button>}
       </div>
       <div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:8,border:`1.5px solid ${msAuthed?'#22c55e':C.border}`,background:msAuthed?'#f0fdf4':'white',transition:'all .3s'}}>
-        <MsIcon/><div style={{flex:1}}><div style={{fontSize:12,fontWeight:600}}>Microsoft 365</div><div style={{fontSize:11,color:C.muted}}>{msAuthed?`${(msUsers||[]).length} users loaded`:'Destination — Teams / OneNote'}</div></div>
+        <MsIcon/><div style={{flex:1}}><div style={{fontSize:12,fontWeight:600}}>Microsoft 365</div><div style={{fontSize:11,color:C.muted}}>{msAuthed?`${(msUsers||[]).length} users loaded`:'Teams / OneNote'}</div></div>
         {msAuthed?<span style={{fontSize:11,color:'#16a34a',fontWeight:600,display:'flex',alignItems:'center',gap:4,whiteSpace:'nowrap'}}><Check s={12} c="#22c55e"/>Connected</span>:<button onClick={onSignInMs} disabled={msLoading} style={{fontSize:12,padding:'6px 14px',borderRadius:6,border:`1px solid ${C.border}`,background:'white',cursor:'pointer',fontFamily:'inherit',fontWeight:500,whiteSpace:'nowrap',display:'flex',alignItems:'center',gap:6,opacity:msLoading?.6:1}}>{msLoading?<Spinner s={12}/>:'Sign in'}</button>}
       </div>
     </div>
@@ -1141,7 +1205,7 @@ const VisualizationPanel=({step,googleAuthed,msAuthed,uploadData,googleUsers,msU
 };
 
 /* Agent chat panel */
-const AgentChat=({msgs,typing,input,onInput,onSend,onLogLineClick,onQuickReply,widgetProps={},onShowReports})=>{
+const AgentChat=({msgs,typing,input,onInput,onSend,onLogLineClick,onQuickReply,widgetProps={},onShowReports,onClearChat})=>{
   const endRef=useRef(null);
   const [plusOpen,setPlusOpen]=useState(false);
   const plusRef=useRef(null);
@@ -1163,12 +1227,11 @@ const AgentChat=({msgs,typing,input,onInput,onSend,onLogLineClick,onQuickReply,w
             <div style={{fontSize:12,color:C.muted,maxWidth:240}}>Your AI guide for migrating Google Gemini conversations to Microsoft Copilot. Ask me anything or let me guide you through the process.</div>
           </div>
         )}
-        {msgs.map(m=>{
-          if(m.shellBlock)return<MigrationLog key={m.id} lines={m.shellBlock} onLineClick={onLogLineClick}/>;
+        {msgs.filter(m=>!m.shellBlock).map(m=>{
           if(m.role==='user')return<UserMsg key={m.id}>{m.content}</UserMsg>;
           return(
             <div key={m.id}>
-              <BotMsg quickReplies={m.quickReplies} onQuickReply={onQuickReply}>{m.content}</BotMsg>
+              <BotMsg quickReplies={m.quickReplies} onQuickReply={onQuickReply} statusCard={m.statusCard} chips={m.chips}>{m.content}</BotMsg>
               {m.widget&&<ChatWidget type={m.widget.type} widgetProps={widgetProps}/>}
             </div>
           );
@@ -1185,6 +1248,9 @@ const AgentChat=({msgs,typing,input,onInput,onSend,onLogLineClick,onQuickReply,w
               <div style={{position:'absolute',bottom:'calc(100% + 6px)',left:0,background:'white',border:`1px solid ${C.border}`,borderRadius:10,boxShadow:'0 4px 20px rgba(0,0,0,.1)',minWidth:160,zIndex:200,overflow:'hidden'}}>
                 <button onClick={()=>{setPlusOpen(false);onShowReports&&onShowReports();}} style={{width:'100%',padding:'10px 14px',border:'none',background:'white',cursor:'pointer',fontSize:12,fontFamily:'inherit',color:C.dark,display:'flex',alignItems:'center',gap:8,textAlign:'left',transition:'background .12s'}} onMouseEnter={e=>e.currentTarget.style.background=C.tint} onMouseLeave={e=>e.currentTarget.style.background='white'}>
                   <IcoReport s={13}/> View Reports
+                </button>
+                <button onClick={()=>{setPlusOpen(false);onClearChat&&onClearChat();}} style={{width:'100%',padding:'10px 14px',border:'none',background:'white',cursor:'pointer',fontSize:12,fontFamily:'inherit',color:'#ef4444',display:'flex',alignItems:'center',gap:8,textAlign:'left',transition:'background .12s'}} onMouseEnter={e=>e.currentTarget.style.background='#fff5f5'} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+                  <IcoReset s={13}/> Clear Chat
                 </button>
               </div>
             )}
@@ -1204,6 +1270,7 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
   const csvRef=useRef(null);
   const [search,setSearch]=useState('');
   const [csvUploading,setCsvUploading]=useState(false);
+  const [csvEmails,setCsvEmails]=useState(null);
 
   // Auto-map by email local-part on mount
   useEffect(()=>{
@@ -1220,10 +1287,11 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
   },[msUsers,googleUsers]);
 
   const downloadCsv=()=>{
-    const rows=msUsers.map(u=>{const e=u.mail||u.userPrincipalName||'';return`"${e}","${c2gMappings[e]||''}"`});
+    const src=csvEmails||msUsers.map(u=>(u.mail||u.userPrincipalName||'').toLowerCase());
+    const rows=src.map(e=>`"${e}","${c2gMappings[e]||''}"`);
     const csv='M365 Email,Google Email\n'+rows.join('\n');
     const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='c2g-user-mappings.csv';a.click();
-    showToast('User mapping CSV downloaded.');
+    showToast('CSV downloaded.');
   };
 
   const uploadCsv=file=>{
@@ -1231,19 +1299,43 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
     const r=new FileReader();
     r.onload=e=>{
       const lines=e.target.result.split(/\r?\n/).slice(1);
-      const m={...c2gMappings};
-      for(const l of lines){if(!l.trim())continue;const c=parseCsvLine(l);if(c.length>=2&&c[0])m[c[0]]=c[1]}
-      setC2gMappings(m);setC2gSelectedUsers(new Set(Object.keys(m)));
-      setCsvUploading(false);showToast('User mapping uploaded.');
+      const m={};const csvKeys=[];
+      for(const l of lines){
+        if(!l.trim())continue;
+        const c=parseCsvLine(l);
+        if(c.length>=2&&c[0]){
+          const src=c[0].trim().toLowerCase();
+          const dst=c[1].trim();
+          m[src]=dst;
+          csvKeys.push(src);
+        }
+      }
+      setC2gMappings(prev=>({...prev,...m}));
+      setC2gSelectedUsers(new Set(csvKeys.filter(k=>m[k])));
+      setCsvEmails(csvKeys);
+      setCsvUploading(false);showToast(`CSV uploaded — ${csvKeys.length} user(s).`);
     };
-    r.onerror=()=>setCsvUploading(false);
+    r.onerror=()=>{setCsvUploading(false);showToast('Failed to read CSV file.','error')};
     r.readAsText(file);
   };
 
-  const filtered=msUsers.filter(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();const q=search.toLowerCase();return em.includes(q)||(c2gMappings[em]||'').toLowerCase().includes(q)});
+  const clearCsv=()=>{
+    setCsvEmails(null);
+    // Restore auto-mapping from cloud users
+    const byLocal={};
+    googleUsers.forEach(u=>{const em=(u.email||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
+    const m={};
+    msUsers.forEach(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();m[em]=byLocal[em.split('@')[0]]||''});
+    setC2gMappings(m);
+    setC2gSelectedUsers(new Set(msUsers.map(u=>(u.mail||u.userPrincipalName||'').toLowerCase())));
+    showToast('CSV cleared — restored cloud auto-mapping.');
+  };
+
+  const displayUsers=csvEmails?msUsers.filter(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();return csvEmails.includes(em)}):msUsers;
+  const filtered=displayUsers.filter(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();const q=search.toLowerCase();return em.includes(q)||(c2gMappings[em]||'').toLowerCase().includes(q)}).sort((a,b)=>{const ea=(a.mail||a.userPrincipalName||'').toLowerCase(),eb=(b.mail||b.userPrincipalName||'').toLowerCase();const sa=c2gSelectedUsers.has(ea)?0:1,sb=c2gSelectedUsers.has(eb)?0:1;return sa-sb||ea.localeCompare(eb)});
   const toggleUser=e=>setC2gSelectedUsers(p=>{const n=new Set(p);n.has(e)?n.delete(e):n.add(e);return n});
-  const autoMapped=msUsers.filter(u=>!!c2gMappings[u.mail||u.userPrincipalName||'']).length;
-  const unmapped=msUsers.filter(u=>!c2gMappings[u.mail||u.userPrincipalName||'']).length;
+  const autoMapped=displayUsers.filter(u=>!!c2gMappings[u.mail||u.userPrincipalName||'']).length;
+  const unmapped=displayUsers.filter(u=>!c2gMappings[u.mail||u.userPrincipalName||'']).length;
 
   return(
     <div style={{display:'flex',flexDirection:'column',height:'100%'}} className="fade-up">
@@ -1252,28 +1344,33 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
           <div>
             <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:2}}>User Mapping</div>
             <div style={{fontSize:13,color:C.muted}}>
-              Map M365 accounts to Google emails.{' '}
+              {csvEmails?<span style={{color:C.primary,fontWeight:500}}>{csvEmails.length} users from CSV</span>
+              :<>Map M365 accounts to Google emails.{' '}
               {autoMapped>0&&<span style={{color:C.success,fontWeight:500}}>{autoMapped} auto-mapped</span>}
-              {unmapped>0&&<span style={{color:C.error}}>{autoMapped>0?' · ':''}{unmapped} need mapping</span>}
+              {unmapped>0&&<span style={{color:C.error}}>{autoMapped>0?' · ':''}{unmapped} need mapping</span>}</>}
             </div>
           </div>
-          <div style={{display:'flex',gap:6,flexShrink:0}}>
+          <div style={{display:'flex',gap:4,flexShrink:0}}>
             <input ref={csvRef} type="file" accept=".csv" style={{display:'none'}} onChange={e=>{if(e.target.files[0])uploadCsv(e.target.files[0]);e.target.value=''}}/>
-            <button onClick={()=>csvRef.current.click()} disabled={csvUploading} style={{fontSize:12,color:C.muted,background:'white',border:`1px solid ${C.border}`,borderRadius:5,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,display:'inline-flex',alignItems:'center',gap:4}}>
-              {csvUploading?<Spinner s={10}/>:<IcoUpload s={11}/>} Upload CSV
+            <button onClick={()=>csvRef.current.click()} disabled={csvUploading} title="Upload CSV" style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.border}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}} onMouseEnter={e=>e.currentTarget.style.background=C.bg} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+              {csvUploading?<Spinner s={12}/>:<IcoUpload s={13} c={C.muted}/>}
             </button>
-            <button onClick={downloadCsv} style={{fontSize:12,color:C.primary,background:'white',border:`1px solid ${C.primary}`,borderRadius:5,padding:'5px 10px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,display:'inline-flex',alignItems:'center',gap:4}}><IcoDownload s={11} c={C.primary}/> Download CSV</button>
+            <button onClick={downloadCsv} title="Download CSV" style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.primary}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}} onMouseEnter={e=>e.currentTarget.style.background=C.tint} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+              <IcoDownload s={13} c={C.primary}/>
+            </button>
+            {csvEmails&&<button onClick={clearCsv} title="Clear CSV — restore cloud mapping" style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.error}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}} onMouseEnter={e=>e.currentTarget.style.background='#FEF2F2'} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+              <IcoTrash s={13}/>
+            </button>}
           </div>
         </div>
-        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
-          <div style={{fontSize:12,color:C.muted}}><span style={{fontWeight:600,color:C.primary}}>{c2gSelectedUsers.size}</span> of {msUsers.length} selected</div>
-          <TextBtn onClick={()=>{if(c2gSelectedUsers.size===msUsers.length)setC2gSelectedUsers(new Set());else setC2gSelectedUsers(new Set(msUsers.map(u=>u.mail||u.userPrincipalName||'')))}}>{c2gSelectedUsers.size===msUsers.length?'Deselect All':'Select All'}</TextBtn>
+        <div style={{display:'flex',alignItems:'center',marginBottom:8}}>
+          <div style={{fontSize:12,color:C.muted}}><span style={{fontWeight:600,color:C.primary}}>{c2gSelectedUsers.size}</span> of {displayUsers.length} selected</div>
         </div>
         <SearchBar value={search} onChange={setSearch} placeholder="Search by email..."/>
       </div>
-      <div style={{flex:1,overflowY:'auto',minHeight:0,background:'white',border:`1px solid ${C.border}`,borderRadius:10,overflow:'hidden'}}>
+      <div style={{flex:1,overflowY:'auto',minHeight:0,background:'white',border:`1px solid ${C.border}`,borderRadius:10}}>
         <div style={{display:'grid',gridTemplateColumns:'32px 1fr 1fr',padding:'9px 14px',background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.4,position:'sticky',top:0,zIndex:1}}>
-          <div/><div>M365 Email (Source)</div><div>Google Email (Destination)</div>
+          <input type="checkbox" checked={c2gSelectedUsers.size>0&&c2gSelectedUsers.size===displayUsers.length} onChange={()=>{if(c2gSelectedUsers.size===displayUsers.length)setC2gSelectedUsers(new Set());else setC2gSelectedUsers(new Set(displayUsers.map(u=>(u.mail||u.userPrincipalName||'').toLowerCase())))}} style={{accentColor:C.primary,width:15,height:15,cursor:'pointer'}}/><div>M365 Email</div><div>Google Email</div>
         </div>
         {filtered.map((u,i)=>{
           const em=(u.mail||u.userPrincipalName||'').toLowerCase();
@@ -1300,9 +1397,63 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
 };
 
 /* ════════════════════════════════════════════ */
+/* ═══  COPILOT→GEMINI: OPTIONS STEP         ═══ */
+/* ════════════════════════════════════════════ */
+const StepC2GOptions=({c2gOptions,setC2gOptions,c2gConfig,setC2gConfig,googleAuthed,msAuthed,onRun,onBack})=>{
+  const Chk=({label,checked,onChange,hint})=>(
+    <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer',padding:'8px 0'}}>
+      <input type="checkbox" checked={checked} onChange={onChange} style={{accentColor:C.primary,width:16,height:16}}/>
+      <div><span>{label}</span>{hint&&<div style={{fontSize:11,color:C.muted,marginTop:1}}>{hint}</div>}</div>
+    </label>
+  );
+  return(
+    <div className="fade-up">
+      <div style={{marginBottom:20}}>
+        <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Migration Options</div>
+        <div style={{fontSize:13,color:C.muted}}>Configure and start the Copilot → Gemini migration.</div>
+      </div>
+
+      <Field label="Folder Name *">
+        <input type="text" value={c2gConfig.folderName||''} onChange={e=>setC2gConfig(p=>({...p,folderName:e.target.value}))} placeholder="CopilotChats" style={{width:'100%',border:`2px solid ${C.border}`,borderRadius:6,padding:'9px 12px',fontSize:13,outline:'none',transition:'border .2s',boxSizing:'border-box'}} onFocus={e=>e.target.style.borderColor=C.primary} onBlur={e=>e.target.style.borderColor=C.border}/>
+      </Field>
+
+      <Card style={{marginBottom:16}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:4,color:C.dark}}>Behavior</div>
+        <Chk label="Dry run (preview only — no files uploaded)" hint="Shows what would be migrated without uploading to Google Drive" checked={c2gOptions.dryRun} onChange={e=>setC2gOptions(p=>({...p,dryRun:e.target.checked}))}/>
+      </Card>
+
+      <Card style={{marginBottom:20}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+          <div style={{fontSize:13,fontWeight:600,color:C.dark}}>Date Range</div>
+          <span style={{fontSize:11,color:C.primaryL,fontStyle:'italic'}}>Optional — blank = migrate all data</span>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+          <Field label="From Date"><Input type="date" value={c2gOptions.fromDate||''} onChange={e=>setC2gOptions(p=>({...p,fromDate:e.target.value}))}/></Field>
+          <Field label="To Date"><Input type="date" value={c2gOptions.toDate||''} onChange={e=>setC2gOptions(p=>({...p,toDate:e.target.value}))}/></Field>
+        </div>
+        {(c2gOptions.fromDate||c2gOptions.toDate)&&<TextBtn onClick={()=>setC2gOptions(p=>({...p,fromDate:'',toDate:''}))} style={{fontSize:11,marginTop:2,color:C.muted}}>Clear date range</TextBtn>}
+      </Card>
+
+      {!c2gOptions.dryRun&&!googleAuthed&&(
+        <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 16px',background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:8,fontSize:13,color:'#991B1B',marginBottom:16}}>
+          <IcoWarn s={15}/>Live migration requires Google sign-in (Step 1 — Connect Clouds).
+        </div>
+      )}
+
+      <div style={{display:'flex',gap:10}}>
+        <Btn variant="ghost" onClick={onBack}>← Back</Btn>
+        <Btn onClick={()=>onRun()} disabled={!c2gConfig.folderName||(!c2gOptions.dryRun&&!googleAuthed)} style={{flex:1,justifyContent:'center'}}>
+          {c2gOptions.dryRun?<><IcoSearch s={14}/>Start Dry Run</>:<><IcoRocket s={14}/>Start Migration</>}
+        </Btn>
+      </div>
+    </div>
+  );
+};
+
+/* ════════════════════════════════════════════ */
 /* ═══  COPILOT→GEMINI: MIGRATE STEP        ═══ */
 /* ════════════════════════════════════════════ */
-const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c2gLive,onChangeDirection})=>{
+const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c2gLive,onChangeDirection,lastRunWasDry,onStartLive})=>{
   const ring=c2gDone?100:(c2gStats.users>0?Math.min(Math.round((c2gStats.files/(c2gStats.users*2))*100),99):c2gLive?5:0);
   return(
     <div className="fade-up">
@@ -1344,21 +1495,22 @@ const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c
         <>
           <div style={{marginBottom:20,textAlign:'center'}}>
             <div style={{display:'flex',justifyContent:'center',marginBottom:8,color:C.success}}><IcoDone s={48}/></div>
-            <div style={{fontSize:18,fontWeight:700,color:C.dark,marginBottom:4}}>Migration Complete!</div>
-            <div style={{fontSize:13,color:C.muted}}>Copilot conversations have been uploaded to Google Drive.</div>
+            <div style={{fontSize:18,fontWeight:700,color:C.dark,marginBottom:4}}>{lastRunWasDry?'Dry Run Complete!':'Migration Complete!'}</div>
+            <div style={{fontSize:13,color:C.muted}}>{lastRunWasDry?'Preview finished — no files were uploaded.':'Copilot conversations have been uploaded to Google Drive.'}</div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:20}}>
-            {[{label:'Users Processed',val:c2gStats.users,c:'#0129AC'},{label:'Files Uploaded',val:c2gStats.files,c:'#20CC83'},{label:'Errors',val:c2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
+            {[{label:'Users Processed',val:c2gStats.users,c:'#0129AC'},{label:lastRunWasDry?'Files (preview)':'Files Uploaded',val:c2gStats.files,c:'#20CC83'},{label:'Errors',val:c2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
               <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
                 <div style={{fontSize:22,fontWeight:700,color:e.c}}>{e.val}</div>
                 <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
               </div>
             ))}
           </div>
-          <div style={{display:'flex',gap:10}}>
-            <Btn variant="ghost" onClick={onBack} style={{flex:1,justifyContent:'center'}}>← Map Again</Btn>
-            <Btn onClick={()=>onRunAnother&&onRunAnother()} style={{flex:1,justifyContent:'center'}}>Start Another</Btn>
-            {onChangeDirection&&<Btn variant="ghost" onClick={onChangeDirection} style={{flex:1,justifyContent:'center'}}>⇄ Change Direction</Btn>}
+          <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+            {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{flex:'1 1 140px',justifyContent:'center'}}><IcoRocket s={14}/> Start Live Migration</Btn>}
+            <Btn variant="ghost" onClick={onBack} style={{flex:'1 1 100px',justifyContent:'center'}}>← Options</Btn>
+            <Btn variant="ghost" onClick={()=>onRunAnother&&onRunAnother()} style={{flex:'1 1 120px',justifyContent:'center'}}>New Migration</Btn>
+            {onChangeDirection&&<Btn variant="ghost" onClick={onChangeDirection} style={{flex:'1 1 120px',justifyContent:'center'}}>⇄ Change Direction</Btn>}
           </div>
         </>
       )}
@@ -1468,6 +1620,8 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
                     <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,flexWrap:'wrap'}}>
                       <span style={{fontSize:13,fontWeight:600,color:C.dark}}>{r.customerName||'Migration'}</span>
                       <span style={{fontSize:11,padding:'2px 8px',borderRadius:20,fontWeight:600,background:ss.bg,color:ss.color}}>{ss.label}</span>
+                      {r.direction==='c2g'&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#EFF6FF',color:'#1D4ED8',fontWeight:600}}>C2G</span>}
+                      {!r.direction&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#F0FDF4',color:'#166534',fontWeight:600}}>G2C</span>}
                     </div>
                     <div style={{fontSize:12,color:C.muted,display:'flex',gap:12}}>
                       <span>{fmtDate(r.startTime)}</span>
@@ -1489,9 +1643,10 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
                       const donePages=live?liveStats.pages:(isRunningBatch?r.progressPages:r.migratedConversations);
                       const doneErrors=live?liveStats.errors:(isRunningBatch?r.progressErrors:r.totalErrors);
                       const totalUsers=r.totalUsers||0;
+                      const filesLabel=r.direction==='c2g'?'Files':'Pages';
                       return[
                         ['Users',isRunningBatch?`${doneUsers??0}/${totalUsers}`:doneUsers,false],
-                        ['Pages',donePages,false],
+                        [filesLabel,donePages,false],
                         ['Errors',doneErrors,doneErrors>0]
                       ].map(([lbl,val,isErr],j)=>(
                         <div key={j} style={{textAlign:'center'}}>
@@ -1507,12 +1662,21 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
                 {/* Per-user detail expand */}
                 {isExp&&(
                   <div style={{marginTop:12,border:`1px solid ${C.border}`,borderRadius:6,overflow:'hidden'}}>
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 80px 60px 60px',padding:'6px 12px',background:C.bg,fontSize:10,fontWeight:700,color:C.muted,textTransform:'uppercase',letterSpacing:.4}}>
-                      <div>User</div><div style={{textAlign:'center'}}>Status</div><div style={{textAlign:'center'}}>Pages</div><div style={{textAlign:'center'}}>Errors</div>
+                    <div style={{display:'grid',gridTemplateColumns:r.direction==='c2g'?'1fr 1fr 70px 50px 50px':'1fr 80px 60px 60px',padding:'6px 12px',background:C.bg,fontSize:10,fontWeight:700,color:C.muted,textTransform:'uppercase',letterSpacing:.4}}>
+                      {r.direction==='c2g'?<><div>Source</div><div>Destination</div><div style={{textAlign:'center'}}>Status</div><div style={{textAlign:'center'}}>Files</div><div style={{textAlign:'center'}}>Errors</div></>
+                      :<><div>User</div><div style={{textAlign:'center'}}>Status</div><div style={{textAlign:'center'}}>Pages</div><div style={{textAlign:'center'}}>Errors</div></>}
                     </div>
                     {!details&&<div style={{padding:'12px',textAlign:'center',fontSize:12,color:C.muted}}><Spinner s={14}/></div>}
                     {details&&details.map((u,k)=>(
-                      <div key={k} style={{display:'grid',gridTemplateColumns:'1fr 80px 60px 60px',alignItems:'center',padding:'7px 12px',borderTop:`1px solid ${C.bg}`,background:'white'}}>
+                      r.direction==='c2g'?
+                      <div key={k} style={{display:'grid',gridTemplateColumns:'1fr 1fr 70px 50px 50px',alignItems:'center',padding:'7px 12px',borderTop:`1px solid ${C.bg}`,background:'white'}}>
+                        <div style={{fontSize:11,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:C.dark}}>{u.email}</div>
+                        <div style={{fontSize:11,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:C.muted}}>{u.destEmail||''}</div>
+                        <div style={{textAlign:'center'}}><span style={{fontSize:10,padding:'2px 6px',borderRadius:20,fontWeight:600,background:u.status==='success'?'#dcfce7':u.status==='partial'?'#fef3c7':'#fee2e2',color:u.status==='success'?'#166534':u.status==='partial'?'#92400e':'#991b1b'}}>{u.status}</span></div>
+                        <div style={{textAlign:'center',fontSize:13,fontWeight:600,color:C.primary}}>{u.pages_created}</div>
+                        <div style={{textAlign:'center',fontSize:13,fontWeight:600,color:u.error_count>0?C.error:C.muted}}>{u.error_count}</div>
+                      </div>
+                      :<div key={k} style={{display:'grid',gridTemplateColumns:'1fr 80px 60px 60px',alignItems:'center',padding:'7px 12px',borderTop:`1px solid ${C.bg}`,background:'white'}}>
                         <div style={{fontSize:12,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:C.dark}}>{u.email}</div>
                         <div style={{textAlign:'center'}}><span style={{fontSize:10,padding:'2px 6px',borderRadius:20,fontWeight:600,background:u.status==='success'?'#dcfce7':u.status==='partial'?'#fef3c7':'#fee2e2',color:u.status==='success'?'#166534':u.status==='partial'?'#92400e':'#991b1b'}}>{u.status}</span></div>
                         <div style={{textAlign:'center',fontSize:13,fontWeight:600,color:C.primary}}>{u.pages_created}</div>
@@ -1540,7 +1704,7 @@ function App(){
 
   const [step,setStep]=useState(()=>lsGet(K.step,0));
   const [uploadData,setUploadData]=useState(()=>lsGet(K.uploadData,null));
-  const [config,setConfig]=useState(()=>{const s=lsGet(K.config,{});return{filePath:s.filePath||s.fileName||s.customerName||'',tenantId:s.tenantId||'807d6772-847c-40e2-9bec-e2c930b3a42e'}});
+  const [config,setConfig]=useState(()=>{const s=lsGet(K.config,{});return{filePath:s.filePath||s.fileName||s.customerName||'GeminiChats',tenantId:s.tenantId||'807d6772-847c-40e2-9bec-e2c930b3a42e'}});
   const [mappings,setMappings]=useState(()=>lsGet(K.mappings,{}));
   const [selectedUsers,setSelectedUsers]=useState(()=>{const s=lsGet(K.selUsers,null);return s?new Set(s):new Set()});
   const [options,setOptions]=useState({dryRun:true,skipFollowups:false,skipAiResponse:false,fromDate:'',toDate:''});
@@ -1568,12 +1732,7 @@ function App(){
   const sseRef=useRef(null);
   const [splitPct,setSplitPct]=useState(50);
   const [panelSwapped,setPanelSwapped]=useState(false);
-  // Drop stale shellBlock entries from previous sessions (they'd render as
-  // empty/ghost activity bars). Active runs build a fresh shellBlock anyway.
-  const [agentMsgs,setAgentMsgs]=useState(()=>{
-    const stored=lsGet(K.agentMsgs,[]);
-    return Array.isArray(stored)?stored.filter(m=>!m.shellBlock):[];
-  });
+  const [agentMsgs,setAgentMsgs]=useState(()=>lsGet(K.agentMsgs,[]));
   const [agentTyping,setAgentTyping]=useState(false);
   const [agentInput,setAgentInput]=useState('');
   const [leftMode,setLeftMode]=useState('viz'); // 'viz' | 'mapping'
@@ -1583,13 +1742,14 @@ function App(){
   const [c2gStats,setC2gStats]=useState({users:0,files:0,errors:0});
   const [c2gDone,setC2gDone]=useState(false);
   const [c2gLive,setC2gLive]=useState(false);
+  const [c2gOptions,setC2gOptions]=useState({dryRun:true,fromDate:'',toDate:''});
+  const [c2gConfig,setC2gConfig]=useState({folderName:'CopilotChats'});
+  const [c2gLastDry,setC2gLastDry]=useState(false);
   const [chatGLoading,setChatGLoading]=useState(false);
   const [chatMLoading,setChatMLoading]=useState(false);
   const [chatUploading,setChatUploading]=useState(false);
   const containerRef=useRef(null);
   const dividerRef=useRef(null);
-  const g2cShellMsgIdRef=useRef(null);
-  const c2gShellMsgIdRef=useRef(null);
   const panelDragRef=useRef(null);
   const greetedRef=useRef(false);
   const sendToAgentRef=useRef(null);
@@ -1610,10 +1770,8 @@ function App(){
     document.addEventListener('mousemove',onMove);document.addEventListener('mouseup',onUp);
   },[]);
 
-  // Load app config (reset button visibility etc.)
-  useEffect(()=>{
-    fetch('/api/app-config').then(r=>r.ok?r.json():null).then(cfg=>{if(cfg?.showReset)setShowReset(true);}).catch(()=>{});
-  },[]);
+  // Load app config (reset button, feature flags)
+  useEffect(()=>{fetch('/api/app-config').then(r=>r.ok?r.json():null).then(cfg=>{if(cfg?.showReset)setShowReset(true);}).catch(()=>{});},[]);
 
   // Auth check on mount — verify app session, hydrate state from DB (cross-device), check cloud auth
   useEffect(()=>{
@@ -1679,7 +1837,7 @@ function App(){
   useEffect(()=>{lsSet(KRef.current.stats,stats)},[stats]);
   useEffect(()=>{lsSet(KRef.current.batchId,currentBatchId)},[currentBatchId]);
   useEffect(()=>{lsSet(KRef.current.lastDry,lastRunWasDry)},[lastRunWasDry]);
-  useEffect(()=>{lsSet(KRef.current.agentMsgs,agentMsgs.filter(m=>!m.shellBlock).slice(-100))},[agentMsgs]);
+  useEffect(()=>{lsSet(KRef.current.agentMsgs,agentMsgs.slice(-100))},[agentMsgs]);
   useEffect(()=>{lsSet(KRef.current.migDir,migDir)},[migDir]);
   useEffect(()=>{lsSet(KRef.current.c2gMappings,c2gMappings)},[c2gMappings]);
   useEffect(()=>{lsSet(KRef.current.c2gSelUsers,[...c2gSelectedUsers])},[c2gSelectedUsers]);
@@ -1706,22 +1864,29 @@ function App(){
     if(prevStepRef.current===step)return;
     prevStepRef.current=step;
     const gc=[
-      'The user is now on the Connect Clouds step. Tell them to connect Google Workspace and Microsoft 365 — both required. Be brief.',
-      'The user is choosing a migration direction. Briefly explain the two options: Gemini→Copilot (Google to Microsoft) and Copilot→Gemini (Microsoft to Google). Ask which they want.',
-      'The user moved to Import Data. Tell them they can upload a Vault ZIP or export from Google Workspace directly.',
-      'The user is on User Mapping. Email accounts were auto-mapped by username match. They can review and fix unmapped users.',
-      'The user is on Migration Options. Ask if they want a dry run first (recommended) or go straight to live migration.',
+      null,
+      null,
+      uploadData
+        ? `Vault loaded — **${uploadData.total_users} users** ready. Want me to auto-map by email match, or would you prefer to set mappings manually?`
+        : `Ready to import. Upload a **Vault ZIP** or pull directly from Google Drive — which works better for you?`,
+      Object.keys(mappings).length>0
+        ? `**${Object.keys(mappings).length} user${Object.keys(mappings).length!==1?'s':''} mapped**. Head to Options to configure a dry run or live migration.`
+        : `Time to map users. I can auto-match by email — want me to explain what this step does?`,
+      options?.dryRun
+        ? `Dry run mode is on — no data will be changed. Ready to preview the migration?`
+        : `Options set. Starting with a **dry run** is recommended to catch issues before going live. Want to do that?`,
       null,null
     ];
     const c2g=[
-      'The user is now on the Connect Clouds step. Tell them to connect both accounts.',
-      null,
-      'The user is on User Mapping (Copilot→Gemini direction). M365 users on the left will be mapped to Google accounts. Auto-mapping runs by email match.',
+      null,null,
+      `Map each Microsoft 365 user to their Google destination. I can suggest matches — just ask.`,
+      `Set your migration options. A **dry run** first is a good idea to preview what will be migrated.`,
       null,null
     ];
     const triggers=migDir==='copilot-gemini'?c2g:gc;
-    if(triggers[step])sendToAgent(triggers[step],true);
-  },[step,wsLoaded]);
+    const msg=triggers[step];
+    if(msg)sendToAgent(msg,true);
+  },[step,wsLoaded,migDir,uploadData,mappings,options]);
 
   // Google auth → agent
   const prevGoogleRef=useRef(null);
@@ -1730,7 +1895,7 @@ function App(){
     if(prevGoogleRef.current===null){prevGoogleRef.current=googleAuthed;return;}
     if(prevGoogleRef.current===googleAuthed)return;
     prevGoogleRef.current=googleAuthed;
-    if(googleAuthed)sendToAgent(`Google Workspace was just connected (${googleUsers.length} users loaded). Briefly acknowledge and remind them to connect Microsoft 365 next.`,true);
+    if(googleAuthed)sendToAgent(`Google Workspace connected — **${googleUsers.length} users** found. Connect Microsoft 365 next to continue.`,true);
   },[googleAuthed,wsLoaded]);
 
   // Microsoft auth → agent
@@ -1740,8 +1905,8 @@ function App(){
     if(prevMsRef.current===null){prevMsRef.current=msAuthed;return;}
     if(prevMsRef.current===msAuthed)return;
     prevMsRef.current=msAuthed;
-    if(msAuthed&&googleAuthed)sendToAgent('Microsoft 365 was just connected. Both clouds are now connected. Tell the user to proceed to Import Data.',true);
-    else if(msAuthed)sendToAgent('Microsoft 365 was just connected. Remind the user they still need to connect Google Workspace.',true);
+    if(msAuthed&&googleAuthed)sendToAgent('Both clouds are connected. What migration direction should we use — Gemini to Copilot, or Copilot to Gemini?',true);
+    else if(msAuthed)sendToAgent('Microsoft 365 connected. Still need to connect **Google Workspace** to continue.',true);
   },[msAuthed,wsLoaded]);
 
   // Data loaded → agent
@@ -1752,7 +1917,7 @@ function App(){
     if(prevUploadRef.current===null){prevUploadRef.current=id;return;}
     if(prevUploadRef.current===id)return;
     prevUploadRef.current=id;
-    if(uploadData)sendToAgent(`Vault data was just loaded: ${uploadData.total_users} users, ${uploadData.total_conversations||'unknown'} conversations. Briefly acknowledge and tell them to review user mappings next.`,true);
+    if(uploadData)sendToAgent(`Data loaded: **${uploadData.total_users} users**, ${uploadData.total_conversations||'?'} conversations. Want me to auto-map users by email, or review them manually?`,true);
   },[uploadData,wsLoaded]);
 
   // Recover migration state after page refresh / laptop shutdown
@@ -1800,12 +1965,10 @@ function App(){
     if(forceLive)setOptions(p=>({...p,dryRun:false}));
     setStep(5);setMigDone(false);setStats({users:0,pages:0,errors:0,flagged:0});setLogs([]);
     addLog('info',isDry?'Starting dry run...':'Starting live migration...');
-    const shellId=Date.now()+Math.random();
-    g2cShellMsgIdRef.current=shellId;
-    addAgentMsg('bot',isDry?'🔍 Dry run started! Logs streaming below — no changes will be made.':'🚀 Live migration started! Logs streaming below.');
-    setAgentMsgs(prev=>[...prev,{id:shellId,role:'bot',content:'',shellBlock:[]}]);
+    addAgentMsg('bot',isDry?'Dry run started — no changes will be made. I\'ll let you know what happens.':'Migration started! I\'ll check in as we go.');
     setLive(true);
     const curStats={users:0,pages:0,errors:0,flagged:0};
+    const gcMilestones={firstUser:false,firstError:false};
 
     if(sseRef.current)sseRef.current.close();
     sseRef.current=new EventSource('/api/migration-log');
@@ -1817,17 +1980,27 @@ function App(){
         if(d.type==='info'&&d.message.includes('Processing:'))curStats.users++;
         if(d.type==='warn'&&d.message.includes('flagged')){const m=d.message.match(/(\d+) conversations flagged/);if(m)curStats.flagged+=parseInt(m[1])}
         setStats({...curStats});addLog(d.type,d.message);
-        const ln={type:d.type,text:d.message,ts:new Date().toTimeString().slice(0,8)};
-        setAgentMsgs(prev=>prev.map(m=>m.id===g2cShellMsgIdRef.current?{...m,shellBlock:[...m.shellBlock,{...ln,line:m.shellBlock.length+1}]}:m));
+        // Proactive milestone messages
+        if(d.type==='info'&&d.message.includes('Processing:')&&!gcMilestones.firstUser){
+          gcMilestones.firstUser=true;
+          setTimeout(()=>addAgentMsg('bot','First user being processed — migration is underway.'),200);
+        }
+        if((d.type==='error'||d.type==='warn')&&!gcMilestones.firstError){
+          gcMilestones.firstError=true;
+          setTimeout(()=>addAgentMsg('bot','Hit an issue with one item — migration continues with the rest. I\'ll summarize at the end.'),200);
+        }
         if(d.type==='done'){
           if(d.batch_id)setCurrentBatchId(d.batch_id);
           sseRef.current.close();setLive(false);setMigDone(true);setRetrying(false);setStep(6);
           setReportRefreshKey(p=>p+1);
-          // Agent completion summary
           const s={...curStats};
-          setTimeout(()=>setAgentMsgs(prev=>[...prev,{id:Date.now(),role:'bot',
-            content:`✅ Migration complete!\n\n📊 **${s.users}** users  ·  **${s.pages}** pages created  ·  **${s.errors}** error${s.errors!==1?'s':''}${s.errors>0?'\n\nSome items failed — I recommend retrying.':'\n\nAll items migrated successfully!'}`,
-            quickReplies:s.errors>0?['Retry Failed','Download Report','Start Another']:['Download Report','Start Another']}]),600);
+          setTimeout(()=>addAgentMsg('bot',
+            s.errors>0
+              ? `Migration finished with **${s.errors} error${s.errors!==1?'s':''}**. The items below failed — retry to recover them.`
+              : `All done! **${s.pages} pages** migrated across **${s.users} user${s.users!==1?'s':''}**. Everything looks clean.`,
+            {statusCard:{users:s.users,files:s.pages,errors:s.errors},
+             quickReplies:s.errors>0?['Retry Failed','Download Report','Start Another']:['Download Report','Start Another']}
+          ),600);
         }
       }catch{}
     };
@@ -1835,19 +2008,11 @@ function App(){
 
     const fm={};const keys=selectedUsers.size>0?[...selectedUsers]:Object.keys(mappings);
     keys.forEach(k=>{if(mappings[k]!==undefined)fm[k]=mappings[k]});
-    const payload={extract_path:uploadData.extract_path,tenant_id:config.tenantId,customer_name:config.filePath||'Gemini',user_mappings:fm,dry_run:isDry,skip_followups:false,skip_ai_response:options.skipAiResponse,from_date:options.fromDate||null,to_date:options.toDate||null,upload_id:uploadData.id};
+    const payload={extract_path:uploadData.extract_path,tenant_id:config.tenantId,customer_name:config.filePath||'Gemini',user_mappings:fm,dry_run:isDry,skip_followups:false,skip_ai_response:true,from_date:options.fromDate||null,to_date:options.toDate||null,upload_id:uploadData.id};
     try{
       const res=await fetch('/api/migrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-      if(!res.ok){
-        let apiErr='';try{apiErr=(await res.json()).error||'';}catch{}
-        const msg=res.status===401?'Session expired — please refresh the page and log in again.':(apiErr||`Migration failed (HTTP ${res.status})`);
-        addLog('error',msg);addAgentMsg('bot',`❌ ${msg}`);setLive(false);
-        if(sseRef.current){sseRef.current.close();sseRef.current=null;}
-      }
-    }catch(err){
-      addLog('error',err.message);addAgentMsg('bot',`❌ ${err.message}`);setLive(false);
-      if(sseRef.current){sseRef.current.close();sseRef.current=null;}
-    }
+      if(!res.ok){const d=await res.json();addLog('error',d.error);setLive(false)}
+    }catch(err){addLog('error',err.message);setLive(false)}
   };
 
   // Run Another Batch: two modes
@@ -1891,17 +2056,18 @@ function App(){
 // Logout: destroy session only — DO NOT clear localStorage so user returns to their last state
   const handleLogout=async()=>{await fetch('/api/logout',{method:'POST'});window.location.href='/login.html'};
 
-  // Reset: clear ALL migration state for current user + reload
+  // Reset: clear all migration state for current user and reload
   const handleReset=useCallback(()=>{
-    if(!window.confirm('Reset all migration data? This clears mappings, logs, upload data, and migration state for this session.'))return;
-    lsClear(appUser?._id);
-    window.location.reload();
+    if(!window.confirm('Reset all migration data? This clears mappings, logs, upload data, and migration state.'))return;
+    lsClear(appUser?._id);window.location.reload();
   },[appUser]);
 
   /* Copilot→Gemini migration */
-  const runC2GMigration=useCallback(async()=>{
+  const runC2GMigration=useCallback(async(forceLive=false)=>{
     if(c2gLive)return;
-    // Build pairs BEFORE changing live state — avoids React 18 batch cancel
+    const isDry=forceLive===true?false:c2gOptions.dryRun;
+    if(forceLive)setC2gOptions(p=>({...p,dryRun:false}));
+    setC2gLastDry(isDry);
     const keys=c2gSelectedUsers.size>0?[...c2gSelectedUsers]:Object.keys(c2gMappings);
     const pairs=[];
     keys.forEach(em=>{if(c2gMappings[em])pairs.push({sourceEmail:em,destEmail:c2gMappings[em]})});
@@ -1909,53 +2075,62 @@ function App(){
       addAgentMsg('bot','⚠️ No user mappings found. Go back to the mapping step and fill in the Google destination emails for each M365 user.');
       return;
     }
-    setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gLive(true);setStep(3);setLogs([]);
-    addLog('info','Starting Copilot → Gemini migration...');
-    addAgentMsg('bot','🚀 Copilot → Gemini migration started! Logs streaming below.');
-    const c2gShellId=Date.now()+Math.random();
-    c2gShellMsgIdRef.current=c2gShellId;
-    setAgentMsgs(prev=>[...prev,{id:c2gShellId,role:'bot',content:'',shellBlock:[]}]);
+    setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gLive(true);setStep(4);setLogs([]);
+    addLog('info',isDry?'Starting dry run...':'Starting Copilot → Gemini migration...');
+    addAgentMsg('bot',isDry?'Dry run started — no files will be uploaded. I\'ll show you what would be migrated.':'Copilot → Gemini migration started! I\'ll check in as we go.');
     const curStats={users:0,files:0,errors:0};
+    const c2gMilestones={firstUser:false,firstError:false};
     if(sseRef.current)sseRef.current.close();
-    // Open SSE FIRST then POST — prevents race where fast migration emits logs before browser connects
     sseRef.current=new EventSource('/api/c2g/migrate-log');
-    await new Promise(resolve=>{const t=setTimeout(resolve,600);sseRef.current.addEventListener('open',()=>{clearTimeout(t);resolve();},{once:true});});
     sseRef.current.onmessage=e=>{
       try{
         const d=JSON.parse(e.data);
         if(d.type==='success')curStats.files++;
-        if(d.type==='error'||d.type==='warn')curStats.errors++;
+        if(d.type==='error')curStats.errors++;
         if(d.type==='info'&&d.message?.includes('Processing:'))curStats.users++;
         setC2gStats({...curStats});addLog(d.type,d.message||'');
-        const ln={type:d.type,text:d.message||'',ts:new Date().toTimeString().slice(0,8)};
-        setAgentMsgs(prev=>prev.map(m=>m.id===c2gShellMsgIdRef.current?{...m,shellBlock:[...m.shellBlock,{...ln,line:m.shellBlock.length+1}]}:m));
-        if(d.type==='done'){
-          let reason='ok';
-          try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;if(p.reason)reason=p.reason;}catch{}
-          setC2gStats({...curStats});
-          if(sseRef.current){sseRef.current.close();sseRef.current=null;}
-          setC2gLive(false);setC2gDone(true);setStep(4);
-          const summary=reason==='ok'
-            ?`✅ Copilot → Gemini complete!\n\n**${curStats.files}** files uploaded  ·  **${curStats.errors}** error${curStats.errors!==1?'s':''}`
-            :`⚠️ Migration ended early (${reason}).\n\n**${curStats.files}** files uploaded  ·  **${curStats.errors}** error${curStats.errors!==1?'s':''}`;
-          setTimeout(()=>addAgentMsg('bot',summary,{quickReplies:['Start Another']}),400);
+        // Proactive milestone messages
+        if(d.type==='info'&&d.message?.includes('Processing:')&&!c2gMilestones.firstUser){
+          c2gMilestones.firstUser=true;
+          setTimeout(()=>addAgentMsg('bot','First user being processed — migration is underway.'),200);
         }
-      }catch{}
+        if((d.type==='error'||d.type==='warn')&&!c2gMilestones.firstError){
+          c2gMilestones.firstError=true;
+          setTimeout(()=>addAgentMsg('bot','Hit an issue with one item — migration continues. I\'ll summarize errors at the end.'),200);
+        }
+        if(d.type==='done'){
+          try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;}catch{}
+          setC2gStats({...curStats});
+          sseRef.current.close();setC2gLive(false);setC2gDone(true);setStep(5);
+          setReportRefreshKey(p=>p+1);
+          const s2={...curStats};
+          const nextSteps=isDry?'':'\n\nNext steps (each migrated user should do this):\n1. Login to Google Gemini (gemini.google.com)\n2. Create a new Gem\n3. Upload the migrated DOCX file(s) from Google Drive as Knowledge\n4. Set instructions: "Use this file as knowledge and give responses from this document. If the user asks something not in the document, answer generally."\n5. Save the Gem';
+          setTimeout(()=>addAgentMsg('bot',
+            s2.errors>0
+              ? `Migration finished with **${s2.errors} error${s2.errors!==1?'s':''}**. Check below and retry if needed.`
+              : isDry
+                ? `Dry run complete — **${s2.files} file${s2.files!==1?'s':''}** would be uploaded for **${s2.users} user${s2.users!==1?'s':''}**. Ready to go live?`
+                : `All done! **${s2.files} file${s2.files!==1?'s':''}** uploaded to Google Drive across **${s2.users} user${s2.users!==1?'s':''}**.${nextSteps}`,
+            {statusCard:{users:s2.users,files:s2.files,errors:s2.errors,label:isDry?'Dry Run Preview':'Migration Results'},
+             quickReplies:isDry?['Start Live Migration','Start Another']:s2.errors>0?['Download Report','Start Another']:['Download Report','Start Another']}
+          ),400);
+        }
+      }catch(parseErr){console.error('C2G SSE parse error',parseErr,e.data)}
     };
-    sseRef.current.onerror=()=>{if(sseRef.current){sseRef.current.close();sseRef.current=null;setC2gLive(false);}};
+    sseRef.current.onerror=(ev)=>{
+      console.error('C2G SSE error',ev);
+      if(sseRef.current){sseRef.current.close();setC2gLive(false);}
+      addLog('error','Lost connection to migration log stream.');
+    };
+    // Wait for SSE connection to establish before triggering migration
+    const sseReady=new Promise(resolve=>{sseRef.current.onopen=()=>resolve();setTimeout(resolve,1000)});
+    await sseReady;
     try{
-      const res=await fetch('/api/c2g/migrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pairs})});
-      if(!res.ok){
-        let apiErr='';try{apiErr=(await res.json()).error||'';}catch{}
-        const msg=res.status===401?'Session expired — please refresh the page and log in again.':(apiErr||`Migration failed (HTTP ${res.status})`);
-        addLog('error',msg);addAgentMsg('bot',`❌ ${msg}`);setC2gLive(false);
-        if(sseRef.current){sseRef.current.close();sseRef.current=null;}
-      }
-    }catch(err){
-      addLog('error',err.message);addAgentMsg('bot',`❌ ${err.message}`);setC2gLive(false);
-      if(sseRef.current){sseRef.current.close();sseRef.current=null;}
-    }
-  },[c2gLive,c2gSelectedUsers,c2gMappings,addLog,addAgentMsg]);
+      const payload={pairs,folderName:c2gConfig.folderName||'CopilotChats',dryRun:isDry,fromDate:c2gOptions.fromDate||null,toDate:c2gOptions.toDate||null};
+      const res=await fetch('/api/c2g/migrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      if(!res.ok){const d=await res.json().catch(()=>({}));addLog('error',d.error||`Migration failed (${res.status})`);addAgentMsg('bot',`Migration request failed: ${d.error||res.statusText}`);setC2gLive(false);}
+    }catch(err){addLog('error',err.message);addAgentMsg('bot',`Migration request error: ${err.message}`);setC2gLive(false);}
+  },[c2gLive,c2gSelectedUsers,c2gMappings,c2gOptions,c2gConfig,addLog,addAgentMsg]);
 
   const handleChangeDirection=useCallback(()=>{
     setMigDir(null);setStep(1);
@@ -1993,12 +2168,16 @@ function App(){
   const sendToAgent=useCallback(async(overrideMsg,isSystem=false)=>{
     const userMsg=overrideMsg||agentInput.trim();
     if(!userMsg)return;
-    if(!isSystem){setAgentInput('');addAgentMsg('user',userMsg);}
+    if(!isSystem){
+      if(/^clear( chat)?$/i.test(userMsg.trim())){setAgentInput('');setAgentMsgs([]);return;}
+      setAgentInput('');addAgentMsg('user',userMsg);
+    }
     setAgentTyping(true);
     try{
       const history=agentMsgs.filter(m=>!m.shellBlock).map(m=>({role:m.role==='bot'?'assistant':'user',content:m.content})).slice(-12);
       const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({message:userMsg,history,isSystemTrigger:isSystem,
+          migrationLogs:logs.slice(-100).map(l=>`[${l.ts}][${l.type}] ${l.message}`),
           migrationState:{step,migDir,live,migDone,stats,lastRunWasDry,currentBatchId,
             uploadData:uploadData?{id:uploadData.id,total_users:uploadData.total_users,total_conversations:uploadData.total_conversations}:null,
             googleAuthed,msAuthed,
@@ -2006,7 +2185,7 @@ function App(){
             selected_users_count:selectedUsers.size,
             options:{dryRun:options.dryRun,hasFilePath:!!config.filePath}}})});
       const data=await res.json();
-      if(data.reply)addAgentMsg('bot',data.reply,{quickReplies:data.quickReplies,...(data.widget&&{widget:data.widget})});
+      if(data.reply)addAgentMsg('bot',data.reply,{quickReplies:data.quickReplies,...(data.widget&&{widget:data.widget}),...(data.statusCard&&{statusCard:data.statusCard}),...(data.chips&&{chips:data.chips})});
       // Execute real actions returned by agent tools
       if(data.navigate!=null)setStep(data.navigate);
       if(data.action==='start_migration_dry'){setOptions(p=>({...p,dryRun:true}));setTimeout(()=>runMigration(false),200);}
@@ -2016,7 +2195,7 @@ function App(){
       else if(data.action==='show_mapping')setLeftMode('mapping');
     }catch{addAgentMsg('bot',"Sorry, I couldn't connect right now. Please try again.");}
     setAgentTyping(false);
-  },[agentInput,agentMsgs,step,live,migDone,stats,lastRunWasDry,currentBatchId,uploadData,googleAuthed,msAuthed,mappings,selectedUsers,options,config,addAgentMsg]);
+  },[agentInput,agentMsgs,logs,step,live,migDone,stats,lastRunWasDry,currentBatchId,uploadData,googleAuthed,msAuthed,mappings,selectedUsers,options,config,addAgentMsg]);
 
   const handleLogLineClick=useCallback(line=>{
     sendToAgent(`Explain this log line: "${line.text}"`);
@@ -2095,7 +2274,7 @@ function App(){
     if(!wsLoaded||greetedRef.current)return;
     greetedRef.current=true;
     if(agentMsgs.length===0){
-      sendToAgentRef.current('The user just opened the CloudFuze migration tool for the first time this session. Welcome them warmly. Explain that this tool migrates conversations between Google Workspace and Microsoft 365 in both directions. Tell them to start by connecting both accounts, then choose their migration direction. Keep it under 3 sentences.',true);
+      sendToAgentRef.current('The user just opened CloudFuze GEM. Greet them briefly — this tool migrates conversations between Google Workspace and Microsoft 365. Tell them to connect both accounts to get started. 2 sentences max.',true);
     }
   },[wsLoaded]);
 
@@ -2103,9 +2282,9 @@ function App(){
     <div style={{display:'flex',flexDirection:'column',height:'100vh',fontFamily:'Poppins,system-ui,sans-serif'}}>
       {/* Header */}
       <div style={{background:C.primary,height:52,display:'flex',alignItems:'center',padding:'0 24px',gap:12,flexShrink:0,boxShadow:'0 2px 8px rgba(1,41,172,.2)'}}>
-        <img src="/assets/logo.png" alt="CloudFuze" style={{height:32,objectFit:'contain'}}/>
+        <img src="/assets/logo.png" alt="CloudFuze" style={{height:32,objectFit:'contain',cursor:'pointer'}} onClick={()=>window.location.reload()}/>
         <div style={{width:1,height:24,background:'rgba(255,255,255,.25)',margin:'0 4px'}}/>
-        <div style={{color:'white',fontSize:15,fontWeight:700,letterSpacing:.2}}>CloudFuze</div>
+        <div style={{color:'white',fontSize:15,fontWeight:700,letterSpacing:.2,cursor:'pointer'}} onClick={()=>window.location.reload()}>CloudFuze</div>
         <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:10}}>
           <div style={{display:'flex',alignItems:'center',gap:6}}>
             <div className={live?'pulse-dot':''} style={{width:8,height:8,borderRadius:'50%',background:live?'#4ade80':'rgba(255,255,255,.3)',transition:'background .3s'}}/>
@@ -2114,12 +2293,12 @@ function App(){
           {appUser&&<div style={{display:'flex',alignItems:'center',gap:8,borderLeft:'1px solid rgba(255,255,255,.2)',paddingLeft:10}}>
             <div style={{width:26,height:26,borderRadius:'50%',background:'rgba(255,255,255,.2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:700,color:'white'}}>{(appUser.name||appUser.email).slice(0,2).toUpperCase()}</div>
             <span style={{fontSize:11,color:'rgba(255,255,255,.8)',maxWidth:100,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{appUser.name||appUser.email}</span>
-            {showReset&&<button onClick={handleReset} title="Reset all migration data" style={{display:'flex',alignItems:'center',gap:4,fontSize:11,color:'rgba(255,180,180,.9)',background:'transparent',border:'1px solid rgba(255,100,100,.3)',borderRadius:5,padding:'4px 8px',cursor:'pointer',fontFamily:'inherit',transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.background='rgba(255,0,0,.15)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-              <IcoReset s={11}/> Reset
-            </button>}
             <button onClick={handleLogout} title="Sign out" style={{display:'flex',alignItems:'center',gap:4,fontSize:11,color:'rgba(255,255,255,.6)',background:'transparent',border:'1px solid rgba(255,255,255,.2)',borderRadius:5,padding:'4px 8px',cursor:'pointer',fontFamily:'inherit',transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.1)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
               <IcoLogout s={11}/> Sign out
             </button>
+            {showReset&&<button onClick={handleReset} title="Reset all migration data" style={{display:'flex',alignItems:'center',gap:4,fontSize:11,color:'rgba(255,180,180,.9)',background:'transparent',border:'1px solid rgba(255,100,100,.3)',borderRadius:5,padding:'4px 8px',cursor:'pointer',fontFamily:'inherit',transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.background='rgba(255,0,0,.15)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+              <IcoReset s={11}/> Reset
+            </button>}
           </div>}
         </div>
       </div>
@@ -2133,16 +2312,16 @@ function App(){
             <div style={{padding:'10px 16px',borderBottom:`1px solid ${C.border}`,background:'white',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
               <div style={{display:'flex',alignItems:'center',gap:10}}>
                 <div onMouseDown={e=>handlePanelGripMouseDown(side,e)} style={{cursor:'grab',color:C.muted,display:'flex',padding:'3px 4px',borderRadius:4,userSelect:'none',transition:'color .15s',flexShrink:0}} title="Drag to swap panels" onMouseEnter={e=>e.currentTarget.style.color=C.primary} onMouseLeave={e=>e.currentTarget.style.color=C.muted}><IcoGrip s={14}/></div>
-                <div style={{width:30,height:30,borderRadius:8,background:`linear-gradient(135deg,${C.primary},${C.primaryL})`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                <div onClick={()=>setStep(0)} style={{width:30,height:30,borderRadius:8,background:`linear-gradient(135deg,${C.primary},${C.primaryL})`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,cursor:'pointer'}}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><path d="M12 2a4 4 0 014 4v2H8V6a4 4 0 014-4z"/><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5" fill="white"/><circle cx="15" cy="14" r="1.5" fill="white"/></svg>
                 </div>
-                <div>
+                <div onClick={()=>setStep(0)} style={{cursor:'pointer'}}>
                   <div style={{fontSize:13,fontWeight:600,lineHeight:1.2,color:C.dark}}>CloudFuze Migration</div>
                 </div>
               </div>
               <div style={{display:'flex',alignItems:'center',gap:6}}>
-                {migDone&&currentBatchId&&<span style={{fontSize:9,color:C.primaryL,flexShrink:0,background:C.tint,padding:'2px 6px',borderRadius:4}}>#{currentBatchId.slice(-6)}</span>}
-                {migDir&&<button onClick={handleChangeDirection} style={{fontSize:10,color:C.muted,background:'none',border:`1px solid ${C.border}`,borderRadius:4,padding:'2px 8px',cursor:'pointer',fontFamily:'inherit',flexShrink:0}} onMouseEnter={e=>{e.currentTarget.style.color=C.primary;e.currentTarget.style.borderColor=C.primary}} onMouseLeave={e=>{e.currentTarget.style.color=C.muted;e.currentTarget.style.borderColor=C.border}}>⇄ Change</button>}
+                {/* batchId saved in backend — hidden from UI */}
+{/* change direction available from completion screen */}
               </div>
             </div>
             {/* Step content */}
@@ -2150,9 +2329,11 @@ function App(){
               const isMapStep=(step===3&&migDir==='gemini-copilot')||(step===2&&migDir==='copilot-gemini');
               return(
                 <div style={{flex:1,overflowY:isMapStep?'hidden':'auto',padding:'16px 20px',display:isMapStep?'flex':'block',flexDirection:isMapStep?'column':undefined,minHeight:0}}>
-                  {/* Step 0: Connect — always shown */}
+                  {/* Fallback: if step > 1 but no direction chosen, show connect */}
+                  {step>1&&!migDir&&<Step0 googleAuthed={googleAuthed} setGoogleAuthed={setGoogleAuthed} msAuthed={msAuthed} setMsAuthed={setMsAuthed} googleUsers={googleUsers} setGoogleUsers={setGoogleUsers} msUsers={msUsers} setMsUsers={setMsUsers} tenantId={config.tenantId} onComplete={()=>setStep(1)}/>}
+                  {/* Step 0: Connect */}
                   {step===0&&<Step0 googleAuthed={googleAuthed} setGoogleAuthed={setGoogleAuthed} msAuthed={msAuthed} setMsAuthed={setMsAuthed} googleUsers={googleUsers} setGoogleUsers={setGoogleUsers} msUsers={msUsers} setMsUsers={setMsUsers} tenantId={config.tenantId} onComplete={()=>setStep(1)}/>}
-                  {/* Step 1: Direction picker — always shown */}
+                  {/* Step 1: Direction picker */}
                   {step===1&&<StepDirection onSelect={dir=>{setMigDir(dir);setStep(2);}} onBack={()=>setStep(0)}/>}
                   {/* Gemini → Copilot steps */}
                   {step===2&&migDir==='gemini-copilot'&&<Step1 googleUsers={googleUsers} googleAuthed={googleAuthed} onComplete={handleImportComplete} onBack={()=>setStep(1)} showToast={showToast} uploadData={uploadData}/>}
@@ -2161,7 +2342,8 @@ function App(){
                   {(step===5||step===6)&&migDir==='gemini-copilot'&&<StepMigrate stats={stats} done={migDone} lastRunWasDry={lastRunWasDry} batchId={currentBatchId} onStartLive={()=>runMigration(true)} onRunAnother={runAnotherBatch} onRetry={retryFailed} retrying={retrying} hasUploadData={!!uploadData} onGoToConnect={handleGoToConnect} onRetryWithPath={handleRetryWithPath} onChangeDirection={handleChangeDirection} totalExpected={(()=>{if(!uploadData?.users)return 0;const sel=selectedUsers.size>0?[...selectedUsers]:Object.keys(mappings);const emails=sel.length>0?new Set(sel):new Set(uploadData.users.map(u=>u.email));return uploadData.users.filter(u=>emails.has(u.email)).reduce((s,u)=>s+(u.conversation_count||0),0)})()}/>}
                   {/* Copilot → Gemini steps */}
                   {step===2&&migDir==='copilot-gemini'&&<StepC2GMap msUsers={msUsers} googleUsers={googleUsers} c2gMappings={c2gMappings} setC2gMappings={setC2gMappings} c2gSelectedUsers={c2gSelectedUsers} setC2gSelectedUsers={setC2gSelectedUsers} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast}/>}
-                  {(step===3||step===4)&&migDir==='copilot-gemini'&&<StepC2GMigrate c2gStats={c2gStats} c2gDone={c2gDone} c2gBatchId={null} onRunAnother={()=>{setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setStep(2);}} onBack={()=>setStep(2)} onStart={runC2GMigration} c2gLive={c2gLive} onChangeDirection={handleChangeDirection}/>}
+                  {step===3&&migDir==='copilot-gemini'&&<StepC2GOptions c2gOptions={c2gOptions} setC2gOptions={setC2gOptions} c2gConfig={c2gConfig} setC2gConfig={setC2gConfig} googleAuthed={googleAuthed} msAuthed={msAuthed} onRun={runC2GMigration} onBack={()=>setStep(2)}/>}
+                  {(step===4||step===5)&&migDir==='copilot-gemini'&&<StepC2GMigrate c2gStats={c2gStats} c2gDone={c2gDone} c2gBatchId={null} onRunAnother={()=>{setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(3)} onStart={runC2GMigration} c2gLive={c2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={c2gLastDry} onStartLive={()=>runC2GMigration(true)}/>}
                 </div>
               );
             })()}
@@ -2173,10 +2355,10 @@ function App(){
             <div style={{padding:'10px 16px',borderBottom:`1px solid ${C.border}`,background:'white',display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
               <div style={{display:'flex',alignItems:'center',gap:8}}>
                 <div onMouseDown={e=>handlePanelGripMouseDown(side,e)} style={{cursor:'grab',color:C.muted,display:'flex',padding:'3px 4px',borderRadius:4,userSelect:'none',transition:'color .15s'}} title="Drag to swap panels" onMouseEnter={e=>e.currentTarget.style.color=C.primary} onMouseLeave={e=>e.currentTarget.style.color=C.muted}><IcoGrip s={14}/></div>
-                <div style={{width:30,height:30,borderRadius:8,background:`linear-gradient(135deg,${C.primary},${C.primaryL})`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+                <div onClick={()=>setStep(0)} style={{width:30,height:30,borderRadius:8,background:`linear-gradient(135deg,${C.primary},${C.primaryL})`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,cursor:'pointer'}}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><path d="M12 2a4 4 0 014 4v2H8V6a4 4 0 014-4z"/><rect x="4" y="8" width="16" height="12" rx="2"/><circle cx="9" cy="14" r="1.5" fill="white"/><circle cx="15" cy="14" r="1.5" fill="white"/></svg>
                 </div>
-                <div>
+                <div onClick={()=>setStep(0)} style={{cursor:'pointer'}}>
                   <div style={{fontSize:13,fontWeight:600,lineHeight:1.2,color:C.dark}}>Migration Agent</div>
                   {migDir&&<div style={{display:'flex',alignItems:'center',gap:4,marginTop:1}}>
                     {migDir==='gemini-copilot'?<><GoogleIcon/><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg><MsIcon/><span style={{fontSize:10,color:C.muted,marginLeft:2}}>Google → Microsoft</span></>
@@ -2189,7 +2371,7 @@ function App(){
                 <span style={{fontSize:12,color:live?'#16a34a':C.muted,fontWeight:500}}>{live?'Migrating':'Ready'}</span>
               </div>
             </div>
-            <AgentChat msgs={agentMsgs} typing={agentTyping} input={agentInput} onInput={setAgentInput} onSend={()=>sendToAgent()} onLogLineClick={handleLogLineClick} onQuickReply={handleAgentQuickReply} widgetProps={widgetProps} onShowReports={()=>setShowReports(true)}/>
+            <AgentChat msgs={agentMsgs} typing={agentTyping} input={agentInput} onInput={setAgentInput} onSend={()=>sendToAgent()} onLogLineClick={handleLogLineClick} onQuickReply={handleAgentQuickReply} widgetProps={widgetProps} onShowReports={()=>setShowReports(true)} onClearChat={()=>setAgentMsgs([])}/>
           </div>
         );
         return(

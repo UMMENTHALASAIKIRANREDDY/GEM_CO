@@ -19,12 +19,21 @@ import {
   getServiceAccountAuth,
   createDriveFolder,
   uploadFileToDrive,
-  shareDriveItem,
 } from "../googleService.js";
 import { getCopilotInteractionsForUser } from "../copilotService.js";
 import { createSourceGraphClient } from "../copilotService.js";
 
 // ── Download a binary file from a URL (Graph or public) ──────────────
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 async function downloadBinary(url, accessToken) {
   const headers = { Accept: "*/*" };
@@ -36,16 +45,18 @@ async function downloadBinary(url, accessToken) {
     headers.Authorization = `Bearer ${accessToken}`;
   }
   try {
-    const res = await fetch(url, { headers });
+    const res = await fetchWithTimeout(url, { headers });
     if (!res.ok) {
       if (needsAuth && accessToken) {
         const graphUrl = convertToGraphDownloadUrl(url);
         if (graphUrl && graphUrl !== url) {
-          const retry = await fetch(graphUrl, { headers: { Accept: "*/*", Authorization: `Bearer ${accessToken}` } });
-          if (retry.ok) {
-            const buf = Buffer.from(await retry.arrayBuffer());
-            return buf.length > 0 ? buf : null;
-          }
+          try {
+            const retry = await fetchWithTimeout(graphUrl, { headers: { Accept: "*/*", Authorization: `Bearer ${accessToken}` } });
+            if (retry.ok) {
+              const buf = Buffer.from(await retry.arrayBuffer());
+              return buf.length > 0 ? buf : null;
+            }
+          } catch { /* timeout or network error on retry */ }
         }
       }
       return null;
@@ -623,7 +634,7 @@ export async function migrateUserPair({
   sourceUserId,
   sourceDisplayName,
   destUserEmail,
-}) {
+}, opts = {}) {
   const result = {
     sourceUserId,
     sourceDisplayName: sourceDisplayName || sourceUserId,
@@ -658,12 +669,26 @@ export async function migrateUserPair({
 
     console.log(`[Migration] Got ${interactions.length} interactions for ${sourceDisplayName}`);
 
+    // Date filtering
+    if (opts.fromDate || opts.toDate) {
+      const from = opts.fromDate ? new Date(opts.fromDate) : null;
+      const to = opts.toDate ? new Date(opts.toDate + 'T23:59:59Z') : null;
+      const before = interactions.length;
+      interactions = interactions.filter(i => {
+        const d = new Date(i.createdDateTime);
+        if (from && d < from) return false;
+        if (to && d > to) return false;
+        return true;
+      });
+      if (interactions.length !== before) console.log(`[Migration] Date filter: ${before} → ${interactions.length} interactions`);
+    }
+
     if (interactions.length > 0) {
       const appClasses = [...new Set(interactions.map((i) => i.appClass))];
       console.log(`[Migration] App classes found: ${appClasses.join(", ")}`);
     }
 
-    const folderName = "CopilotChats";
+    const folderName = opts.folderName || "CopilotChats";
 
     const sessions = groupBySession(interactions);
     result.conversationsCount = sessions.size;
@@ -673,13 +698,10 @@ export async function migrateUserPair({
       return result;
     }
 
-    const auth = getServiceAccountAuth();
+    const auth = getServiceAccountAuth(destUserEmail);
     const mainFolder = await createDriveFolder(auth, folderName);
-    // Share the top-level folder with the destination user so they can access all files
-    try { await shareDriveItem(auth, mainFolder.id, destUserEmail); } catch (shareErr) {
-      console.warn(`[Migration] Could not share folder with ${destUserEmail}: ${shareErr.message}`);
-    }
 
+    console.log(`[C2G] Processing ${sessions.size} conversation(s) for ${sourceDisplayName}...`);
     let convIdx = 0;
     for (const [, items] of sessions) {
       convIdx++;
@@ -689,7 +711,9 @@ export async function migrateUserPair({
           ? new Date(items[0].createdDateTime).toISOString().slice(0, 10)
           : "unknown";
 
+        console.log(`[C2G] Conv ${convIdx}/${sessions.size}: downloading assets...`);
         const { downloadedImages, filesToUpload } = await downloadConversationAssets(items, accessToken, sourceUserId);
+        console.log(`[C2G] Conv ${convIdx}: ${filesToUpload.length} file(s) to upload, ${downloadedImages.size} image(s)`);
 
         let convFolder = mainFolder;
         if (filesToUpload.length > 0) {
@@ -733,10 +757,13 @@ export async function migrateUserPair({
           driveFileId: docxFile.id,
           webViewLink: docxFile.webViewLink,
         });
+        console.log(`[C2G] Conv ${convIdx}/${sessions.size}: uploaded DOCX + ${filesToUpload.length} files`);
       } catch (err) {
+        console.error(`[C2G] Conv ${convIdx} error: ${err.message}`);
         result.errors.push(`Conversation ${convIdx}: ${err.message || String(err)}`);
       }
     }
+    console.log(`[C2G] Done for ${sourceDisplayName}: ${result.filesUploaded} files uploaded, ${result.errors.length} errors`);
   } catch (err) {
     result.errors.push(err.message || String(err));
   }
@@ -744,10 +771,10 @@ export async function migrateUserPair({
   return result;
 }
 
-export async function runMigration(pairs) {
+export async function runMigration(pairs, opts = {}) {
   const results = [];
   for (const pair of pairs) {
-    const r = await migrateUserPair(pair);
+    const r = await migrateUserPair(pair, opts);
     results.push(r);
   }
   return results;

@@ -1,8 +1,7 @@
 /**
  * Google Workspace helpers:
  *  - List users via Admin SDK (Directory API)
- *  - Create folders / upload files to Drive via Service Account (no delegation needed)
- *  - Share Drive items with destination users
+ *  - Create folders / upload files to a user's Drive via Service Account impersonation
  */
 
 import fs from "node:fs";
@@ -40,7 +39,7 @@ export async function listGoogleUsers(accessToken) {
   return users;
 }
 
-// ── Service Account auth (no domain-wide delegation required) ────────
+// ── Service Account auth (domain-wide delegation) ────────────────────
 
 function getServiceAccountKeyPath() {
   return (
@@ -49,17 +48,17 @@ function getServiceAccountKeyPath() {
   );
 }
 
-export function getServiceAccountAuth() {
+export function getServiceAccountAuth(userEmail) {
   const keyPath = getServiceAccountKeyPath();
   if (!fs.existsSync(keyPath)) {
     throw new Error(
       `Service account key file not found at ${keyPath}. Set GOOGLE_SERVICE_ACCOUNT_KEY_FILE in .env.`
     );
   }
-  // No subject — service account acts as itself, no delegation needed
   const auth = new GoogleAuth({
     keyFile: keyPath,
     scopes: ["https://www.googleapis.com/auth/drive"],
+    clientOptions: { subject: userEmail },
   });
   return auth;
 }
@@ -103,18 +102,4 @@ export async function uploadFileToDrive(
     fields: "id, name, webViewLink",
   });
   return res.data;
-}
-
-// Share a Drive file/folder with a user (writer permission)
-export async function shareDriveItem(auth, fileId, email) {
-  const drive = google.drive({ version: "v3", auth });
-  await drive.permissions.create({
-    fileId,
-    sendNotificationEmail: false,
-    requestBody: {
-      role: "writer",
-      type: "user",
-      emailAddress: email,
-    },
-  });
 }
