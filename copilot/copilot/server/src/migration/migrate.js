@@ -19,6 +19,7 @@ import {
   getServiceAccountAuth,
   createDriveFolder,
   uploadFileToDrive,
+  shareDriveItem,
 } from "../googleService.js";
 import { getCopilotInteractionsForUser } from "../copilotService.js";
 import { createSourceGraphClient } from "../copilotService.js";
@@ -672,8 +673,12 @@ export async function migrateUserPair({
       return result;
     }
 
-    const auth = getServiceAccountAuth(destUserEmail);
+    const auth = getServiceAccountAuth();
     const mainFolder = await createDriveFolder(auth, folderName);
+    // Share the top-level folder with the destination user so they can access all files
+    try { await shareDriveItem(auth, mainFolder.id, destUserEmail); } catch (shareErr) {
+      console.warn(`[Migration] Could not share folder with ${destUserEmail}: ${shareErr.message}`);
+    }
 
     let convIdx = 0;
     for (const [, items] of sessions) {
