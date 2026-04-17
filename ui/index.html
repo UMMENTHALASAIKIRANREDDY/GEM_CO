@@ -551,7 +551,7 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
 
       <div style={{flex:1,overflowY:'auto',minHeight:0,background:'white',border:`1px solid ${C.border}`,borderRadius:10}}>
         <div style={{display:'grid',gridTemplateColumns:'32px 1fr 1fr 60px',padding:'9px 14px',background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.4,position:'sticky',top:0,zIndex:1}}>
-          <input type="checkbox" checked={filtered.length>0&&filtered.every(u=>selectedUsers.has(u.email))} onChange={()=>{const allEmails=filtered.map(u=>u.email);const allSelected=allEmails.every(e=>selectedUsers.has(e));setSelectedUsers(p=>{const n=new Set(p);if(allSelected)allEmails.forEach(e=>n.delete(e));else allEmails.forEach(e=>n.add(e));return n})}} style={{accentColor:C.primary,width:15,height:15,cursor:'pointer'}}/><div>Google Email</div><div>M365 Email</div><div style={{textAlign:'right'}}>Chats</div>
+          <input type="checkbox" checked={selectedUsers.size>0&&selectedUsers.size===users.length} onChange={()=>{if(selectedUsers.size===users.length)setSelectedUsers(new Set());else setSelectedUsers(new Set(users.map(u=>u.email)))}} style={{accentColor:C.primary,width:15,height:15,cursor:'pointer'}}/><div>Google Email</div><div>M365 Email</div><div style={{textAlign:'right'}}>Chats</div>
         </div>
         {filtered.map((u,i)=>{
           const mapped=!!(mappings[u.email]);
@@ -1291,7 +1291,7 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
       </div>
       <div style={{flex:1,overflowY:'auto',minHeight:0,background:'white',border:`1px solid ${C.border}`,borderRadius:10}}>
         <div style={{display:'grid',gridTemplateColumns:'32px 1fr 1fr',padding:'9px 14px',background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.4,position:'sticky',top:0,zIndex:1}}>
-          <input type="checkbox" checked={filtered.length>0&&filtered.every(u=>c2gSelectedUsers.has((u.mail||u.userPrincipalName||'').toLowerCase()))} onChange={()=>{const all=filtered.map(u=>(u.mail||u.userPrincipalName||'').toLowerCase());const allSelected=all.every(e=>c2gSelectedUsers.has(e));setC2gSelectedUsers(p=>{const n=new Set(p);if(allSelected)all.forEach(e=>n.delete(e));else all.forEach(e=>n.add(e));return n})}} style={{accentColor:C.primary,width:15,height:15,cursor:'pointer'}}/><div>M365 Email</div><div>Google Email</div>
+          <input type="checkbox" checked={c2gSelectedUsers.size>0&&c2gSelectedUsers.size===displayUsers.length} onChange={()=>{if(c2gSelectedUsers.size===displayUsers.length)setC2gSelectedUsers(new Set());else setC2gSelectedUsers(new Set(displayUsers.map(u=>(u.mail||u.userPrincipalName||'').toLowerCase())))}} style={{accentColor:C.primary,width:15,height:15,cursor:'pointer'}}/><div>M365 Email</div><div>Google Email</div>
         </div>
         {filtered.map((u,i)=>{
           const em=(u.mail||u.userPrincipalName||'').toLowerCase();
