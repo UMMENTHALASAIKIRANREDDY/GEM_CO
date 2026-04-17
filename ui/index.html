@@ -1187,7 +1187,7 @@ const AgentChat=({msgs,typing,input,onInput,onSend,onLogLineClick,onQuickReply,w
           </div>
         )}
         {msgs.map(m=>{
-          if(m.shellBlock)return<ShellBlock key={m.id} lines={m.shellBlock} onLineClick={onLogLineClick}/>;
+          if(m.shellBlock)return null;
           if(m.role==='user')return<UserMsg key={m.id}>{m.content}</UserMsg>;
           return(
             <div key={m.id}>
@@ -1676,7 +1676,6 @@ function App(){
   const [chatUploading,setChatUploading]=useState(false);
   const containerRef=useRef(null);
   const dividerRef=useRef(null);
-  const logBufferRef=useRef([]);
   const panelDragRef=useRef(null);
   const greetedRef=useRef(false);
   const sendToAgentRef=useRef(null);
@@ -1885,7 +1884,6 @@ function App(){
     if(forceLive)setOptions(p=>({...p,dryRun:false}));
     setStep(5);setMigDone(false);setStats({users:0,pages:0,errors:0,flagged:0});setLogs([]);
     addLog('info',isDry?'Starting dry run...':'Starting live migration...');
-    logBufferRef.current=[];
     addAgentMsg('bot',isDry?'🔍 Dry run started! Logs will stream below — no changes will be made to your data.':'🚀 Live migration started! I\'ll monitor progress and stream logs here.');
     setLive(true);
     const curStats={users:0,pages:0,errors:0,flagged:0};
@@ -1900,12 +1898,6 @@ function App(){
         if(d.type==='info'&&d.message.includes('Processing:'))curStats.users++;
         if(d.type==='warn'&&d.message.includes('flagged')){const m=d.message.match(/(\d+) conversations flagged/);if(m)curStats.flagged+=parseInt(m[1])}
         setStats({...curStats});addLog(d.type,d.message);
-        // Buffer logs → flush as collapsible shell block in agent chat every 10 lines or on phase boundary
-        logBufferRef.current.push({type:d.type,text:d.message,ts:new Date().toTimeString().slice(0,8),line:logBufferRef.current.length+1});
-        if(logBufferRef.current.length>=20||(d.type==='done'||d.type==='error')){
-          const lines=[...logBufferRef.current];logBufferRef.current=[];
-          if(lines.length>0)setAgentMsgs(prev=>[...prev,{id:Date.now()+Math.random(),role:'bot',content:'',shellBlock:lines}]);
-        }
         if(d.type==='done'){
           if(d.batch_id)setCurrentBatchId(d.batch_id);
           sseRef.current.close();setLive(false);setMigDone(true);setRetrying(false);setStep(6);
@@ -2072,6 +2064,7 @@ function App(){
       const history=agentMsgs.filter(m=>!m.shellBlock).map(m=>({role:m.role==='bot'?'assistant':'user',content:m.content})).slice(-12);
       const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({message:userMsg,history,isSystemTrigger:isSystem,
+          migrationLogs:logs.slice(-100).map(l=>`[${l.ts}][${l.type}] ${l.message}`),
           migrationState:{step,migDir,live,migDone,stats,lastRunWasDry,currentBatchId,
             uploadData:uploadData?{id:uploadData.id,total_users:uploadData.total_users,total_conversations:uploadData.total_conversations}:null,
             googleAuthed,msAuthed,
@@ -2089,7 +2082,7 @@ function App(){
       else if(data.action==='show_mapping')setLeftMode('mapping');
     }catch{addAgentMsg('bot',"Sorry, I couldn't connect right now. Please try again.");}
     setAgentTyping(false);
-  },[agentInput,agentMsgs,step,live,migDone,stats,lastRunWasDry,currentBatchId,uploadData,googleAuthed,msAuthed,mappings,selectedUsers,options,config,addAgentMsg]);
+  },[agentInput,agentMsgs,logs,step,live,migDone,stats,lastRunWasDry,currentBatchId,uploadData,googleAuthed,msAuthed,mappings,selectedUsers,options,config,addAgentMsg]);
 
   const handleLogLineClick=useCallback(line=>{
     sendToAgent(`Explain this log line: "${line.text}"`);

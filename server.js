@@ -1707,36 +1707,39 @@ async function callAI(messages, tools) {
 }
 
 app.post('/api/chat', requireAuth, async (req, res) => {
-  const { message, history = [], migrationState = {}, isSystemTrigger = false } = req.body;
+  const { message, history = [], migrationState = {}, migrationLogs = [], isSystemTrigger = false } = req.body;
   if (!message) return res.status(400).json({ error: 'message required' });
 
   const {
-    step = 0, live = false, migDone = false, stats = {}, lastRunWasDry = false,
+    step = 0, migDir = null, live = false, migDone = false, stats = {}, lastRunWasDry = false,
     uploadData = null, googleAuthed = false, msAuthed = false,
     mappings_count = 0, selected_users_count = 0, options = {}
   } = migrationState;
 
-  const systemPrompt = `You are the Migration Agent for CloudFuze GEM — a Google Gemini to Microsoft Copilot migration tool.
+  const logsSection = migrationLogs.length > 0
+    ? `\nRecent migration log (last ${migrationLogs.length} entries):\n${migrationLogs.join('\n')}\n`
+    : '';
+
+  const systemPrompt = `You are the Migration Agent for CloudFuze GEM — a tool that migrates conversations between Google Workspace and Microsoft 365 in both directions.
 
 Current migration state:
+- Direction: ${migDir === 'gemini-copilot' ? 'Google Gemini → Microsoft Copilot' : migDir === 'copilot-gemini' ? 'Microsoft Copilot → Google Drive' : 'not selected'}
 - Step: ${step} — ${STEP_NAMES[step] || 'Unknown'}
 - Google Workspace connected: ${googleAuthed}
 - Microsoft 365 connected: ${msAuthed}
 - Vault data loaded: ${uploadData ? `yes (${uploadData.total_users} users, ${uploadData.total_conversations || '?'} conversations)` : 'no'}
 - User mappings configured: ${mappings_count} (${selected_users_count} selected)
-- File path set: ${options.hasFilePath ? 'yes' : 'no'}
 - Dry run mode: ${options.dryRun ? 'yes' : 'no'}
 - Migration running: ${live}
 - Migration done: ${migDone}
 - Last run was dry run: ${lastRunWasDry}
-- Stats: ${stats.users || 0} users, ${stats.pages || 0} pages created, ${stats.errors || 0} errors, ${stats.flagged || 0} flagged
+- Stats: ${stats.users || 0} users, ${stats.pages || 0} pages/files migrated, ${stats.errors || 0} errors, ${stats.flagged || 0} flagged
+${logsSection}
+When the user asks about migration progress, errors, results, or what happened — answer using the log entries above. Summarise clearly: how many users processed, files migrated, any errors and what they mean.
+You work alongside the left panel which shows the current migration step's UI. You CAN take real actions: navigate to steps, start migration, retry failures, show reports.
+Guide the user proactively. Be concise — 2-4 sentences max unless explaining an error.
 
-You work alongside the left panel which shows the current migration step's UI (Connect Clouds, Import Data, Map Users, Options, Migration). You are synced — when you navigate to a step, the left panel updates automatically.
-You CAN take real actions: navigate to steps, start migration, retry failures, show reports, show user mapping.
-Use tools when the user wants to DO something (navigate, start migration, etc.). Answer questions directly without tools.
-Guide the user proactively: acknowledge what they just did, tell them what to do next, offer action quick replies. Be like a helpful co-pilot — the left panel is the "what to fill in", you are the "guide telling them what to do and why".
-
-IMPORTANT: Use plain text only in replies. No markdown asterisks, no bold syntax, no bullet symbols. Use line breaks for structure. Keep replies concise — 2-4 sentences max unless explaining something complex.`;
+IMPORTANT: Use plain text only. No markdown asterisks, no bold syntax, no bullet symbols. Use line breaks for structure.`;
 
   const messages = [
     { role: 'system', content: systemPrompt },
@@ -1785,7 +1788,8 @@ IMPORTANT: Use plain text only in replies. No markdown asterisks, no bold syntax
               break;
             }
             case 'get_migration_status': {
-              result = `Step ${step} (${STEP_NAMES[step]}). Running: ${live}. Done: ${migDone}. Users: ${stats.users || 0}, Pages: ${stats.pages || 0}, Errors: ${stats.errors || 0}.`;
+              const logSummary = migrationLogs.length > 0 ? ` Recent logs: ${migrationLogs.slice(-20).join(' | ')}` : '';
+              result = `Step ${step} (${STEP_NAMES[step]}). Direction: ${migDir||'none'}. Running: ${live}. Done: ${migDone}. Users: ${stats.users || 0}, Pages/Files: ${stats.pages || 0}, Errors: ${stats.errors || 0}.${logSummary}`;
               break;
             }
             case 'explain_log': {
