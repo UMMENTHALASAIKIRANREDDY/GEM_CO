@@ -1448,8 +1448,8 @@ const StepC2GOptions=({c2gOptions,setC2gOptions,c2gConfig,setC2gConfig,googleAut
 /* ════════════════════════════════════════════ */
 /* ═══  COPILOT→GEMINI: MIGRATE STEP        ═══ */
 /* ════════════════════════════════════════════ */
-const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c2gLive,onChangeDirection,lastRunWasDry,onStartLive})=>{
-  const ring=c2gDone?100:(c2gStats.users>0?Math.min(Math.round((c2gStats.files/(c2gStats.users*2))*100),99):c2gLive?5:0);
+const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c2gLive,onChangeDirection,lastRunWasDry,onStartLive,c2gTotal})=>{
+  const ring=c2gDone?100:c2gTotal>0?Math.min(Math.round((c2gStats.users/c2gTotal)*100),99):c2gLive?5:0;
   return(
     <div className="fade-up">
       {!c2gDone&&!c2gLive&&(
@@ -1735,6 +1735,7 @@ function App(){
   const [c2gMappings,setC2gMappings]=useState(()=>lsGet(K.c2gMappings,{}));
   const [c2gSelectedUsers,setC2gSelectedUsers]=useState(()=>{const s=lsGet(K.c2gSelUsers,null);return s?new Set(s):new Set()});
   const [c2gStats,setC2gStats]=useState({users:0,files:0,errors:0});
+  const [c2gTotal,setC2gTotal]=useState(0);
   const [c2gDone,setC2gDone]=useState(false);
   const [c2gLive,setC2gLive]=useState(false);
   const [c2gOptions,setC2gOptions]=useState({dryRun:true,fromDate:'',toDate:''});
@@ -2070,7 +2071,7 @@ function App(){
       addAgentMsg('bot','⚠️ No user mappings found. Go back to the mapping step and fill in the Google destination emails for each M365 user.');
       return;
     }
-    setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gLive(true);setStep(4);setLogs([]);
+    setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gTotal(0);setC2gLive(true);setStep(4);setLogs([]);
     addLog('info',isDry?'Starting dry run...':'Starting Copilot → Gemini migration...');
     addAgentMsg('bot',isDry?'Dry run started — no files will be uploaded. I\'ll show you what would be migrated.':'Copilot → Gemini migration started! I\'ll check in as we go.');
     const curStats={users:0,files:0,errors:0};
@@ -2083,6 +2084,8 @@ function App(){
         if(d.type==='success')curStats.files++;
         if(d.type==='error')curStats.errors++;
         if(d.type==='info'&&d.message?.includes('Processing:'))curStats.users++;
+        if(d.type==='total'){try{const p=JSON.parse(d.message);if(p.total)setC2gTotal(p.total);}catch{}}
+        if(d.type==='progress'){try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;if(p.total)setC2gTotal(p.total);}catch{}}
         setC2gStats({...curStats});addLog(d.type,d.message||'');
         // Proactive milestone messages
         if(d.type==='info'&&d.message?.includes('Processing:')&&!c2gMilestones.firstUser){
@@ -2132,7 +2135,7 @@ function App(){
     setUploadData(null);setMappings({});setSelectedUsers(new Set());setMigDone(false);
     setStats({users:0,pages:0,errors:0,flagged:0});setCurrentBatchId(null);setLogs([]);
     setRetryMode(false);setLastRunWasDry(false);
-    setC2gMappings({});setC2gSelectedUsers(new Set());setC2gDone(false);setC2gStats({users:0,files:0,errors:0});
+    setC2gMappings({});setC2gSelectedUsers(new Set());setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gTotal(0);
     if(sseRef.current){sseRef.current.close();sseRef.current=null;}
     setLive(false);setC2gLive(false);
   },[]);
@@ -2338,7 +2341,7 @@ function App(){
                   {/* Copilot → Gemini steps */}
                   {step===2&&migDir==='copilot-gemini'&&<StepC2GMap msUsers={msUsers} googleUsers={googleUsers} c2gMappings={c2gMappings} setC2gMappings={setC2gMappings} c2gSelectedUsers={c2gSelectedUsers} setC2gSelectedUsers={setC2gSelectedUsers} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast}/>}
                   {step===3&&migDir==='copilot-gemini'&&<StepC2GOptions c2gOptions={c2gOptions} setC2gOptions={setC2gOptions} c2gConfig={c2gConfig} setC2gConfig={setC2gConfig} googleAuthed={googleAuthed} msAuthed={msAuthed} onRun={runC2GMigration} onBack={()=>setStep(2)}/>}
-                  {(step===4||step===5)&&migDir==='copilot-gemini'&&<StepC2GMigrate c2gStats={c2gStats} c2gDone={c2gDone} c2gBatchId={null} onRunAnother={()=>{setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(3)} onStart={runC2GMigration} c2gLive={c2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={c2gLastDry} onStartLive={()=>runC2GMigration(true)}/>}
+                  {(step===4||step===5)&&migDir==='copilot-gemini'&&<StepC2GMigrate c2gStats={c2gStats} c2gDone={c2gDone} c2gBatchId={null} onRunAnother={()=>{setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(3)} onStart={runC2GMigration} c2gLive={c2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={c2gLastDry} onStartLive={()=>runC2GMigration(true)} c2gTotal={c2gTotal}/>}
                 </div>
               );
             })()}

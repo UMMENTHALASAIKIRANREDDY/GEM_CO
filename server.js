@@ -1072,15 +1072,24 @@ app.post('/api/c2g/migrate', requireAuth, async (req, res) => {
         const migOpts = { folderName: c2gFolderName };
         if (fromDate) migOpts.fromDate = fromDate;
         if (toDate) migOpts.toDate = toDate;
-        const results = await runC2G(migPairs, migOpts);
-
-        // Build per-user report (same schema as G2C)
+        const { migrateUserPair } = migModule;
+        const results = [];
         const reportUsers = [];
-        for (const r of results) {
-          c2gLog('info', `Processing: ${r.sourceDisplayName} → ${r.destUserEmail}`);
+
+        c2gLog('info', `Starting C2G migration for ${migPairs.length} user pair(s)...`);
+        c2gLog('total', JSON.stringify({ total: migPairs.length }));
+
+        for (const pair of migPairs) {
+          c2gLog('info', `Processing: ${pair.sourceDisplayName} → ${pair.destUserEmail}`);
+
+          const r = await migrateUserPair(
+            { sourceUserId: pair.sourceUserId, sourceDisplayName: pair.sourceDisplayName, destUserEmail: pair.destUserEmail },
+            migOpts
+          );
+          results.push(r);
 
           const userReport = {
-            email: r.sourceEmail || r.sourceDisplayName,
+            email: r.sourceEmail || pair.sourceEmail || pair.sourceDisplayName,
             destEmail: r.destUserEmail,
             displayName: r.sourceDisplayName,
             status: r.errors?.length ? (r.filesUploaded > 0 ? 'partial' : 'failed') : 'success',
@@ -1111,6 +1120,7 @@ app.post('/api/c2g/migrate', requireAuth, async (req, res) => {
           files += r.filesUploaded || 0;
           errors += (r.errors || []).length;
           c2gLog(r.errors?.length ? 'warn' : 'success', `${r.sourceDisplayName} → ${r.destUserEmail}: ${r.filesUploaded || 0} files uploaded, ${(r.errors||[]).length} error(s)`);
+          c2gLog('progress', JSON.stringify({ files, errors, users: results.length, total: migPairs.length }));
         }
 
         // Save completed report to DB
