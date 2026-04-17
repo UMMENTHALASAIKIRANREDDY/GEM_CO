@@ -1854,7 +1854,7 @@ You CAN take real actions via tools: navigate steps, start migration, retry, sho
     }
 
     const reply = choice?.message?.content || "I couldn't generate a response. Please try again.";
-    const quickReplies = getContextualReplies(migrationState);
+    const quickReplies = [];
 
     // Auto-inject widget based on current migration state + agent action
     let widget = null;

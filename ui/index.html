@@ -1227,20 +1227,15 @@ const AgentChat=({msgs,typing,input,onInput,onSend,onLogLineClick,onQuickReply,w
             <div style={{fontSize:12,color:C.muted,maxWidth:240}}>Your AI guide for migrating Google Gemini conversations to Microsoft Copilot. Ask me anything or let me guide you through the process.</div>
           </div>
         )}
-        {(()=>{
-          const visible=msgs.filter(m=>!m.shellBlock);
-          const lastBotIdx=visible.map(m=>m.role).lastIndexOf('bot');
-          return visible.map((m,i)=>{
-            if(m.role==='user')return<UserMsg key={m.id}>{m.content}</UserMsg>;
-            const isLast=i===lastBotIdx;
-            return(
-              <div key={m.id}>
-                <BotMsg quickReplies={isLast?m.quickReplies:undefined} onQuickReply={onQuickReply} statusCard={m.statusCard} chips={m.chips}>{m.content}</BotMsg>
-                {m.widget&&<ChatWidget type={m.widget.type} widgetProps={widgetProps}/>}
-              </div>
-            );
-          });
-        })()}
+        {msgs.filter(m=>!m.shellBlock).map(m=>{
+          if(m.role==='user')return<UserMsg key={m.id}>{m.content}</UserMsg>;
+          return(
+            <div key={m.id}>
+              <BotMsg quickReplies={m.quickReplies} onQuickReply={onQuickReply} statusCard={m.statusCard} chips={m.chips}>{m.content}</BotMsg>
+              {m.widget&&<ChatWidget type={m.widget.type} widgetProps={widgetProps}/>}
+            </div>
+          );
+        })}
         {typing&&<TypingDots/>}
         <div ref={endRef}/>
       </div>
