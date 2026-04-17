@@ -14,8 +14,8 @@ services:
       # Persistent data directories
       - ./uploads:/app/uploads
       - ./customers:/app/customers
-      # Service account — lives inside copilot/copilot/
-      - ./copilot/copilot/service_account.json:/app/copilot/copilot/service_account.json:ro
+      # Service account — mounted to root /app/service_account.json as expected by the app
+      - ./copilot/copilot/service_account.json:/app/service_account.json:ro
     depends_on:
       mongodb:
         condition: service_healthy
