@@ -14,7 +14,9 @@ RUN npm ci --omit=dev
 COPY server.js migrate.js ./
 COPY src/ ./src/
 COPY ui/ ./ui/
-COPY copilot/copilot/server/ ./copilot/copilot/server/
+COPY copilot/ ./copilot/
+
+# Copy service account to root for both G2C and C2G
 COPY copilot/copilot/service_account.json ./service_account.json
 
 # Create directories for runtime data
