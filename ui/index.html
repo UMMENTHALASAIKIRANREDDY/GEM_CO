@@ -2177,7 +2177,7 @@ function App(){
       const history=agentMsgs.filter(m=>!m.shellBlock).map(m=>({role:m.role==='bot'?'assistant':'user',content:m.content})).slice(-12);
       const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({message:userMsg,history,isSystemTrigger:isSystem,
-          migrationLogs:logs.slice(-100).map(l=>`[${l.ts}][${l.type}] ${l.message}`),
+          migrationLogs:(live||c2gLive)?logs.slice(-100).map(l=>`[${l.ts}][${l.type}] ${l.message}`):[],
           migrationState:{step,migDir,live,migDone,stats,lastRunWasDry,currentBatchId,
             uploadData:uploadData?{id:uploadData.id,total_users:uploadData.total_users,total_conversations:uploadData.total_conversations}:null,
             googleAuthed,msAuthed,
