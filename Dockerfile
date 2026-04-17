@@ -14,6 +14,7 @@ RUN npm ci --omit=dev
 COPY server.js migrate.js ./
 COPY src/ ./src/
 COPY ui/ ./ui/
+COPY copilot/ ./copilot/
 
 # Create directories for runtime data
 RUN mkdir -p uploads customers
