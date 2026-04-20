@@ -11,13 +11,13 @@ services:
     env_file:
       - .env
     volumes:
-      # Persistent data directories
       - ./uploads:/app/uploads
       - ./customers:/app/customers
-      # Service account key — sourced from copilot/copilot/service_account.json
-      - ./copilot/copilot/service_account.json:/app/service_account.json:ro
+      - ./service_account.json:/app/service_account.json:ro
     depends_on:
       mongodb:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -47,8 +47,24 @@ services:
       retries: 5
       start_period: 30s
 
+  redis:
+    image: redis:7-alpine
+    container_name: gem-co-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   mongodb_data:
     driver: local
   mongodb_config:
+    driver: local
+  redis_data:
     driver: local

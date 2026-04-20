@@ -11,6 +11,7 @@ import { connectMongo, getDb } from './src/db/mongo.js';
 import { getLogger } from './src/utils/logger.js';
 import { createG2CRouter } from './src/modules/g2c/routes.js';
 import { createC2GRouter } from './src/modules/c2g/routes.js';
+import { createS2GRouter } from './src/modules/slack2gchat/routes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -304,6 +305,14 @@ const c2gRouter = createC2GRouter({
 });
 app.use('/api/c2g', c2gRouter);
 
+// S2G router — mounted at /api/s2g
+const s2gRouter = createS2GRouter({
+  requireAuth,
+  requireGoogleAuth,
+  getWorkspaceContext,
+});
+app.use('/api/s2g', s2gRouter);
+
 // ─── Startup ──────────────────────────────────────────────────────────────────
 
 connectMongo().then(async () => {
@@ -314,6 +323,25 @@ connectMongo().then(async () => {
   } catch (e) {
     console.warn('[cogem] Copilot DB connect failed (non-fatal):', e.message);
   }
+
+  // Connect slack2gchat DB + ensure collections
+  try {
+    const { connectDb } = await import('./src/core/db.js');
+    const { ensureS2GCollections } = await import('./src/modules/slack2gchat/db/ensureCollections.js');
+    await connectDb(process.env.S2G_DB || 'slack2gchat');
+    await ensureS2GCollections();
+  } catch (e) {
+    console.warn('[s2g] Slack2GChat DB connect failed (non-fatal):', e.message);
+  }
+
+  // Start S2G BullMQ workers
+  try {
+    const { startS2GWorkers } = await import('./src/modules/slack2gchat/queue/workers.js');
+    await startS2GWorkers();
+  } catch (e) {
+    console.warn('[s2g] BullMQ workers failed to start (non-fatal):', e.message);
+  }
+
   await restoreGoogleSessions();
   await restoreMsSessions();
   app.listen(PORT, () => {

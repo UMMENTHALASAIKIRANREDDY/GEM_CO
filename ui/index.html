@@ -254,6 +254,7 @@ const StepDirection=({onSelect,onBack})=>{
   const dirs=[
     {id:'gemini-copilot',label:'Gemini → Copilot',sub:'Google Workspace to Microsoft 365',srcIcon:<GoogleIcon/>,tgtIcon:<MsIcon/>},
     {id:'copilot-gemini',label:'Copilot → Gemini',sub:'Microsoft 365 to Google Workspace',srcIcon:<MsIcon/>,tgtIcon:<GoogleIcon/>},
+    {id:'slack-gchat',label:'Slack → Google Chat',sub:'Slack workspace to Google Chat spaces',srcIcon:<span style={{fontSize:16}}>💬</span>,tgtIcon:<GoogleIcon/>},
   ];
   return(
     <div className="fade-up">
@@ -1446,6 +1447,193 @@ const StepC2GOptions=({c2gOptions,setC2gOptions,c2gConfig,setC2gConfig,googleAut
 };
 
 /* ════════════════════════════════════════════ */
+/* ═══  SLACK→GCHAT: UPLOAD STEP            ═══ */
+/* ════════════════════════════════════════════ */
+const StepS2GUpload=({onComplete,onBack,showToast})=>{
+  const [dragging,setDragging]=useState(false);
+  const [uploading,setUploading]=useState(false);
+  const fileRef=useRef(null);
+  const handleFile=async(file)=>{
+    if(!file||!file.name.endsWith('.zip')){showToast('Please select a Slack export ZIP file','error');return;}
+    setUploading(true);
+    try{
+      const fd=new FormData();fd.append('slack_export',file);
+      const r=await fetch('/api/s2g/upload',{method:'POST',body:fd});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||'Upload failed');
+      showToast(`Parsed: ${d.stats.totalChannels} channels, ${d.stats.totalUsers} users, ${(d.stats.totalMessages||0).toLocaleString()} messages`,'success');
+      onComplete(d.batchId,d.stats);
+    }catch(err){showToast(err.message,'error');}
+    setUploading(false);
+  };
+  return(
+    <div className="fade-up">
+      <div style={{marginBottom:20}}>
+        <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Upload Slack Export</div>
+        <div style={{fontSize:13,color:C.muted}}>Export your Slack workspace (Admin → Settings → Import/Export Data) and upload the ZIP here.</div>
+      </div>
+      <div onDragOver={e=>{e.preventDefault();setDragging(true)}} onDragLeave={()=>setDragging(false)}
+        onDrop={e=>{e.preventDefault();setDragging(false);handleFile(e.dataTransfer.files[0]);}}
+        onClick={()=>fileRef.current?.click()}
+        style={{border:`2px dashed ${dragging?C.primary:C.border}`,borderRadius:14,padding:'40px 24px',textAlign:'center',cursor:'pointer',background:dragging?C.tint:'white',transition:'all .2s',marginBottom:16}}>
+        <input ref={fileRef} type="file" accept=".zip" style={{display:'none'}} onChange={e=>handleFile(e.target.files[0])}/>
+        {uploading?<><Spinner s={24}/><div style={{marginTop:12,fontSize:13,color:C.muted}}>Extracting and parsing export…</div></>
+        :<><div style={{fontSize:32,marginBottom:8}}>📦</div><div style={{fontSize:14,fontWeight:600,color:C.dark}}>Drop Slack export ZIP here</div><div style={{fontSize:12,color:C.muted,marginTop:4}}>or click to browse</div></>}
+      </div>
+      <Btn variant="ghost" onClick={onBack}>← Back</Btn>
+    </div>
+  );
+};
+
+/* ════════════════════════════════════════════ */
+/* ═══  SLACK→GCHAT: USER MAPPING STEP      ═══ */
+/* ════════════════════════════════════════════ */
+const StepS2GMap=({batchId,onNext,onBack,showToast})=>{
+  const [users,setUsers]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [search,setSearch]=useState('');
+  const [saving,setSaving]=useState(false);
+  const csvRef=useRef(null);
+  useEffect(()=>{
+    fetch(`/api/s2g/users/${batchId}`).then(r=>r.json()).then(d=>{setUsers(d.users||[]);setLoading(false);});
+  },[batchId]);
+  const updateMapping=(slackUserId,googleEmail)=>{
+    setUsers(prev=>prev.map(u=>u.slackUserId===slackUserId?{...u,googleEmail,matchMethod:'manual',verified:true}:u));
+  };
+  const saveAll=async()=>{
+    setSaving(true);
+    try{
+      const mappings=users.filter(u=>u.googleEmail&&!u.isBot).map(u=>({slackUserId:u.slackUserId,googleEmail:u.googleEmail}));
+      const r=await fetch(`/api/s2g/users/${batchId}/mapping`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mappings})});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error);
+      showToast(`Saved ${d.updated} user mappings`,'success');
+      onNext();
+    }catch(err){showToast(err.message,'error');}
+    setSaving(false);
+  };
+  const uploadCsv=async(file)=>{
+    const fd=new FormData();fd.append('mapping_csv',file);
+    const r=await fetch(`/api/s2g/users/${batchId}/mapping`,{method:'POST',body:fd});
+    const d=await r.json();
+    if(r.ok){showToast(`Applied ${d.updated} mappings from CSV`,'success');fetch(`/api/s2g/users/${batchId}`).then(r=>r.json()).then(d=>setUsers(d.users||[]));}
+    else showToast(d.error,'error');
+  };
+  const filtered=users.filter(u=>!u.isBot&&((u.slackRealName||'').toLowerCase().includes(search.toLowerCase())||(u.slackEmail||'').toLowerCase().includes(search.toLowerCase())));
+  const matched=filtered.filter(u=>u.googleEmail&&u.verified).length;
+  return(
+    <div className="fade-up" style={{display:'flex',flexDirection:'column',height:'100%'}}>
+      <div style={{marginBottom:16}}>
+        <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Map Slack Users → Google</div>
+        <div style={{fontSize:13,color:C.muted}}>Match each Slack user to their Google Workspace email. <b>{matched}/{filtered.length}</b> mapped.</div>
+      </div>
+      <div style={{display:'flex',gap:8,marginBottom:12}}>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search users…" style={{flex:1,border:`1px solid ${C.border}`,borderRadius:7,padding:'8px 12px',fontSize:13,outline:'none'}}/>
+        <Btn variant="secondary" onClick={()=>csvRef.current?.click()} style={{fontSize:12}}>📥 CSV</Btn>
+        <input ref={csvRef} type="file" accept=".csv" style={{display:'none'}} onChange={e=>uploadCsv(e.target.files[0])}/>
+      </div>
+      <div style={{flex:1,overflowY:'auto',border:`1px solid ${C.border}`,borderRadius:10,marginBottom:16}}>
+        {loading?<div style={{padding:24,textAlign:'center'}}><Spinner s={18}/></div>:
+        filtered.map((u,i)=>(
+          <div key={u.slackUserId} style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,padding:'10px 14px',borderBottom:i<filtered.length-1?`1px solid ${C.bg}`:'none',alignItems:'center'}}>
+            <div>
+              <div style={{fontSize:13,fontWeight:500,color:C.dark}}>{u.slackRealName||u.displayName||u.slackName}</div>
+              <div style={{fontSize:11,color:C.muted}}>{u.slackEmail||u.slackUserId}</div>
+            </div>
+            <input value={u.googleEmail||''} onChange={e=>updateMapping(u.slackUserId,e.target.value)}
+              placeholder="google@domain.com"
+              style={{border:`1px solid ${u.verified?C.success:u.googleEmail?C.primary:C.border}`,borderRadius:6,padding:'6px 10px',fontSize:12,outline:'none',width:'100%',boxSizing:'border-box'}}/>
+          </div>
+        ))}
+      </div>
+      <div style={{display:'flex',gap:10}}>
+        <Btn variant="ghost" onClick={onBack}>← Back</Btn>
+        <Btn onClick={saveAll} disabled={saving} style={{flex:1,justifyContent:'center'}}>{saving?<><Spinner s={14}/>Saving…</>:<>Save & Continue →</>}</Btn>
+      </div>
+    </div>
+  );
+};
+
+/* ════════════════════════════════════════════ */
+/* ═══  SLACK→GCHAT: MIGRATE STEP           ═══ */
+/* ════════════════════════════════════════════ */
+const StepS2GMigrate=({batchId,stats,onBack,onRunAnother,onChangeDirection})=>{
+  const [status,setStatus]=useState(null);
+  const [live,setLive]=useState(false);
+  const [done,setDone]=useState(false);
+  const [logs,setLogs]=useState([]);
+  const [progress,setProgress]=useState({pct:0,totalImported:0,totalMessages:0,doneChannels:0,totalChannels:0});
+  const sseRef=useRef(null);
+  const startMigration=()=>{
+    fetch(`/api/s2g/migrate/${batchId}`,{method:'POST'}).then(()=>{
+      setLive(true);
+      if(sseRef.current)sseRef.current.close();
+      const sse=new EventSource(`/api/s2g/migrate-log/${batchId}`);
+      sseRef.current=sse;
+      sse.onmessage=e=>{
+        try{
+          const ev=JSON.parse(e.data);
+          if(ev.type==='done'){setDone(true);setLive(false);sse.close();}
+          else if(ev.type==='messages_progress'){setProgress(p=>({...p,totalImported:ev.imported,totalMessages:Math.max(p.totalMessages,ev.total),doneChannels:p.doneChannels,pct:ev.total>0?Math.round(ev.imported/ev.total*100):0}));}
+          else if(ev.type==='channel_done'){setProgress(p=>({...p,doneChannels:p.doneChannels+1}));}
+          setLogs(l=>[...l.slice(-200),{ts:new Date().toLocaleTimeString(),type:ev.type,msg:ev.channelId||ev.spaceName||ev.reason||''}]);
+        }catch{}
+      };
+    });
+  };
+  useEffect(()=>{
+    if(batchId)fetch(`/api/s2g/status/${batchId}`).then(r=>r.json()).then(d=>{if(d.progress)setProgress(d.progress);setStatus(d.status);});
+  },[batchId]);
+  const ring=done?100:live?Math.max(5,progress.pct):0;
+  return(
+    <div className="fade-up">
+      {!live&&!done&&(
+        <>
+          <div style={{marginBottom:20}}>
+            <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Ready to Migrate</div>
+            <div style={{fontSize:13,color:C.muted}}>{(stats?.totalChannels||0)} channels · {(stats?.totalDms||0)} DMs · {(stats?.totalMessages||0).toLocaleString()} messages</div>
+          </div>
+          <div style={{display:'flex',gap:10}}>
+            <Btn variant="ghost" onClick={onBack}>← Back</Btn>
+            <Btn onClick={startMigration} style={{flex:1,justifyContent:'center'}}><IcoRocket s={14}/>Start Migration</Btn>
+          </div>
+        </>
+      )}
+      {(live||done)&&(
+        <>
+          <div style={{display:'flex',justifyContent:'center',marginBottom:20}}>
+            <svg width="110" height="110" viewBox="0 0 110 110">
+              <circle cx="55" cy="55" r="48" fill="none" stroke={C.bg} strokeWidth="10"/>
+              <circle cx="55" cy="55" r="48" fill="none" stroke={done?C.success:C.primary} strokeWidth="10" strokeDasharray={`${2*Math.PI*48}`} strokeDashoffset={`${2*Math.PI*48*(1-ring/100)}`} strokeLinecap="round" transform="rotate(-90 55 55)" style={{transition:'stroke-dashoffset 0.5s'}}/>
+              <text x="55" y="60" textAnchor="middle" fontSize="20" fontWeight="700" fill={done?C.success:C.primary}>{done?'✓':`${ring}%`}</text>
+            </svg>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:16}}>
+            {[['Channels Done',`${progress.doneChannels}/${progress.totalChannels}`],['Messages Imported',(progress.totalImported||0).toLocaleString()]].map(([l,v],i)=>(
+              <div key={i} style={{background:C.bg,borderRadius:8,padding:'10px 14px',textAlign:'center'}}>
+                <div style={{fontSize:16,fontWeight:700,color:C.primary}}>{v}</div>
+                <div style={{fontSize:10,color:C.muted,textTransform:'uppercase',letterSpacing:.3,marginTop:2}}>{l}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{maxHeight:160,overflowY:'auto',fontFamily:'monospace',fontSize:11,color:C.muted,background:C.bg,borderRadius:8,padding:'10px 12px',marginBottom:16}}>
+            {logs.slice(-50).map((l,i)=><div key={i}>[{l.ts}] {l.type}: {l.msg}</div>)}
+          </div>
+          {done&&<div style={{display:'flex',gap:10}}>
+            <Btn variant="secondary" onClick={()=>window.open(`/api/s2g/report/${batchId}`)} style={{flex:1,justifyContent:'center'}}>📥 Download Report</Btn>
+            <Btn onClick={onRunAnother} style={{flex:1,justifyContent:'center'}}>Run Another</Btn>
+          </div>}
+          {live&&<div style={{display:'flex',gap:10}}>
+            <Btn variant="ghost" onClick={()=>fetch(`/api/s2g/migrate/${batchId}/pause`,{method:'POST'})}>⏸ Pause</Btn>
+            <Btn variant="ghost" onClick={()=>fetch(`/api/s2g/migrate/${batchId}/retry-errors`,{method:'POST'})}>🔄 Retry Errors</Btn>
+          </div>}
+        </>
+      )}
+    </div>
+  );
+};
+
+/* ════════════════════════════════════════════ */
 /* ═══  COPILOT→GEMINI: MIGRATE STEP        ═══ */
 /* ════════════════════════════════════════════ */
 const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c2gLive,onChangeDirection,lastRunWasDry,onStartLive,c2gTotal})=>{
@@ -1741,6 +1929,8 @@ function App(){
   const [c2gOptions,setC2gOptions]=useState({dryRun:true,fromDate:'',toDate:''});
   const [c2gConfig,setC2gConfig]=useState({folderName:'CopilotChats'});
   const [c2gLastDry,setC2gLastDry]=useState(false);
+  const [s2gBatchId,setS2gBatchId]=useState(null);
+  const [s2gStats,setS2gStats]=useState(null);
   const [chatGLoading,setChatGLoading]=useState(false);
   const [chatMLoading,setChatMLoading]=useState(false);
   const [chatUploading,setChatUploading]=useState(false);
@@ -2338,6 +2528,10 @@ function App(){
                   {step===3&&migDir==='gemini-copilot'&&<Step2 uploadData={uploadData} msUsers={msUsers} mappings={mappings} setMappings={setMappings} selectedUsers={selectedUsers} setSelectedUsers={setSelectedUsers} onNext={()=>{addLog('info',`User mappings ready — ${selectedUsers.size||Object.keys(mappings).length} users selected`);setStep(4);}} onBack={()=>setStep(2)} showToast={showToast}/>}
                   {step===4&&migDir==='gemini-copilot'&&<Step3 options={options} setOptions={setOptions} config={config} setConfig={setConfig} msAuthed={msAuthed} googleAuthed={googleAuthed} onRun={retryMode?(()=>retryFailed(config.filePath||undefined)):runMigration} onBack={()=>{setRetryMode(false);setStep(retryMode?5:3)}} retryMode={retryMode}/>}
                   {(step===5||step===6)&&migDir==='gemini-copilot'&&<StepMigrate stats={stats} done={migDone} lastRunWasDry={lastRunWasDry} batchId={currentBatchId} onStartLive={()=>runMigration(true)} onRunAnother={runAnotherBatch} onRetry={retryFailed} retrying={retrying} hasUploadData={!!uploadData} onGoToConnect={handleGoToConnect} onRetryWithPath={handleRetryWithPath} onChangeDirection={handleChangeDirection} totalExpected={(()=>{if(!uploadData?.users)return 0;const sel=selectedUsers.size>0?[...selectedUsers]:Object.keys(mappings);const emails=sel.length>0?new Set(sel):new Set(uploadData.users.map(u=>u.email));return uploadData.users.filter(u=>emails.has(u.email)).reduce((s,u)=>s+(u.conversation_count||0),0)})()}/>}
+                  {/* Slack → Google Chat steps */}
+                  {step===2&&migDir==='slack-gchat'&&<StepS2GUpload onComplete={(id,stats)=>{setS2gBatchId(id);setS2gStats(stats);setStep(3);}} onBack={()=>setStep(1)} showToast={showToast}/>}
+                  {step===3&&migDir==='slack-gchat'&&<StepS2GMap batchId={s2gBatchId} onNext={()=>setStep(4)} onBack={()=>setStep(2)} showToast={showToast}/>}
+                  {(step===4||step===5)&&migDir==='slack-gchat'&&<StepS2GMigrate batchId={s2gBatchId} stats={s2gStats} onBack={()=>setStep(3)} onRunAnother={()=>{setS2gBatchId(null);setS2gStats(null);setStep(1);}} onChangeDirection={handleChangeDirection}/>}
                   {/* Copilot → Gemini steps */}
                   {step===2&&migDir==='copilot-gemini'&&<StepC2GMap msUsers={msUsers} googleUsers={googleUsers} c2gMappings={c2gMappings} setC2gMappings={setC2gMappings} c2gSelectedUsers={c2gSelectedUsers} setC2gSelectedUsers={setC2gSelectedUsers} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast}/>}
                   {step===3&&migDir==='copilot-gemini'&&<StepC2GOptions c2gOptions={c2gOptions} setC2gOptions={setC2gOptions} c2gConfig={c2gConfig} setC2gConfig={setC2gConfig} googleAuthed={googleAuthed} msAuthed={msAuthed} onRun={runC2GMigration} onBack={()=>setStep(2)}/>}
