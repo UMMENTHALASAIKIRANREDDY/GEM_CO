@@ -1929,12 +1929,11 @@ app.post('/api/auth/ms/disconnect', requireAuth, async (req, res) => {
 });
 
 connectMongo().then(async () => {
-  // Connect copilot's Mongoose cogem DB
+  // Connect Mongoose to cogem DB (C2G migration state)
   try {
-    const cogemUri = (process.env.MONGO_URI || '').replace(/\/gemco(\?|$)/, '/cogem$1');
     const origUri = process.env.MONGO_URI;
-    process.env.MONGO_URI = cogemUri || origUri;
-    const { connectDB } = await import('./copilot/copilot/server/src/db/connection.js');
+    process.env.MONGO_URI = process.env.MONGO_URI_COGEM || origUri;
+    const { connectDB } = await import('./src/db/cogemConnection.js');
     await connectDB();
     process.env.MONGO_URI = origUri;
   } catch (e) {
