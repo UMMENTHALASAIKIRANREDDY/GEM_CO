@@ -14,9 +14,9 @@ RUN npm ci --omit=dev
 COPY server.js migrate.js ./
 COPY src/ ./src/
 COPY ui/ ./ui/
-COPY copilot/ ./copilot/
 
-# Service account key mounted at runtime via docker-compose volume
+# Service account key is volume-mounted at runtime via docker-compose
+# (service_account.json → /app/service_account.json)
 
 # Create directories for runtime data
 RUN mkdir -p uploads customers

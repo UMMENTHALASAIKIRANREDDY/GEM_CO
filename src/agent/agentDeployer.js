@@ -1,5 +1,5 @@
 import AdmZip from 'adm-zip';
-import { getValidToken } from '../auth/microsoft.js';
+import { getValidToken } from '../core/auth/microsoft.js';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('agent:deployer');
