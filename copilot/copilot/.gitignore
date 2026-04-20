@@ -1,9 +1,0 @@
-node_modules/
-.env
-service_account.json
-copilot_interactions.txt
-directory_users.txt
-dist/
-data/
-.DS_Store
-*.log
