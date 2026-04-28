@@ -5,14 +5,23 @@ let isConnected = false;
 /**
  * Build the cogem URI from MONGO_HOST + C2G_DB, falling back to legacy MONGO_URI_COGEM / MONGO_URI.
  */
+function stripDbFromUri(raw) {
+  const afterScheme = raw.indexOf('://');
+  if (afterScheme === -1) return raw;
+  const pathStart = raw.indexOf('/', afterScheme + 3);
+  if (pathStart === -1) return raw;
+  const queryStart = raw.indexOf('?', pathStart);
+  return queryStart === -1
+    ? raw.substring(0, pathStart)
+    : raw.substring(0, pathStart) + raw.substring(queryStart);
+}
+
 function buildCogemUri() {
-  // Preferred: MONGO_HOST (base URI, no db name) + C2G_DB
   if (process.env.MONGO_HOST) {
-    const base = process.env.MONGO_HOST.replace(/\/[^/?]+(\?|$)/, '$1');
+    const base = stripDbFromUri(process.env.MONGO_HOST);
     const dbName = process.env.C2G_DB || 'cogem';
     return `${base}/${dbName}?authSource=admin`;
   }
-  // Legacy fallbacks
   return process.env.MONGO_URI_COGEM || process.env.MONGO_URI || process.env.MONGODB_URI;
 }
 

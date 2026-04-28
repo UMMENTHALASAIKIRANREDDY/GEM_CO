@@ -19,16 +19,22 @@ const connections = new Map();
  * Falls back to constructing from MONGO_USERNAME / MONGO_PASSWORD if MONGO_HOST
  * is not set (backward-compat).
  */
+function stripDbFromUri(raw) {
+  // Find path start: first '/' after the authority section (after '://')
+  const afterScheme = raw.indexOf('://');
+  if (afterScheme === -1) return raw;
+  const pathStart = raw.indexOf('/', afterScheme + 3);
+  if (pathStart === -1) return raw; // no /dbname present, return as-is
+  const queryStart = raw.indexOf('?', pathStart);
+  return queryStart === -1
+    ? raw.substring(0, pathStart)
+    : raw.substring(0, pathStart) + raw.substring(queryStart);
+}
+
 function buildBaseUri() {
-  if (process.env.MONGO_HOST) {
-    // Strip any trailing /dbname so we can append our own
-    return process.env.MONGO_HOST.replace(/\/[^/?]+(\?|$)/, '$1');
-  }
-  // Legacy fallback: reconstruct from MONGO_URI (strip db name from path)
+  if (process.env.MONGO_HOST) return stripDbFromUri(process.env.MONGO_HOST);
   const legacy = process.env.MONGO_URI;
-  if (legacy) {
-    return legacy.replace(/\/[^/?]+(\?|$)/, '$1');
-  }
+  if (legacy) return stripDbFromUri(legacy);
   throw new Error('MONGO_HOST (or legacy MONGO_URI) not set in .env');
 }
 
