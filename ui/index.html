@@ -181,67 +181,59 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
   const logoutGoogle=async()=>{await fetch('/auth/google/logout',{method:'POST'});setGoogleAuthed(false);setGoogleUsers([])};
   const logoutMs=async()=>{await fetch('/auth/logout',{method:'POST'});setMsAuthed(false);setMsUsers([])};
 
+  const CloudCard=({icon,label,connected,loading,error,onConnect,onSignOut})=>{
+    const [hov,setHov]=useState(false);
+    return(
+      <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:6}}>
+        <button
+          onClick={!connected&&!loading?onConnect:undefined}
+          onMouseEnter={()=>!connected&&!loading&&setHov(true)}
+          onMouseLeave={()=>setHov(false)}
+          style={{
+            width:130,padding:'24px 12px 20px',borderRadius:14,
+            border:`2px solid ${connected?C.primary:hov?'#9CA3AF':'#E5E7EB'}`,
+            background:connected?C.tint:hov?'#F9FAFB':'#fff',
+            cursor:!connected&&!loading?'pointer':'default',
+            textAlign:'center',transition:'all .15s',fontFamily:'inherit',
+            boxShadow:connected?'0 4px 14px rgba(26,86,219,.12)':hov?'0 2px 8px rgba(0,0,0,.08)':'0 1px 3px rgba(0,0,0,.06)',
+            display:'flex',flexDirection:'column',alignItems:'center',position:'relative',outline:'none'
+          }}>
+          <div style={{minHeight:64,display:'flex',alignItems:'center',justifyContent:'center',marginBottom:12}}>
+            {loading?<Spinner s={44}/>:icon}
+          </div>
+          <div style={{fontWeight:700,fontSize:12,color:connected?C.primary:hov?C.dark:C.dark,lineHeight:1.3,textAlign:'center'}}>{label}</div>
+          <div style={{fontSize:10,marginTop:5,fontWeight:500,color:connected?'#16a34a':loading?C.muted:hov?C.primary:C.muted}}>
+            {connected?'Connected':loading?'Connecting...':'Click to connect'}
+          </div>
+        </button>
+        {error&&<div style={{fontSize:10,color:C.error,textAlign:'center',width:130,lineHeight:1.3}}>{error}</div>}
+        {connected&&<button onClick={onSignOut} style={{fontSize:11,color:C.muted,background:'none',border:'none',cursor:'pointer',fontFamily:'inherit',display:'inline-flex',alignItems:'center',gap:3,padding:'2px 6px',borderRadius:4,transition:'color .15s'}} onMouseEnter={e=>e.currentTarget.style.color=C.error} onMouseLeave={e=>e.currentTarget.style.color=C.muted}><IcoLogout s={10}/> Sign Out</button>}
+      </div>
+    );
+  };
+
   return(
     <div className="fade-up">
-      <div style={{marginBottom:20}}>
+      <div style={{marginBottom:24}}>
         <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Connect Clouds</div>
         <div style={{fontSize:13,color:C.muted}}>Connect source and destination cloud accounts with admin credentials.</div>
       </div>
 
-      {/* Google Workspace Card */}
-      <Card style={{marginBottom:16}}>
-        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:14}}>
-          <GoogleIcon/>
-          <div style={{flex:1}}>
-            <div style={{fontSize:14,fontWeight:600}}>Google Workspace</div>
-            <div style={{fontSize:12,color:C.muted}}>Gemini conversations <span style={{fontSize:11,color:'#DC2626',fontWeight:600}}>(required)</span></div>
-          </div>
-          {googleAuthed?<span style={{display:'inline-flex',alignItems:'center',gap:5,fontSize:12,padding:'4px 12px',borderRadius:20,background:C.tint,color:C.primary,fontWeight:600,flexShrink:0}}><Check s={12} c={C.primary}/>Connected</span>:<span style={{fontSize:12,padding:'4px 12px',borderRadius:20,background:'#FEF2F2',color:'#DC2626',fontWeight:600,flexShrink:0}}>Required</span>}
-        </div>
-        {!googleAuthed?(
-          <button onClick={signInGoogle} style={{display:'inline-flex',alignItems:'center',gap:10,padding:'10px 16px',borderRadius:6,border:`1px solid ${C.border}`,background:'white',fontSize:13,fontWeight:500,cursor:'pointer',transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.background=C.bg} onMouseLeave={e=>e.currentTarget.style.background='white'}>Sign in with Google</button>
-        ):lgG?(
-          <div style={{display:'flex',alignItems:'center',gap:8,fontSize:12,color:C.muted}}><Spinner s={13}/> Loading users...</div>
-        ):errG?(
-          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10}}>
-            <div style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:C.error,flex:1}}><IcoError s={13}/> {errG}</div>
-            <button onClick={logoutGoogle} style={{fontSize:11,color:C.muted,background:'none',border:`1px solid ${C.border}`,borderRadius:5,padding:'4px 8px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,whiteSpace:'nowrap',flexShrink:0}}><IcoLogout s={11}/> Sign Out</button>
-          </div>
-        ):(
-          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-            <span style={{fontSize:12,color:C.muted,display:'flex',alignItems:'center',gap:4}}><IcoUser s={12}/> {googleUsers.length} users loaded</span>
-            <button onClick={logoutGoogle} style={{fontSize:11,color:C.muted,background:'none',border:`1px solid ${C.border}`,borderRadius:5,padding:'4px 8px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,display:'inline-flex',alignItems:'center',gap:4}}><IcoLogout s={11}/> Sign Out</button>
-          </div>
-        )}
-      </Card>
+      <div style={{display:'flex',gap:14,marginBottom:24,flexWrap:'wrap'}}>
+        <CloudCard
+          icon={<GoogleIcon s={200}/>}
+          label="Google Workspace"
+          connected={googleAuthed} loading={lgG} error={errG}
+          onConnect={signInGoogle} onSignOut={logoutGoogle}/>
+        <CloudCard
+          icon={<MsIcon s={200}/>}
+          label={<span>Microsoft<br/>Teams / 365</span>}
+          connected={msAuthed} loading={lgM} error={errM}
+          onConnect={signInMs} onSignOut={logoutMs}/>
+      </div>
 
-      {/* Microsoft Teams Card */}
-      <Card style={{marginBottom:20}}>
-        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:14}}>
-          <MsIcon/>
-          <div style={{flex:1}}>
-            <div style={{fontSize:14,fontWeight:600}}>Microsoft Teams / 365</div>
-            <div style={{fontSize:12,color:C.muted}}>Copilot / OneNote <span style={{fontSize:11,color:C.error,fontWeight:600}}>(required)</span></div>
-          </div>
-          {msAuthed?<span style={{display:'inline-flex',alignItems:'center',gap:5,fontSize:12,padding:'4px 12px',borderRadius:20,background:C.tint,color:C.primary,fontWeight:600,flexShrink:0}}><Check s={12} c={C.primary}/>Connected</span>:<span style={{fontSize:12,padding:'4px 12px',borderRadius:20,background:'#FEF2F2',color:C.error,fontWeight:500,flexShrink:0}}>Required</span>}
-        </div>
-        {!msAuthed?(
-          <button onClick={signInMs} style={{display:'inline-flex',alignItems:'center',gap:10,padding:'10px 16px',borderRadius:6,border:`1px solid ${C.border}`,background:'white',fontSize:13,fontWeight:500,cursor:'pointer',transition:'all .15s'}} onMouseEnter={e=>e.currentTarget.style.background=C.bg} onMouseLeave={e=>e.currentTarget.style.background='white'}>Sign in with Microsoft</button>
-        ):lgM?(
-          <div style={{display:'flex',alignItems:'center',gap:8,fontSize:12,color:C.muted}}><Spinner s={13}/> Loading users...</div>
-        ):errM?(
-          <div style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:C.error}}><IcoError s={13}/> {errM}</div>
-        ):(
-          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-            <span style={{fontSize:12,color:C.muted,display:'flex',alignItems:'center',gap:4}}><IcoUser s={12}/> {msUsers.length} users loaded</span>
-            <button onClick={logoutMs} style={{fontSize:11,color:C.muted,background:'none',border:`1px solid ${C.border}`,borderRadius:5,padding:'4px 8px',cursor:'pointer',fontFamily:'inherit',fontWeight:500,display:'inline-flex',alignItems:'center',gap:4}}><IcoLogout s={11}/> Sign Out</button>
-          </div>
-        )}
-      </Card>
-
-      {!msAuthed&&<div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:8,fontSize:13,color:'#991B1B',marginBottom:16}}><IcoWarn s={14}/>Microsoft Teams connection is required to proceed.</div>}
       {!googleAuthed&&<div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:8,fontSize:13,color:'#991B1B',marginBottom:16}}><IcoWarn s={14}/>Google Workspace connection is required to proceed.</div>}
-      <Btn onClick={onComplete} disabled={!msAuthed||!googleAuthed} style={{width:'100%',justifyContent:'center'}}>Continue →</Btn>
+      <Btn onClick={onComplete} disabled={!googleAuthed} style={{width:'100%',justifyContent:'center',marginTop:8}}>Continue →</Btn>
     </div>
   );
 };
@@ -249,11 +241,32 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
 /* ══════════════════════════════════ */
 /* ═══  STEP 1: CHOOSE DIRECTION  ═══ */
 /* ══════════════════════════════════ */
-const StepDirection=({onSelect,onBack})=>{
+const ClaudeIcon=({s=32})=><svg width={s} height={s} viewBox="-2 -2 20 20"><circle cx="8" cy="8" r="10" fill="#CC785C"/><path d="m3.127 10.604 3.135-1.76.053-.153-.053-.085H6.11l-.525-.032-1.791-.048-1.554-.065-1.505-.08-.38-.081L0 7.832l.036-.234.32-.214.455.04 1.009.069 1.513.105 1.097.064 1.626.17h.259l.036-.105-.089-.065-.068-.064-1.566-1.062-1.695-1.121-.887-.646-.48-.327-.243-.306-.104-.67.435-.48.585.04.15.04.593.456 1.267.981 1.654 1.218.242.202.097-.068.012-.049-.109-.181-.9-1.626-.96-1.655-.428-.686-.113-.411a2 2 0 0 1-.068-.484l.496-.674L4.446 0l.662.089.279.242.411.94.666 1.48 1.033 2.014.302.597.162.553.06.17h.105v-.097l.085-1.134.157-1.392.154-1.792.052-.504.25-.605.497-.327.387.186.319.456-.045.294-.19 1.23-.37 1.93-.243 1.29h.142l.161-.16.654-.868 1.097-1.372.484-.545.565-.601.363-.287h.686l.505.751-.226.775-.707.895-.585.759-.839 1.13-.524.904.048.072.125-.012 1.897-.403 1.024-.186 1.223-.21.553.258.06.263-.218.536-1.307.323-1.533.307-2.284.54-.028.02.032.04 1.029.098.44.024h1.077l2.005.15.525.346.315.424-.053.323-.807.411-3.631-.863-.872-.218h-.12v.073l.726.71 1.331 1.202 1.667 1.55.084.383-.214.302-.226-.032-1.464-1.101-.565-.497-1.28-1.077h-.084v.113l.295.432 1.557 2.34.08.718-.112.234-.404.141-.444-.08-.911-1.28-.94-1.44-.759-1.291-.093.053-.448 4.821-.21.246-.484.186-.403-.307-.214-.496.214-.98.258-1.28.21-1.016.19-1.263.112-.42-.008-.028-.092.012-.953 1.307-1.448 1.957-1.146 1.227-.274.109-.477-.247.045-.44.266-.39 1.586-2.018.956-1.25.617-.723-.004-.105h-.036l-4.212 2.736-.75.096-.324-.302.04-.496.154-.162 1.267-.871z" fill="white"/></svg>;
+const DirCard=({d,hovered,setHovered,onSelect})=>{
+  const isHov=hovered===d.id;
+  return(
+    <button key={d.id} onClick={()=>onSelect(d.id)}
+      onMouseEnter={()=>setHovered(d.id)} onMouseLeave={()=>setHovered(null)}
+      style={{flex:'1 1 160px',padding:'24px 16px',borderRadius:14,border:`2px solid ${isHov?C.primary:C.border}`,
+        background:isHov?C.tint:'white',cursor:'pointer',textAlign:'center',transition:'all .2s',fontFamily:'inherit'}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:10,marginBottom:14}}>
+        {d.srcIcon}
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+        {d.tgtIcon}
+      </div>
+      <div style={{fontWeight:600,fontSize:14,color:C.dark,marginBottom:4}}>{d.label}</div>
+      <div style={{fontSize:11,color:C.muted}}>{d.sub}</div>
+    </button>
+  );
+};
+const StepDirection=({onSelect,onBack,googleAuthed,msAuthed})=>{
   const [hovered,setHovered]=useState(null);
-  const dirs=[
+  const bothConnected=googleAuthed&&msAuthed;
+  const dirs=bothConnected?[
     {id:'gemini-copilot',label:'Gemini → Copilot',sub:'Google Workspace to Microsoft 365',srcIcon:<GoogleIcon/>,tgtIcon:<MsIcon/>},
     {id:'copilot-gemini',label:'Copilot → Gemini',sub:'Microsoft 365 to Google Workspace',srcIcon:<MsIcon/>,tgtIcon:<GoogleIcon/>},
+  ]:[
+    {id:'claude-gemini',label:'Claude → Gemini',sub:'Claude export ZIP to Google Drive',srcIcon:<ClaudeIcon/>,tgtIcon:<GoogleIcon/>},
   ];
   return(
     <div className="fade-up">
@@ -261,22 +274,12 @@ const StepDirection=({onSelect,onBack})=>{
         <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Choose Migration Direction</div>
         <div style={{fontSize:13,color:C.muted}}>Select the source and destination for your migration.</div>
       </div>
-      <div style={{display:'flex',gap:14,marginBottom:24}}>
-        {dirs.map(d=>(
-          <button key={d.id} onClick={()=>onSelect(d.id)}
-            onMouseEnter={()=>setHovered(d.id)} onMouseLeave={()=>setHovered(null)}
-            style={{flex:1,padding:'24px 16px',borderRadius:14,border:`2px solid ${hovered===d.id?C.primary:C.border}`,
-              background:hovered===d.id?C.tint:'white',cursor:'pointer',textAlign:'center',transition:'all .2s',fontFamily:'inherit'}}>
-            <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:10,marginBottom:14}}>
-              {d.srcIcon}
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-              {d.tgtIcon}
-            </div>
-            <div style={{fontWeight:600,fontSize:14,color:C.dark,marginBottom:4}}>{d.label}</div>
-            <div style={{fontSize:11,color:C.muted}}>{d.sub}</div>
-          </button>
-        ))}
+      <div style={{display:'flex',gap:14,marginBottom:24,flexWrap:'wrap'}}>
+        {dirs.map(d=><DirCard key={d.id} d={d} hovered={hovered} setHovered={setHovered} onSelect={onSelect}/>)}
       </div>
+      {googleAuthed&&!msAuthed&&<div style={{fontSize:12,color:C.muted,marginBottom:20,padding:'10px 14px',background:C.bg,borderRadius:8}}>
+        • Connect <strong>Microsoft 365</strong> on the previous step to unlock G2C and C2G directions.
+      </div>}
       <Btn variant="ghost" onClick={onBack}>← Back</Btn>
     </div>
   );
@@ -496,7 +499,7 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
     msUsers.forEach(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=u.mail||u.userPrincipalName||''});
     const m={...mappings};let changed=false;
     uploadData.users.forEach(u=>{
-      if(!(u.email in m)){const gl=u.email.split('@')[0].toLowerCase();m[u.email]=byLocal[gl]||'';changed=true}
+      if(!m[u.email]){const gl=u.email.split('@')[0].toLowerCase();m[u.email]=byLocal[gl]||'';changed=true}
     });
     if(changed)setMappings(m);
     if(selectedUsers.size===0)setSelectedUsers(new Set(uploadData.users.map(u=>u.email)));
@@ -525,7 +528,7 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
   };
 
   const users=uploadData?.users||[];
-  const filtered=users.filter(u=>{const q=search.toLowerCase();return u.email.toLowerCase().includes(q)||(mappings[u.email]||'').toLowerCase().includes(q)});
+  const filtered=users.filter(u=>{const q=search.toLowerCase();return u.email.toLowerCase().includes(q)||(mappings[u.email]||'').toLowerCase().includes(q)}).sort((a,b)=>{const ma=!!mappings[a.email],mb=!!mappings[b.email];if(ma!==mb)return ma?-1:1;return a.email.localeCompare(b.email)});
   const toggleUser=e=>setSelectedUsers(p=>{const n=new Set(p);n.has(e)?n.delete(e):n.add(e);return n});
   const toggleAll=()=>{if(selectedUsers.size===users.length)setSelectedUsers(new Set());else setSelectedUsers(new Set(users.map(u=>u.email)))};
   const autoMapped=users.filter(u=>!!mappings[u.email]).length;
@@ -1267,7 +1270,18 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
   const [csvUploading,setCsvUploading]=useState(false);
   const [csvEmails,setCsvEmails]=useState(null);
 
-  // Auto-map by email local-part on mount
+  // On mount: fetch saved CSV mapping from DB, then run auto-map for any unmapped users
+  useEffect(()=>{
+    fetch('/api/c2g/user-mappings').then(r=>r.ok?r.json():null).then(doc=>{
+      if(doc?.csvEmails){
+        setCsvEmails(doc.csvEmails);
+        if(doc.mappings)setC2gMappings(prev=>({...prev,...doc.mappings}));
+        setC2gSelectedUsers(new Set((doc.csvEmails).filter(e=>doc.mappings?.[e])));
+      }
+    }).catch(()=>{});
+  },[]);
+
+  // Auto-map by email local-part whenever users load
   useEffect(()=>{
     if(!msUsers.length)return;
     const byLocal={};
@@ -1275,7 +1289,7 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
     const m={...c2gMappings};let changed=false;
     msUsers.forEach(u=>{
       const em=(u.mail||u.userPrincipalName||'').toLowerCase();
-      if(!(em in m)){const loc=em.split('@')[0];m[em]=byLocal[loc]||'';changed=true}
+      if(!m[em]){const loc=em.split('@')[0];m[em]=byLocal[loc]||'';changed=true}
     });
     if(changed)setC2gMappings(m);
     if(c2gSelectedUsers.size===0)setC2gSelectedUsers(new Set(msUsers.map(u=>u.mail||u.userPrincipalName||'')));
@@ -1305,10 +1319,14 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
           csvKeys.push(src);
         }
       }
-      setC2gMappings(prev=>({...prev,...m}));
+      const merged={...c2gMappings,...m};
+      setC2gMappings(merged);
       setC2gSelectedUsers(new Set(csvKeys.filter(k=>m[k])));
       setCsvEmails(csvKeys);
-      setCsvUploading(false);showToast(`CSV uploaded — ${csvKeys.length} user(s).`);
+      setCsvUploading(false);
+      // Persist to DB
+      fetch('/api/c2g/user-mappings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mappings:m,csvEmails:csvKeys})}).catch(()=>{});
+      showToast(`CSV uploaded — ${csvKeys.length} user(s).`);
     };
     r.onerror=()=>{setCsvUploading(false);showToast('Failed to read CSV file.','error')};
     r.readAsText(file);
@@ -1316,6 +1334,8 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
 
   const clearCsv=()=>{
     setCsvEmails(null);
+    // Delete from DB
+    fetch('/api/c2g/user-mappings',{method:'DELETE'}).catch(()=>{});
     // Restore auto-mapping from cloud users
     const byLocal={};
     googleUsers.forEach(u=>{const em=(u.email||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
@@ -1327,7 +1347,7 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
   };
 
   const displayUsers=csvEmails?msUsers.filter(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();return csvEmails.includes(em)}):msUsers;
-  const filtered=displayUsers.filter(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();const q=search.toLowerCase();return em.includes(q)||(c2gMappings[em]||'').toLowerCase().includes(q)}).sort((a,b)=>{const ea=(a.mail||a.userPrincipalName||'').toLowerCase(),eb=(b.mail||b.userPrincipalName||'').toLowerCase();const sa=c2gSelectedUsers.has(ea)?0:1,sb=c2gSelectedUsers.has(eb)?0:1;return sa-sb||ea.localeCompare(eb)});
+  const filtered=displayUsers.filter(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();const q=search.toLowerCase();return em.includes(q)||(c2gMappings[em]||'').toLowerCase().includes(q)}).sort((a,b)=>{const ea=(a.mail||a.userPrincipalName||'').toLowerCase(),eb=(b.mail||b.userPrincipalName||'').toLowerCase();const ma=!!c2gMappings[ea],mb=!!c2gMappings[eb];if(ma!==mb)return ma?-1:1;return ea.localeCompare(eb)});
   const toggleUser=e=>setC2gSelectedUsers(p=>{const n=new Set(p);n.has(e)?n.delete(e):n.add(e);return n});
   const autoMapped=displayUsers.filter(u=>!!c2gMappings[u.mail||u.userPrincipalName||'']).length;
   const unmapped=displayUsers.filter(u=>!c2gMappings[u.mail||u.userPrincipalName||'']).length;
@@ -1510,6 +1530,512 @@ const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c
   );
 };
 
+/* ══════════════════════════════════════════ */
+/* ═══  CLAUDE→GEMINI: UPLOAD ZIP STEP    ═══ */
+/* ══════════════════════════════════════════ */
+const StepCL2GUpload=({cl2gUploadData,setCl2gUploadData,onNext,onBack,showToast})=>{
+  const fileRef=useRef(null);
+  const menuRef=useRef(null);
+  const [uploading,setUploading]=useState(false);
+  const [dragOver,setDragOver]=useState(false);
+  const [uploads,setUploads]=useState([]);
+  const [showMenu,setShowMenu]=useState(false);
+
+  const loadUploads=async()=>{
+    try{
+      const r=await fetch('/api/cl2g/uploads');const d=await r.json();
+      const list=Array.isArray(d)?d:[];
+      setUploads(list);
+      // Bug 1 fix: auto-select the most recent upload if nothing is selected yet
+      if(!cl2gUploadData&&list.length>0){
+        const u=list[0];
+        setCl2gUploadData({uploadId:u._id,users:u.users||[],totalConversations:u.totalConversations||0,totalMemories:u.totalMemories||0,totalProjects:u.totalProjects||0,fileName:u.fileName});
+      }
+    }catch{}
+  };
+  useEffect(()=>{loadUploads()},[]);
+
+  // Close menu when clicking outside
+  useEffect(()=>{
+    const h=e=>{if(menuRef.current&&!menuRef.current.contains(e.target))setShowMenu(false)};
+    document.addEventListener('mousedown',h);return()=>document.removeEventListener('mousedown',h);
+  },[]);
+
+  const uploadZip=async(file)=>{
+    if(!file||!file.name.toLowerCase().endsWith('.zip')){showToast('Only ZIP files accepted.','error');return}
+    setUploading(true);
+    const fd=new FormData();fd.append('file',file);
+    try{
+      const r=await fetch('/api/cl2g/upload',{method:'POST',body:fd});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||'Upload failed');
+      setCl2gUploadData({uploadId:d.uploadId,users:d.users||[],totalConversations:d.totalConversations||0,totalMemories:d.totalMemories||0,totalProjects:d.totalProjects||0,fileName:file.name});
+      await loadUploads();
+      showToast(`Uploaded — ${d.totalConversations} conversations, ${d.users?.length||0} users found.`);
+    }catch(e){showToast(e.message,'error')}
+    finally{setUploading(false)}
+  };
+
+  const deleteUpload=async(id,e)=>{
+    e.stopPropagation();
+    try{
+      await fetch(`/api/cl2g/uploads/${id}`,{method:'DELETE'});
+      if(cl2gUploadData?.uploadId===id)setCl2gUploadData(null);
+      setUploads(p=>p.filter(u=>u._id!==id));
+      showToast('Upload deleted.');
+    }catch(err){showToast(err.message,'error')}
+  };
+
+  const selectUpload=doc=>{
+    setCl2gUploadData({uploadId:doc._id,users:doc.users||[],totalConversations:doc.totalConversations||0,totalMemories:doc.totalMemories||0,totalProjects:doc.totalProjects||0,fileName:doc.fileName});
+    setShowMenu(false);
+  };
+
+  return(
+    <div className="fade-up">
+      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:20}}>
+        <div>
+          <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Upload Claude Export</div>
+          <div style={{fontSize:13,color:C.muted}}>Download your Claude data export (ZIP) and upload it here.</div>
+        </div>
+        {/* Previous uploads hamburger */}
+        <div ref={menuRef} style={{position:'relative',flexShrink:0}}>
+          <button onClick={()=>{setShowMenu(p=>!p);loadUploads()}} title="Previous uploads"
+            style={{width:36,height:36,borderRadius:8,border:`1px solid ${C.border}`,background:'white',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',color:C.muted,transition:'all .15s'}}
+            onMouseEnter={e=>{e.currentTarget.style.borderColor=C.primary;e.currentTarget.style.color=C.primary}}
+            onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.color=C.muted}}>
+            <IcoMenu s={16}/>
+          </button>
+          {showMenu&&(
+            <div style={{position:'absolute',right:0,top:'calc(100% + 6px)',width:320,background:'white',border:`1px solid ${C.border}`,borderRadius:10,boxShadow:'0 8px 30px rgba(0,0,0,.12)',zIndex:100,overflow:'hidden'}}>
+              <div style={{padding:'10px 14px',borderBottom:`1px solid ${C.bg}`,fontSize:12,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.5}}>Previous Uploads</div>
+              {uploads.length===0
+                ?<div style={{padding:'20px 14px',fontSize:13,color:C.muted,textAlign:'center'}}>No uploads yet</div>
+                :uploads.map((u,i)=>{
+                  const isActive=cl2gUploadData?.uploadId===u._id;
+                  return(
+                    <div key={u._id} onClick={()=>selectUpload(u)}
+                      style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',cursor:'pointer',borderBottom:i<uploads.length-1?`1px solid ${C.bg}`:'none',background:isActive?C.tint:'white',transition:'background .15s'}}
+                      onMouseEnter={e=>{if(!isActive)e.currentTarget.style.background=C.bg}}
+                      onMouseLeave={e=>{e.currentTarget.style.background=isActive?C.tint:'white'}}>
+                      <IcoZip s={20} c={isActive?C.primary:C.primaryL}/>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:12,fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',display:'flex',alignItems:'center',gap:6}}>
+                          <span style={{overflow:'hidden',textOverflow:'ellipsis'}}>{u.fileName}</span>
+                          {isActive&&<span style={{fontSize:10,padding:'1px 6px',borderRadius:10,background:C.primary,color:'white',flexShrink:0}}>active</span>}
+                        </div>
+                        <div style={{fontSize:11,color:C.muted}}>{u.totalConversations} convs · {u.users?.length||0} users · {new Date(u.uploadTime).toLocaleDateString()}</div>
+                      </div>
+                      <button onClick={e=>deleteUpload(u._id,e)} title="Delete"
+                        style={{padding:'4px 6px',border:'none',background:'none',cursor:'pointer',color:C.muted,borderRadius:4,flexShrink:0,display:'flex',alignItems:'center',transition:'all .15s'}}
+                        onMouseEnter={e=>{e.currentTarget.style.background='#FEF2F2';e.currentTarget.style.color=C.error}}
+                        onMouseLeave={e=>{e.currentTarget.style.background='none';e.currentTarget.style.color=C.muted}}>
+                        <IcoTrash s={13}/>
+                      </button>
+                    </div>
+                  );
+                })
+              }
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div onDragOver={e=>{e.preventDefault();setDragOver(true)}} onDragLeave={()=>setDragOver(false)}
+        onDrop={e=>{e.preventDefault();setDragOver(false);const f=e.dataTransfer.files[0];if(f)uploadZip(f)}}
+        onClick={()=>!uploading&&fileRef.current.click()}
+        style={{border:`2px dashed ${dragOver?C.primary:C.border}`,borderRadius:12,padding:'36px',textAlign:'center',cursor:'pointer',background:dragOver?C.tint:'white',transition:'all .2s',marginBottom:16}}>
+        <input ref={fileRef} type="file" accept=".zip" style={{display:'none'}} onChange={e=>{if(e.target.files[0])uploadZip(e.target.files[0]);e.target.value=''}}/>
+        {uploading
+          ?<><Spinner s={28}/><div style={{fontSize:13,color:C.muted,marginTop:10}}>Uploading & parsing ZIP…</div></>
+          :<><IcoZip s={28} c={dragOver?C.primary:C.muted}/><div style={{fontSize:13,color:C.muted,marginTop:8}}>Drag & drop your Claude export ZIP here</div><div style={{fontSize:11,color:C.primaryL,marginTop:4}}>or click to browse</div></>}
+      </div>
+
+      {cl2gUploadData&&(
+        <div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',background:C.tint,borderRadius:8,border:`1px solid ${C.primary}30`,marginBottom:16}}>
+          <IcoZip s={18} c={C.primary}/>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:600,color:C.primary,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{cl2gUploadData.fileName}</div>
+            <div style={{fontSize:11,color:C.muted}}>{cl2gUploadData.totalConversations} conversations · {cl2gUploadData.users?.length||0} users{cl2gUploadData.totalMemories>0?` · ${cl2gUploadData.totalMemories} memory`:''}{cl2gUploadData.totalProjects>0?` · ${cl2gUploadData.totalProjects} project${cl2gUploadData.totalProjects>1?'s':''}`:''}</div>
+          </div>
+          <Check s={16} c={C.success}/>
+        </div>
+      )}
+
+      <div style={{display:'flex',gap:10}}>
+        <Btn variant="ghost" onClick={onBack}>← Back</Btn>
+        <Btn onClick={onNext} disabled={!cl2gUploadData} style={{flex:1,justifyContent:'center'}}>Continue →</Btn>
+      </div>
+    </div>
+  );
+};
+
+/* ═══════════════════════════════════════════ */
+/* ═══  CLAUDE→GEMINI: USER MAPPING STEP   ═══ */
+/* ═══════════════════════════════════════════ */
+const StepCL2GMap=({cl2gUploadData,googleUsers,cl2gMappings,setCl2gMappings,cl2gSelectedUuids,setCl2gSelectedUuids,onNext,onBack,showToast})=>{
+  const csvRef=useRef(null);
+  const [search,setSearch]=useState('');
+  const [csvUploading,setCsvUploading]=useState(false);
+  const [csvEmails,setCsvEmails]=useState(null); // null = cloud users; array = CSV-sourced emails
+  const users=cl2gUploadData?.users||[];
+
+  // Load saved mappings + CSV from DB on mount
+  useEffect(()=>{
+    fetch('/api/cl2g/user-mappings').then(r=>r.ok?r.json():null).then(doc=>{
+      if(doc?.mappings)setCl2gMappings(prev=>({...prev,...doc.mappings}));
+      if(doc?.csvEmails){
+        setCsvEmails(doc.csvEmails);
+        if(doc.csvEmails.length>0)setCl2gSelectedUuids(new Set(doc.csvEmails.filter(uuid=>doc.mappings?.[uuid])));
+      }
+    }).catch(()=>{});
+  },[]);
+
+  // Auto-map by email local-part when users + google users are available
+  useEffect(()=>{
+    if(!users.length||!googleUsers.length)return;
+    const byLocal={};
+    googleUsers.forEach(u=>{const em=(u.email||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
+    const m={...cl2gMappings};let changed=false;
+    users.forEach(u=>{
+      if(!m[u.uuid]){const loc=(u.email_address||'').toLowerCase().split('@')[0];m[u.uuid]=byLocal[loc]||'';changed=true}
+    });
+    if(changed)setCl2gMappings(m);
+    if(cl2gSelectedUuids.size===0)setCl2gSelectedUuids(new Set(users.map(u=>u.uuid)));
+  },[users,googleUsers]);
+
+  const persistMappings=(mappings,csv)=>{
+    fetch('/api/cl2g/user-mappings',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({mappings,csvEmails:csv||null})}).catch(()=>{});
+  };
+
+  const handleMappingChange=(uuid,val)=>{
+    const m={...cl2gMappings,[uuid]:val};
+    setCl2gMappings(m);
+    persistMappings(m,csvEmails);
+  };
+
+  const downloadCsv=()=>{
+    const src=csvEmails?users.filter(u=>csvEmails.includes(u.uuid)):users;
+    const rows=src.map(u=>`"${u.email_address||''}","${cl2gMappings[u.uuid]||''}","${u.full_name||''}"`);
+    const csv='Claude Email,Google Email,Display Name\n'+rows.join('\n');
+    const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='cl2g-user-mappings.csv';a.click();
+    showToast('CSV downloaded.');
+  };
+
+  const uploadCsv=file=>{
+    setCsvUploading(true);
+    const r=new FileReader();
+    r.onload=e=>{
+      const lines=e.target.result.split(/\r?\n/).slice(1);
+      const emailToUuid={};
+      users.forEach(u=>{if(u.email_address)emailToUuid[u.email_address.toLowerCase()]=u.uuid});
+      const m={...cl2gMappings};const csvUuids=[];
+      for(const l of lines){
+        if(!l.trim())continue;
+        const c=parseCsvLine(l);
+        if(c.length>=2&&c[0]){
+          const srcEmail=c[0].trim().toLowerCase();
+          const dstEmail=c[1].trim();
+          const uuid=emailToUuid[srcEmail];
+          if(uuid){m[uuid]=dstEmail;csvUuids.push(uuid);}
+        }
+      }
+      setCl2gMappings(m);setCsvEmails(csvUuids);
+      setCl2gSelectedUuids(new Set(csvUuids.filter(id=>m[id])));
+      persistMappings(m,csvUuids);
+      setCsvUploading(false);
+      showToast(`CSV uploaded — ${csvUuids.length} user(s) mapped.`);
+    };
+    r.onerror=()=>{setCsvUploading(false);showToast('Failed to read CSV.','error')};
+    r.readAsText(file);
+  };
+
+  const clearCsv=()=>{
+    setCsvEmails(null);
+    // Restore auto-mapping
+    const byLocal={};
+    googleUsers.forEach(u=>{const em=(u.email||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
+    const m={};
+    users.forEach(u=>{const loc=(u.email_address||'').toLowerCase().split('@')[0];m[u.uuid]=byLocal[loc]||''});
+    setCl2gMappings(m);
+    setCl2gSelectedUuids(new Set(users.map(u=>u.uuid)));
+    persistMappings(m,null);
+    showToast('CSV cleared — restored auto-mapping.');
+  };
+
+  const displayUsers=csvEmails?users.filter(u=>csvEmails.includes(u.uuid)):users;
+  const filtered=displayUsers.filter(u=>{
+    const q=search.toLowerCase();
+    return (u.full_name||'').toLowerCase().includes(q)||(u.email_address||'').toLowerCase().includes(q)||(cl2gMappings[u.uuid]||'').toLowerCase().includes(q);
+  }).sort((a,b)=>{const ma=!!cl2gMappings[a.uuid],mb=!!cl2gMappings[b.uuid];if(ma!==mb)return ma?-1:1;return (a.email_address||'').localeCompare(b.email_address||'')});
+
+  const toggleUser=uuid=>setCl2gSelectedUuids(p=>{const n=new Set(p);n.has(uuid)?n.delete(uuid):n.add(uuid);return n});
+  const autoMapped=displayUsers.filter(u=>!!cl2gMappings[u.uuid]).length;
+  const unmapped=displayUsers.filter(u=>!cl2gMappings[u.uuid]).length;
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',height:'100%'}} className="fade-up">
+      <div style={{flexShrink:0,marginBottom:12}}>
+        <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:8}}>
+          <div>
+            <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:2}}>User Mapping</div>
+            <div style={{fontSize:13,color:C.muted}}>
+              {csvEmails?<span style={{color:C.primary,fontWeight:500}}>{csvEmails.length} users from CSV</span>
+              :<>Map Claude accounts to Google destination emails.{' '}
+              {autoMapped>0&&<span style={{color:C.success,fontWeight:500}}>{autoMapped} auto-mapped</span>}
+              {unmapped>0&&<span style={{color:C.error}}>{autoMapped>0?' · ':''}{unmapped} need mapping</span>}</>}
+            </div>
+          </div>
+          <div style={{display:'flex',gap:4,flexShrink:0}}>
+            <input ref={csvRef} type="file" accept=".csv" style={{display:'none'}} onChange={e=>{if(e.target.files[0])uploadCsv(e.target.files[0]);e.target.value=''}}/>
+            <button onClick={()=>csvRef.current.click()} disabled={csvUploading} title="Upload CSV"
+              style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.border}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}
+              onMouseEnter={e=>e.currentTarget.style.background=C.bg} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+              {csvUploading?<Spinner s={12}/>:<IcoUpload s={13} c={C.muted}/>}
+            </button>
+            <button onClick={downloadCsv} title="Download CSV"
+              style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.primary}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}
+              onMouseEnter={e=>e.currentTarget.style.background=C.tint} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+              <IcoDownload s={13} c={C.primary}/>
+            </button>
+            {csvEmails&&<button onClick={clearCsv} title="Clear CSV — restore auto-mapping"
+              style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.error}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}
+              onMouseEnter={e=>e.currentTarget.style.background='#FEF2F2'} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+              <IcoTrash s={13}/>
+            </button>}
+          </div>
+        </div>
+        <div style={{fontSize:12,color:C.muted,marginBottom:8}}><span style={{fontWeight:600,color:C.primary}}>{cl2gSelectedUuids.size}</span> of {displayUsers.length} selected</div>
+        <SearchBar value={search} onChange={setSearch} placeholder="Search by name or email..."/>
+      </div>
+      <div style={{flex:1,overflowY:'auto',minHeight:0,background:'white',border:`1px solid ${C.border}`,borderRadius:10}}>
+        <div style={{display:'grid',gridTemplateColumns:'32px 1fr 1fr',padding:'9px 14px',background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.4,position:'sticky',top:0,zIndex:1}}>
+          <input type="checkbox" checked={cl2gSelectedUuids.size>0&&cl2gSelectedUuids.size===displayUsers.length} onChange={()=>{if(cl2gSelectedUuids.size===displayUsers.length)setCl2gSelectedUuids(new Set());else setCl2gSelectedUuids(new Set(displayUsers.map(u=>u.uuid)))}} style={{accentColor:C.primary,width:15,height:15,cursor:'pointer'}}/>
+          <div>Claude Account</div><div>Google Destination</div>
+        </div>
+        {filtered.map((u,i)=>{
+          const mapped=!!cl2gMappings[u.uuid];
+          return(
+            <div key={u.uuid} style={{display:'grid',gridTemplateColumns:'32px 1fr 1fr',alignItems:'center',padding:'9px 14px',borderBottom:i<filtered.length-1?`1px solid ${C.bg}`:'none',background:cl2gSelectedUuids.has(u.uuid)?C.tint:'white',transition:'background .15s',cursor:'pointer'}} onClick={()=>toggleUser(u.uuid)}>
+              <input type="checkbox" checked={cl2gSelectedUuids.has(u.uuid)} onChange={()=>toggleUser(u.uuid)} style={{accentColor:C.primary,width:15,height:15}} onClick={e=>e.stopPropagation()}/>
+              <div style={{display:'flex',flexDirection:'column',minWidth:0,gap:1}}>
+                <span style={{fontSize:12,fontWeight:500,color:C.dark,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{u.full_name||'(no name)'}</span>
+                <span style={{fontSize:11,color:C.muted,fontFamily:'monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{u.email_address}</span>
+                {u.conversationCount>0&&<span style={{fontSize:10,color:C.primaryL}}>{u.conversationCount} convs{u.hasMemory?' · memory':''}{u.projectCount>0?` · ${u.projectCount} project${u.projectCount>1?'s':''}`:''}</span>}
+              </div>
+              <input value={cl2gMappings[u.uuid]||''} onChange={e=>{e.stopPropagation();handleMappingChange(u.uuid,e.target.value)}}
+                placeholder="Enter Google email..."
+                style={{border:`1px solid ${mapped?C.primary+'50':C.border}`,borderRadius:5,padding:'5px 9px',fontSize:12,fontFamily:'inherit',outline:'none',marginRight:8,width:'100%',background:mapped?C.tint:'white'}}
+                onFocus={e=>{e.stopPropagation();e.target.style.borderColor=C.primary}}
+                onBlur={e=>e.target.style.borderColor=mapped?C.primary+'50':C.border}
+                onClick={e=>e.stopPropagation()}/>
+            </div>
+          );
+        })}
+        {filtered.length===0&&<div style={{textAlign:'center',padding:'24px',fontSize:13,color:C.muted}}>No users found.</div>}
+      </div>
+      <div style={{flexShrink:0,display:'flex',gap:10,paddingTop:12}}>
+        <Btn variant="ghost" onClick={onBack}>← Back</Btn>
+        <Btn onClick={onNext} style={{flex:1,justifyContent:'center'}}>Continue →</Btn>
+      </div>
+    </div>
+  );
+};
+
+/* ═══════════════════════════════════════════ */
+/* ═══  CLAUDE→GEMINI: OPTIONS STEP        ═══ */
+/* ═══════════════════════════════════════════ */
+const StepCL2GOptions=({cl2gOptions,setCl2gOptions,cl2gConfig,setCl2gConfig,googleAuthed,onRun,onBack})=>{
+  const Chk=({label,checked,onChange,hint})=>(
+    <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer',padding:'8px 0'}}>
+      <input type="checkbox" checked={checked} onChange={onChange} style={{accentColor:C.primary,width:16,height:16}}/>
+      <div><span>{label}</span>{hint&&<div style={{fontSize:11,color:C.muted,marginTop:1}}>{hint}</div>}</div>
+    </label>
+  );
+  return(
+    <div className="fade-up">
+      <div style={{marginBottom:20}}>
+        <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Migration Options</div>
+        <div style={{fontSize:13,color:C.muted}}>Configure and start the Claude → Gemini migration.</div>
+      </div>
+      <Field label="Folder Name *">
+        <input type="text" value={cl2gConfig.folderName||''} onChange={e=>setCl2gConfig(p=>({...p,folderName:e.target.value}))} placeholder="ClaudeChats" style={{width:'100%',border:`2px solid ${C.border}`,borderRadius:6,padding:'9px 12px',fontSize:13,outline:'none',transition:'border .2s',boxSizing:'border-box'}} onFocus={e=>e.target.style.borderColor=C.primary} onBlur={e=>e.target.style.borderColor=C.border}/>
+      </Field>
+      <Card style={{marginBottom:16}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:4,color:C.dark}}>Behavior</div>
+        <Chk label="Dry run (preview only — no files uploaded)" hint="Shows what would be migrated without uploading to Google Drive" checked={cl2gOptions.dryRun} onChange={e=>setCl2gOptions(p=>({...p,dryRun:e.target.checked}))}/>
+        <Chk label="Include memory" hint="Uploads Claude's memory as a DOCX file" checked={cl2gOptions.includeMemory!==false} onChange={e=>setCl2gOptions(p=>({...p,includeMemory:e.target.checked}))}/>
+        <Chk label="Include projects" hint="Uploads Claude project documents as DOCX files" checked={cl2gOptions.includeProjects!==false} onChange={e=>setCl2gOptions(p=>({...p,includeProjects:e.target.checked}))}/>
+      </Card>
+      <Card style={{marginBottom:20}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+          <div style={{fontSize:13,fontWeight:600,color:C.dark}}>Date Range</div>
+          <span style={{fontSize:11,color:C.primaryL,fontStyle:'italic'}}>Optional — blank = migrate all</span>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+          <Field label="From Date"><Input type="date" value={cl2gOptions.fromDate||''} onChange={e=>setCl2gOptions(p=>({...p,fromDate:e.target.value}))}/></Field>
+          <Field label="To Date"><Input type="date" value={cl2gOptions.toDate||''} onChange={e=>setCl2gOptions(p=>({...p,toDate:e.target.value}))}/></Field>
+        </div>
+        {(cl2gOptions.fromDate||cl2gOptions.toDate)&&<TextBtn onClick={()=>setCl2gOptions(p=>({...p,fromDate:'',toDate:''}))} style={{fontSize:11,marginTop:2,color:C.muted}}>Clear date range</TextBtn>}
+      </Card>
+      {!cl2gOptions.dryRun&&!googleAuthed&&(
+        <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 16px',background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:8,fontSize:13,color:'#991B1B',marginBottom:16}}>
+          <IcoWarn s={15}/>Live migration requires Google sign-in (Step 1 — Connect Clouds).
+        </div>
+      )}
+      <div style={{display:'flex',gap:10}}>
+        <Btn variant="ghost" onClick={onBack}>← Back</Btn>
+        <Btn onClick={()=>onRun()} disabled={!cl2gConfig.folderName||(!cl2gOptions.dryRun&&!googleAuthed)} style={{flex:1,justifyContent:'center'}}>
+          {cl2gOptions.dryRun?<><IcoSearch s={14}/>Start Dry Run</>:<><IcoRocket s={14}/>Start Migration</>}
+        </Btn>
+      </div>
+    </div>
+  );
+};
+
+/* ═══════════════════════════════════════════ */
+/* ═══  GEM SETUP INSTRUCTIONS PANEL       ═══ */
+/* ═══════════════════════════════════════════ */
+const GEM_INSTRUCTIONS=`You are my personal Claude conversation assistant. The uploaded document(s) contain my complete Claude conversation history, with each conversation clearly labeled by number and title.
+
+How to answer my questions:
+1. ALWAYS search the uploaded documents thoroughly before responding.
+2. When I ask about a topic — find all conversations related to it in the document and summarize what was discussed.
+3. When I ask "what did I ask about X?" or "find my conversation about X" — locate it in the document and return the exact Human and Claude message exchanges.
+4. When I ask to continue or follow up on a past conversation — find that conversation in the document, read the full message thread, then continue responding as Claude would, staying consistent with the context and conclusions already reached in that conversation.
+5. Answer from the document content directly. Do not rephrase from your own training memory when the topic is in the documents.
+6. If a topic is not found anywhere in the documents, say: "This topic was not in your migrated conversation history." Then answer from general knowledge if helpful.
+7. Never fabricate conversation content that is not in the documents.
+
+Document structure: Each conversation starts with "Conversation N: Title" followed by [Human] and [Claude] labeled messages in chronological order.`;
+
+const GemSetupInstructions=()=>{
+  const [copied,setCopied]=useState(false);
+  const [open,setOpen]=useState(true);
+  const copy=()=>{navigator.clipboard.writeText(GEM_INSTRUCTIONS).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500)}).catch(()=>{})};
+  const steps=[
+    {n:1,icon:'🌐',title:'Open Gemini Gems',desc:'Go to gemini.google.com → click Gems in the left sidebar → New Gem'},
+    {n:2,icon:'📁',title:'Add Knowledge from Google Drive',desc:'Under Knowledge, click "Add from Google Drive" → navigate to your ClaudeChats folder → select it → Insert'},
+    {n:3,icon:'📋',title:'Paste the Gem Instructions',desc:'Copy the instructions below and paste them into the Instructions box of the Gem'},
+    {n:4,icon:'💾',title:'Name & Save the Gem',desc:'Give the Gem a name (e.g. "My Claude History") → click Save — the Gem is now ready to use'},
+  ];
+  return(
+    <div style={{border:`1px solid #BFDBFE`,borderRadius:12,background:'#EFF6FF',marginBottom:16,overflow:'hidden'}}>
+      <div onClick={()=>setOpen(o=>!o)} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 16px',cursor:'pointer',userSelect:'none'}}>
+        <div style={{display:'flex',alignItems:'center',gap:10}}>
+          <span style={{fontSize:18}}>💎</span>
+          <div>
+            <div style={{fontSize:13,fontWeight:700,color:'#1E3A5F'}}>Set Up Your Gemini Gem</div>
+            <div style={{fontSize:11,color:'#3B82F6'}}>Follow these steps so each user gets accurate answers from their migrated history</div>
+          </div>
+        </div>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{transition:'transform .2s',transform:open?'rotate(180deg)':'none'}}><polyline points="6 9 12 15 18 9"/></svg>
+      </div>
+      {open&&(
+        <div style={{padding:'0 16px 16px'}}>
+          {/* Steps */}
+          <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:16}}>
+            {steps.map(s=>(
+              <div key={s.n} style={{display:'flex',gap:12,alignItems:'flex-start',background:'white',borderRadius:10,padding:'10px 14px',border:'1px solid #DBEAFE'}}>
+                <div style={{minWidth:28,height:28,borderRadius:'50%',background:'#1D4ED8',color:'white',display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,flexShrink:0}}>{s.n}</div>
+                <div>
+                  <div style={{fontSize:12,fontWeight:700,color:'#1E3A5F',marginBottom:2}}>{s.icon} {s.title}</div>
+                  <div style={{fontSize:11,color:'#4B5563',lineHeight:1.5}}>{s.desc}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          {/* Instructions copy box */}
+          <div style={{background:'white',border:'1px solid #BFDBFE',borderRadius:10,overflow:'hidden'}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 12px',background:'#DBEAFE',borderBottom:'1px solid #BFDBFE'}}>
+              <span style={{fontSize:11,fontWeight:700,color:'#1E40AF',textTransform:'uppercase',letterSpacing:.5}}>📋 Gem Instructions — copy & paste into Gemini</span>
+              <button onClick={copy} style={{display:'inline-flex',alignItems:'center',gap:5,fontSize:11,fontWeight:600,color:copied?'#16a34a':'#1D4ED8',background:copied?'#DCFCE7':'#EFF6FF',border:`1px solid ${copied?'#86EFAC':'#93C5FD'}`,borderRadius:6,padding:'4px 10px',cursor:'pointer',fontFamily:'inherit',transition:'all .2s'}}>
+                {copied?<><IcoDone s={11}/>Copied!</>:<><IcoUpload s={11}/>Copy</>}
+              </button>
+            </div>
+            <pre style={{margin:0,padding:'12px 14px',fontSize:11,lineHeight:1.6,color:'#1E293B',whiteSpace:'pre-wrap',wordBreak:'break-word',fontFamily:'Consolas,monospace',maxHeight:220,overflowY:'auto'}}>{GEM_INSTRUCTIONS}</pre>
+          </div>
+          <div style={{marginTop:10,padding:'8px 12px',background:'#FEF9C3',border:'1px solid #FDE68A',borderRadius:8,fontSize:11,color:'#713F12'}}>
+            <strong>Tip:</strong> The migrated folder contains max 3 files per user (All Conversations, Memory, Projects). Add them all to the Gem knowledge for best results.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ═══════════════════════════════════════════ */
+/* ═══  CLAUDE→GEMINI: MIGRATE STEP        ═══ */
+/* ═══════════════════════════════════════════ */
+const StepCL2GMigrate=({cl2gStats,cl2gDone,onRunAnother,onBack,onStart,cl2gLive,onChangeDirection,lastRunWasDry,onStartLive,cl2gTotal})=>{
+  const ring=cl2gDone?100:cl2gTotal>0?Math.min(Math.round((cl2gStats.users/cl2gTotal)*100),99):cl2gLive?5:0;
+  return(
+    <div className="fade-up">
+      {!cl2gDone&&!cl2gLive&&(
+        <>
+          <div style={{marginBottom:20}}>
+            <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Ready to Migrate</div>
+            <div style={{fontSize:13,color:C.muted}}>Claude conversations will be uploaded to Google Drive as DOCX files.</div>
+          </div>
+          <div style={{display:'flex',gap:10}}>
+            <Btn variant="ghost" onClick={onBack}>← Back</Btn>
+            <Btn onClick={onStart} style={{flex:1,justifyContent:'center'}}>Start Migration →</Btn>
+          </div>
+        </>
+      )}
+      {!cl2gDone&&cl2gLive&&(
+        <>
+          <div style={{marginBottom:20}}>
+            <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Migration in Progress</div>
+            <div style={{fontSize:13,color:C.muted}}>Claude conversations are being uploaded to Google Drive…</div>
+          </div>
+          <div style={{display:'flex',justifyContent:'center',padding:'28px 0 20px'}}>
+            <div style={{position:'relative',display:'inline-flex',alignItems:'center',justifyContent:'center'}}>
+              <Ring pct={ring} size={120} stroke={8} color={C.primary}/>
+              <div style={{position:'absolute',textAlign:'center'}}><div style={{fontSize:22,fontWeight:700,color:C.primary}}>{ring}%</div><div style={{fontSize:10,color:C.muted}}>Progress</div></div>
+            </div>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:16}}>
+            {[{label:'Users',val:cl2gStats.users,c:'#0129AC'},{label:'Files Uploaded',val:cl2gStats.files,c:'#20CC83'},{label:'Errors',val:cl2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
+              <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
+                <div style={{fontSize:22,fontWeight:700,color:e.c}}>{e.val}</div>
+                <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      {cl2gDone&&(
+        <>
+          <div style={{marginBottom:20,textAlign:'center'}}>
+            <div style={{display:'flex',justifyContent:'center',marginBottom:8,color:C.success}}><IcoDone s={48}/></div>
+            <div style={{fontSize:18,fontWeight:700,color:C.dark,marginBottom:4}}>{lastRunWasDry?'Dry Run Complete!':'Migration Complete!'}</div>
+            <div style={{fontSize:13,color:C.muted}}>{lastRunWasDry?'Preview finished — no files were uploaded.':'Claude conversations have been uploaded to Google Drive.'}</div>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:20}}>
+            {[{label:'Users Processed',val:cl2gStats.users,c:'#0129AC'},{label:lastRunWasDry?'Files (preview)':'Files Uploaded',val:cl2gStats.files,c:'#20CC83'},{label:'Errors',val:cl2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
+              <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
+                <div style={{fontSize:22,fontWeight:700,color:e.c}}>{e.val}</div>
+                <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
+              </div>
+            ))}
+          </div>
+
+          {!lastRunWasDry&&<GemSetupInstructions/>}
+
+          <div style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:16}}>
+            {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{flex:'1 1 140px',justifyContent:'center'}}><IcoRocket s={14}/> Start Live Migration</Btn>}
+            <Btn variant="ghost" onClick={onBack} style={{flex:'1 1 100px',justifyContent:'center'}}>← Options</Btn>
+            <Btn variant="ghost" onClick={()=>onRunAnother&&onRunAnother()} style={{flex:'1 1 120px',justifyContent:'center'}}>New Migration</Btn>
+            {onChangeDirection&&<Btn variant="ghost" onClick={onChangeDirection} style={{flex:'1 1 120px',justifyContent:'center'}}>⇄ Change Direction</Btn>}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
 /* ══════════════════════════════ */
 /* ═══     REPORTS PANEL      ═══ */
 /* ══════════════════════════════ */
@@ -1612,8 +2138,9 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
                     <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,flexWrap:'wrap'}}>
                       <span style={{fontSize:13,fontWeight:600,color:C.dark}}>{r.customerName||'Migration'}</span>
                       <span style={{fontSize:11,padding:'2px 8px',borderRadius:20,fontWeight:600,background:ss.bg,color:ss.color}}>{ss.label}</span>
-                      {r.direction==='c2g'&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#EFF6FF',color:'#1D4ED8',fontWeight:600}}>C2G</span>}
-                      {!r.direction&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#F0FDF4',color:'#166534',fontWeight:600}}>G2C</span>}
+                      {(r.direction==='c2g'||r.direction==='copilot-gemini')&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#EFF6FF',color:'#1D4ED8',fontWeight:600}}>C2G</span>}
+                      {r.direction==='claude-gemini'&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#FFF7ED',color:'#C2410C',fontWeight:600}}>CL2G</span>}
+                      {(!r.direction||r.direction==='gemini-copilot')&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#F0FDF4',color:'#166534',fontWeight:600}}>G2C</span>}
                     </div>
                     <div style={{fontSize:12,color:C.muted,display:'flex',gap:12}}>
                       <span>{fmtDate(r.startTime)}</span>
@@ -1635,7 +2162,7 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
                       const donePages=live?liveStats.pages:(isRunningBatch?r.progressPages:r.migratedConversations);
                       const doneErrors=live?liveStats.errors:(isRunningBatch?r.progressErrors:r.totalErrors);
                       const totalUsers=r.totalUsers||0;
-                      const filesLabel=r.direction==='c2g'?'Files':'Pages';
+                      const filesLabel=(r.direction==='c2g'||r.direction==='copilot-gemini'||r.direction==='claude-gemini')?'Files':'Pages';
                       return[
                         ['Users',isRunningBatch?`${doneUsers??0}/${totalUsers}`:doneUsers,false],
                         [filesLabel,donePages,false],
@@ -1654,13 +2181,13 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
                 {/* Per-user detail expand */}
                 {isExp&&(
                   <div style={{marginTop:12,border:`1px solid ${C.border}`,borderRadius:6,overflow:'hidden'}}>
-                    <div style={{display:'grid',gridTemplateColumns:r.direction==='c2g'?'1fr 1fr 70px 50px 50px':'1fr 80px 60px 60px',padding:'6px 12px',background:C.bg,fontSize:10,fontWeight:700,color:C.muted,textTransform:'uppercase',letterSpacing:.4}}>
-                      {r.direction==='c2g'?<><div>Source</div><div>Destination</div><div style={{textAlign:'center'}}>Status</div><div style={{textAlign:'center'}}>Files</div><div style={{textAlign:'center'}}>Errors</div></>
+                    <div style={{display:'grid',gridTemplateColumns:(r.direction==='c2g'||r.direction==='copilot-gemini'||r.direction==='claude-gemini')?'1fr 1fr 70px 50px 50px':'1fr 80px 60px 60px',padding:'6px 12px',background:C.bg,fontSize:10,fontWeight:700,color:C.muted,textTransform:'uppercase',letterSpacing:.4}}>
+                      {(r.direction==='c2g'||r.direction==='copilot-gemini'||r.direction==='claude-gemini')?<><div>Source</div><div>Destination</div><div style={{textAlign:'center'}}>Status</div><div style={{textAlign:'center'}}>Files</div><div style={{textAlign:'center'}}>Errors</div></>
                       :<><div>User</div><div style={{textAlign:'center'}}>Status</div><div style={{textAlign:'center'}}>Pages</div><div style={{textAlign:'center'}}>Errors</div></>}
                     </div>
                     {!details&&<div style={{padding:'12px',textAlign:'center',fontSize:12,color:C.muted}}><Spinner s={14}/></div>}
                     {details&&details.map((u,k)=>(
-                      r.direction==='c2g'?
+                      (r.direction==='c2g'||r.direction==='copilot-gemini'||r.direction==='claude-gemini')?
                       <div key={k} style={{display:'grid',gridTemplateColumns:'1fr 1fr 70px 50px 50px',alignItems:'center',padding:'7px 12px',borderTop:`1px solid ${C.bg}`,background:'white'}}>
                         <div style={{fontSize:11,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:C.dark}}>{u.email}</div>
                         <div style={{fontSize:11,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:C.muted}}>{u.destEmail||''}</div>
@@ -1738,6 +2265,17 @@ function App(){
   const [c2gOptions,setC2gOptions]=useState({dryRun:true,fromDate:'',toDate:''});
   const [c2gConfig,setC2gConfig]=useState({folderName:'CopilotChats'});
   const [c2gLastDry,setC2gLastDry]=useState(false);
+  // CL2G (Claude → Gemini) state
+  const [cl2gUploadData,setCl2gUploadData]=useState(null);
+  const [cl2gMappings,setCl2gMappings]=useState({});
+  const [cl2gSelectedUuids,setCl2gSelectedUuids]=useState(new Set());
+  const [cl2gOptions,setCl2gOptions]=useState({dryRun:true,fromDate:'',toDate:'',includeMemory:true,includeProjects:true});
+  const [cl2gConfig,setCl2gConfig]=useState({folderName:'ClaudeChats'});
+  const [cl2gStats,setCl2gStats]=useState({users:0,files:0,errors:0});
+  const [cl2gTotal,setCl2gTotal]=useState(0);
+  const [cl2gDone,setCl2gDone]=useState(false);
+  const [cl2gLive,setCl2gLive]=useState(false);
+  const [cl2gLastDry,setCl2gLastDry]=useState(false);
   const [chatGLoading,setChatGLoading]=useState(false);
   const [chatMLoading,setChatMLoading]=useState(false);
   const [chatUploading,setChatUploading]=useState(false);
@@ -2128,14 +2666,71 @@ function App(){
     }catch(err){addLog('error',err.message);addAgentMsg('bot',`Migration request error: ${err.message}`);setC2gLive(false);}
   },[c2gLive,c2gSelectedUsers,c2gMappings,c2gOptions,c2gConfig,addLog,addAgentMsg]);
 
+  /* Claude→Gemini migration */
+  const runCL2GMigration=useCallback(async(forceLive=false)=>{
+    if(cl2gLive)return;
+    const isDry=forceLive===true?false:cl2gOptions.dryRun;
+    if(forceLive)setCl2gOptions(p=>({...p,dryRun:false}));
+    setCl2gLastDry(isDry);
+    const keys=cl2gSelectedUuids.size>0?[...cl2gSelectedUuids]:Object.keys(cl2gMappings);
+    const pairs=[];
+    keys.forEach(uuid=>{
+      if(cl2gMappings[uuid]){
+        const u=(cl2gUploadData?.users||[]).find(u=>u.uuid===uuid);
+        pairs.push({sourceUuid:uuid,sourceDisplayName:u?.full_name||u?.email_address||uuid,sourceEmail:u?.email_address||'',destEmail:cl2gMappings[uuid]});
+      }
+    });
+    if(!pairs.length){addAgentMsg('bot','⚠️ No user mappings found. Go back and fill in the Google destination emails.');return;}
+    setCl2gDone(false);setCl2gStats({users:0,files:0,errors:0});setCl2gTotal(0);setCl2gLive(true);setStep(5);setLogs([]);
+    addLog('info',isDry?'Starting CL2G dry run...':'Starting Claude → Gemini migration...');
+    const curStats={users:0,files:0,errors:0};
+    if(sseRef.current)sseRef.current.close();
+    sseRef.current=new EventSource('/api/cl2g/migrate-log');
+    sseRef.current.onmessage=e=>{
+      try{
+        const d=JSON.parse(e.data);
+        if(d.type==='success')curStats.files++;
+        if(d.type==='error'||d.type==='warn')curStats.errors++;
+        if(d.type==='info'&&d.message?.includes('Processing:'))curStats.users++;
+        if(d.type==='total'){try{const p=JSON.parse(d.message);if(p.total)setCl2gTotal(p.total);}catch{}}
+        if(d.type==='progress'){try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;if(p.total)setCl2gTotal(p.total);}catch{}}
+        setCl2gStats({...curStats});addLog(d.type,d.message||'');
+        if(d.type==='done'){
+          try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;}catch{}
+          setCl2gStats({...curStats});
+          sseRef.current.close();setCl2gLive(false);setCl2gDone(true);setStep(6);
+          setReportRefreshKey(p=>p+1);
+          const s2={...curStats};
+          const cl2gNextSteps=isDry?'':'\n\nNext steps — Create your Gemini Gem:\n1. Go to gemini.google.com → click Gems → New Gem\n2. Under Knowledge, click "Add from Google Drive"\n3. Select your ClaudeChats folder (contains 1–3 files max per user)\n4. Paste this into the Instructions box:\n\n"You are a personal knowledge assistant. The uploaded documents contain my complete Claude conversation history. RULES: (1) Always search the uploaded documents before answering. (2) Answer using exact content from the documents — quote or closely summarize what is there. (3) If asked about a past conversation, find and return the relevant Human/Claude message pairs verbatim. (4) To follow up on a conversation, read the full conversation thread from the document and continue naturally from where it left off. (5) Only if the topic is completely absent from all documents, say so, then optionally answer from general knowledge. (6) Never invent information not in the documents."\n\n5. Name the Gem and click Save';
+
+          setTimeout(()=>addAgentMsg('bot',
+            s2.errors>0?`Migration finished with **${s2.errors} error${s2.errors!==1?'s':''}**. Check the log for details.`
+            :isDry?`Dry run complete — **${s2.files} file${s2.files!==1?'s':''}** would be uploaded for **${s2.users} user${s2.users!==1?'s':''}**. Ready to go live?`
+            :`All done! **${s2.files} file${s2.files!==1?'s':''}** uploaded to Google Drive across **${s2.users} user${s2.users!==1?'s':''}**.${cl2gNextSteps}`,
+            {statusCard:{users:s2.users,files:s2.files,errors:s2.errors,label:isDry?'Dry Run Preview':'Migration Results'},quickReplies:isDry?['Start Live Migration','Start Another']:['Start Another']}
+          ),400);
+        }
+      }catch(parseErr){console.error('CL2G SSE parse error',parseErr)}
+    };
+    sseRef.current.onerror=()=>{if(sseRef.current){sseRef.current.close();setCl2gLive(false);}addLog('error','Lost connection to migration log stream.');};
+    const sseReady=new Promise(resolve=>{sseRef.current.onopen=()=>resolve();setTimeout(resolve,1000)});
+    await sseReady;
+    try{
+      const payload={pairs,uploadId:cl2gUploadData?.uploadId,folderName:cl2gConfig.folderName||'ClaudeChats',dryRun:isDry,fromDate:cl2gOptions.fromDate||null,toDate:cl2gOptions.toDate||null,includeMemory:cl2gOptions.includeMemory!==false,includeProjects:cl2gOptions.includeProjects!==false};
+      const res=await fetch('/api/cl2g/migrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      if(!res.ok){const d=await res.json().catch(()=>({}));addLog('error',d.error||`Migration failed (${res.status})`);setCl2gLive(false);}
+    }catch(err){addLog('error',err.message);setCl2gLive(false);}
+  },[cl2gLive,cl2gSelectedUuids,cl2gMappings,cl2gOptions,cl2gConfig,cl2gUploadData,addLog,addAgentMsg]);
+
   const handleChangeDirection=useCallback(()=>{
     setMigDir(null);setStep(1);
     setUploadData(null);setMappings({});setSelectedUsers(new Set());setMigDone(false);
     setStats({users:0,pages:0,errors:0,flagged:0});setCurrentBatchId(null);setLogs([]);
     setRetryMode(false);setLastRunWasDry(false);
     setC2gMappings({});setC2gSelectedUsers(new Set());setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gTotal(0);
+    setCl2gUploadData(null);setCl2gMappings({});setCl2gSelectedUuids(new Set());setCl2gDone(false);setCl2gStats({users:0,files:0,errors:0});setCl2gTotal(0);
     if(sseRef.current){sseRef.current.close();sseRef.current=null;}
-    setLive(false);setC2gLive(false);
+    setLive(false);setC2gLive(false);setCl2gLive(false);
   },[]);
 
   /* Panel drag-to-swap */
@@ -2330,7 +2925,7 @@ function App(){
                   {/* Step 0: Connect */}
                   {step===0&&<Step0 googleAuthed={googleAuthed} setGoogleAuthed={setGoogleAuthed} msAuthed={msAuthed} setMsAuthed={setMsAuthed} googleUsers={googleUsers} setGoogleUsers={setGoogleUsers} msUsers={msUsers} setMsUsers={setMsUsers} tenantId={config.tenantId} onComplete={()=>setStep(1)}/>}
                   {/* Step 1: Direction picker */}
-                  {step===1&&<StepDirection onSelect={dir=>{setMigDir(dir);setStep(2);}} onBack={()=>setStep(0)}/>}
+                  {step===1&&<StepDirection onSelect={dir=>{setMigDir(dir);setStep(2);}} onBack={()=>setStep(0)} googleAuthed={googleAuthed} msAuthed={msAuthed}/>}
                   {/* Gemini → Copilot steps */}
                   {step===2&&migDir==='gemini-copilot'&&<Step1 googleUsers={googleUsers} googleAuthed={googleAuthed} onComplete={handleImportComplete} onBack={()=>setStep(1)} showToast={showToast} uploadData={uploadData}/>}
                   {step===3&&migDir==='gemini-copilot'&&<Step2 uploadData={uploadData} msUsers={msUsers} mappings={mappings} setMappings={setMappings} selectedUsers={selectedUsers} setSelectedUsers={setSelectedUsers} onNext={()=>{addLog('info',`User mappings ready — ${selectedUsers.size||Object.keys(mappings).length} users selected`);setStep(4);}} onBack={()=>setStep(2)} showToast={showToast}/>}
@@ -2340,6 +2935,11 @@ function App(){
                   {step===2&&migDir==='copilot-gemini'&&<StepC2GMap msUsers={msUsers} googleUsers={googleUsers} c2gMappings={c2gMappings} setC2gMappings={setC2gMappings} c2gSelectedUsers={c2gSelectedUsers} setC2gSelectedUsers={setC2gSelectedUsers} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast}/>}
                   {step===3&&migDir==='copilot-gemini'&&<StepC2GOptions c2gOptions={c2gOptions} setC2gOptions={setC2gOptions} c2gConfig={c2gConfig} setC2gConfig={setC2gConfig} googleAuthed={googleAuthed} msAuthed={msAuthed} onRun={runC2GMigration} onBack={()=>setStep(2)}/>}
                   {(step===4||step===5)&&migDir==='copilot-gemini'&&<StepC2GMigrate c2gStats={c2gStats} c2gDone={c2gDone} c2gBatchId={null} onRunAnother={()=>{setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(3)} onStart={runC2GMigration} c2gLive={c2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={c2gLastDry} onStartLive={()=>runC2GMigration(true)} c2gTotal={c2gTotal}/>}
+                  {/* Claude → Gemini steps */}
+                  {step===2&&migDir==='claude-gemini'&&<StepCL2GUpload cl2gUploadData={cl2gUploadData} setCl2gUploadData={setCl2gUploadData} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast}/>}
+                  {step===3&&migDir==='claude-gemini'&&<StepCL2GMap cl2gUploadData={cl2gUploadData} googleUsers={googleUsers} cl2gMappings={cl2gMappings} setCl2gMappings={setCl2gMappings} cl2gSelectedUuids={cl2gSelectedUuids} setCl2gSelectedUuids={setCl2gSelectedUuids} onNext={()=>setStep(4)} onBack={()=>setStep(2)} showToast={showToast}/>}
+                  {step===4&&migDir==='claude-gemini'&&<StepCL2GOptions cl2gOptions={cl2gOptions} setCl2gOptions={setCl2gOptions} cl2gConfig={cl2gConfig} setCl2gConfig={setCl2gConfig} googleAuthed={googleAuthed} onRun={runCL2GMigration} onBack={()=>setStep(3)}/>}
+                  {(step===5||step===6)&&migDir==='claude-gemini'&&<StepCL2GMigrate cl2gStats={cl2gStats} cl2gDone={cl2gDone} onRunAnother={()=>{setCl2gDone(false);setCl2gStats({users:0,files:0,errors:0});setCl2gOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(4)} onStart={runCL2GMigration} cl2gLive={cl2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={cl2gLastDry} onStartLive={()=>runCL2GMigration(true)} cl2gTotal={cl2gTotal}/>}
                 </div>
               );
             })()}
@@ -2357,8 +2957,9 @@ function App(){
                 <div onClick={()=>setStep(0)} style={{cursor:'pointer'}}>
                   <div style={{fontSize:13,fontWeight:600,lineHeight:1.2,color:C.dark}}>Migration Agent</div>
                   {migDir&&<div style={{display:'flex',alignItems:'center',gap:4,marginTop:1}}>
-                    {migDir==='gemini-copilot'?<><GoogleIcon/><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg><MsIcon/><span style={{fontSize:10,color:C.muted,marginLeft:2}}>Google → Microsoft</span></>
-                    :<><MsIcon/><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg><GoogleIcon/><span style={{fontSize:10,color:C.muted,marginLeft:2}}>Microsoft → Google</span></>}
+                    {migDir==='gemini-copilot'&&<><GoogleIcon/><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg><MsIcon/><span style={{fontSize:10,color:C.muted,marginLeft:2}}>Google → Microsoft</span></>}
+                    {migDir==='copilot-gemini'&&<><MsIcon/><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg><GoogleIcon/><span style={{fontSize:10,color:C.muted,marginLeft:2}}>Microsoft → Google</span></>}
+                    {migDir==='claude-gemini'&&<><ClaudeIcon/><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg><GoogleIcon/><span style={{fontSize:10,color:C.muted,marginLeft:2}}>Claude → Gemini</span></>}
                   </div>}
                 </div>
               </div>

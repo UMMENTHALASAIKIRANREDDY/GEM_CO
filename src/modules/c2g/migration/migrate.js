@@ -715,10 +715,7 @@ export async function migrateUserPair({
         const { downloadedImages, filesToUpload } = await downloadConversationAssets(items, accessToken, sourceUserId);
         console.log(`[C2G] Conv ${convIdx}: ${filesToUpload.length} file(s) to upload, ${downloadedImages.size} image(s)`);
 
-        let convFolder = mainFolder;
-        if (filesToUpload.length > 0) {
-          convFolder = await createDriveFolder(auth, `Conv_${convIdx}_${dateStr}`, mainFolder.id);
-        }
+        const convFolder = mainFolder;
 
         const uploadedFileLinks = new Map();
 

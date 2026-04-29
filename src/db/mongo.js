@@ -92,5 +92,9 @@ async function ensureCollections() {
     logger.info('Seeded 3 default app users');
   }
 
-  logger.info('All 11 collections verified with indexes (multi-tenant scoped)');
+  // 12. cl2gUploads — Claude export ZIP uploads for CL2G migrations
+  if (!existing.has('cl2gUploads')) await _db.createCollection('cl2gUploads');
+  await _db.collection('cl2gUploads').createIndex({ appUserId: 1, uploadTime: -1 });
+
+  logger.info('All 12 collections verified with indexes (multi-tenant scoped)');
 }

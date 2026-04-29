@@ -560,19 +560,28 @@ export function createG2CRouter(deps) {
 
   // Reports
   router.get('/reports', async (req, res) => {
-    const wsFilter = getWorkspaceFilter(req);
-    if (!wsFilter) return res.json([]);
+    const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
+    if (!appUserId) return res.json([]);
+    // Build an OR that matches G2C/C2G (full workspace) + CL2G (google-only, no msEmail) + legacy (no googleEmail)
+    const orClauses = [];
+    if (googleEmail && msEmail) orClauses.push({ appUserId, googleEmail, msEmail });
+    if (googleEmail)            orClauses.push({ appUserId, googleEmail, msEmail: { $exists: false } });
+    orClauses.push({ appUserId, googleEmail: { $exists: false } });
     const reports = await db().collection('reportsWorkspace')
-      .find({ $or: [wsFilter, { appUserId: wsFilter.appUserId, googleEmail: { $exists: false } }] }, { projection: { report: 0 } })
+      .find({ $or: orClauses }, { projection: { report: 0 } })
       .sort({ startTime: -1 }).toArray();
     res.json(reports);
   });
 
   router.get('/reports/aggregate', async (req, res) => {
-    const wsFilter = getWorkspaceFilter(req);
-    if (!wsFilter) return res.json({ totalBatches: 0, totalUsers: 0, totalPages: 0, totalErrors: 0, liveBatches: 0 });
+    const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
+    if (!appUserId) return res.json({ totalBatches: 0, totalUsers: 0, totalPages: 0, totalErrors: 0, liveBatches: 0, dryRunBatches: 0 });
+    const orClauses = [];
+    if (googleEmail && msEmail) orClauses.push({ appUserId, googleEmail, msEmail });
+    if (googleEmail)            orClauses.push({ appUserId, googleEmail, msEmail: { $exists: false } });
+    orClauses.push({ appUserId, googleEmail: { $exists: false } });
     const pipeline = [
-      { $match: { status: 'completed', $or: [wsFilter, { appUserId: wsFilter.appUserId, googleEmail: { $exists: false } }] } },
+      { $match: { status: 'completed', $or: orClauses } },
       { $group: { _id: null, totalBatches: { $sum: 1 }, totalUsers: { $sum: '$totalUsers' }, totalPages: { $sum: '$migratedConversations' }, totalErrors: { $sum: { $ifNull: ['$report.summary.total_errors', 0] } }, liveBatches: { $sum: { $cond: [{ $ne: ['$dryRun', true] }, 1, 0] } }, dryRunBatches: { $sum: { $cond: [{ $eq: ['$dryRun', true] }, 1, 0] } } } }
     ];
     const [agg] = await db().collection('reportsWorkspace').aggregate(pipeline).toArray();

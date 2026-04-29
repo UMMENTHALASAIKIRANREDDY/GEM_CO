@@ -50,6 +50,39 @@ export function createC2GRouter(deps) {
     res.status(401).json({ error: 'Not logged in' });
   }
 
+  // GET /api/c2g/user-mappings — fetch saved C2G CSV mapping from DB
+  router.get('/user-mappings', requireAuth, async (req, res) => {
+    try {
+      const { appUserId } = getWorkspaceContext(req);
+      const doc = await db().collection('userMappings').findOne({ direction: 'c2g', appUserId });
+      res.json(doc || null);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // POST /api/c2g/user-mappings — save C2G CSV mapping to DB
+  router.post('/user-mappings', requireAuth, async (req, res) => {
+    try {
+      const { appUserId, msEmail, googleEmail } = getWorkspaceContext(req);
+      const { mappings, csvEmails } = req.body;
+      await db().collection('userMappings').updateOne(
+        { direction: 'c2g', appUserId },
+        { $set: { direction: 'c2g', appUserId, msEmail, googleEmail, mappings, csvEmails, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+        { upsert: true }
+      );
+      dbLog.info(`userMappings.upsert — C2G ${Object.keys(mappings || {}).length} mappings, ${(csvEmails || []).length} CSV emails`);
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // DELETE /api/c2g/user-mappings — remove C2G CSV mapping from DB
+  router.delete('/user-mappings', requireAuth, async (req, res) => {
+    try {
+      const { appUserId } = getWorkspaceContext(req);
+      await db().collection('userMappings').deleteOne({ direction: 'c2g', appUserId });
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
   // POST /api/c2g/migrate — run Copilot→Gemini migration
   router.post('/migrate', requireAuth, async (req, res) => {
     try {
