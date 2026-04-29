@@ -2249,6 +2249,8 @@ function App(){
   KRef.current=K;
   const wsSaveTimer=useRef(null); // debounce timer for workspace saves
   const sseRef=useRef(null);
+  const silenceTimer=useRef(null);
+  const cl2gLiveRef=useRef(false);
   const [splitPct,setSplitPct]=useState(50);
   const [panelSwapped,setPanelSwapped]=useState(false);
   const [agentMsgs,setAgentMsgs]=useState(()=>lsGet(K.agentMsgs,[]));
@@ -2681,7 +2683,7 @@ function App(){
       }
     });
     if(!pairs.length){addAgentMsg('bot','⚠️ No user mappings found. Go back and fill in the Google destination emails.');return;}
-    setCl2gDone(false);setCl2gStats({users:0,files:0,errors:0});setCl2gTotal(0);setCl2gLive(true);setStep(5);setLogs([]);
+    setCl2gDone(false);setCl2gStats({users:0,files:0,errors:0});setCl2gTotal(0);setCl2gLive(true);cl2gLiveRef.current=true;setStep(5);setLogs([]);
     addLog('info',isDry?'Starting CL2G dry run...':'Starting Claude → Gemini migration...');
     const curStats={users:0,files:0,errors:0};
     if(sseRef.current)sseRef.current.close();
@@ -2695,10 +2697,24 @@ function App(){
         if(d.type==='total'){try{const p=JSON.parse(d.message);if(p.total)setCl2gTotal(p.total);}catch{}}
         if(d.type==='progress'){try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;if(p.total)setCl2gTotal(p.total);}catch{}}
         setCl2gStats({...curStats});addLog(d.type,d.message||'');
+        // Reset silence watchdog on every event
+        if(silenceTimer.current){clearTimeout(silenceTimer.current);}
+        if(cl2gLiveRef.current&&d.type!=='done'){
+          silenceTimer.current=setTimeout(()=>{
+            // No event for 12s while live — assume done event was missed
+            if(cl2gLiveRef.current){
+              addLog('info','Migration complete (connection finalised).');
+              if(sseRef.current){sseRef.current.close();}
+              setCl2gLive(false);cl2gLiveRef.current=false;setCl2gDone(true);setStep(6);
+              setReportRefreshKey(p=>p+1);
+            }
+          },12000);
+        }
         if(d.type==='done'){
+          if(silenceTimer.current){clearTimeout(silenceTimer.current);}
           try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;}catch{}
           setCl2gStats({...curStats});
-          sseRef.current.close();setCl2gLive(false);setCl2gDone(true);setStep(6);
+          sseRef.current.close();setCl2gLive(false);cl2gLiveRef.current=false;setCl2gDone(true);setStep(6);
           setReportRefreshKey(p=>p+1);
           const s2={...curStats};
           const cl2gNextSteps=isDry?'':'\n\nNext steps — Create your Gemini Gem:\n1. Go to gemini.google.com → click Gems → New Gem\n2. Under Knowledge, click "Add from Google Drive"\n3. Select your ClaudeChats folder (contains 1–3 files max per user)\n4. Paste this into the Instructions box:\n\n"You are a personal knowledge assistant. The uploaded documents contain my complete Claude conversation history. RULES: (1) Always search the uploaded documents before answering. (2) Answer using exact content from the documents — quote or closely summarize what is there. (3) If asked about a past conversation, find and return the relevant Human/Claude message pairs verbatim. (4) To follow up on a conversation, read the full conversation thread from the document and continue naturally from where it left off. (5) Only if the topic is completely absent from all documents, say so, then optionally answer from general knowledge. (6) Never invent information not in the documents."\n\n5. Name the Gem and click Save';

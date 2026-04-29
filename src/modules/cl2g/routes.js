@@ -57,10 +57,24 @@ export function createCL2GRouter({ db }) {
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
-    const send = d => res.write(`data: ${JSON.stringify(d)}\n\n`);
+
+    const send = d => {
+      res.write(`data: ${JSON.stringify(d)}\n\n`);
+      if (typeof res.flush === 'function') res.flush();
+    };
+
+    // Heartbeat every 10s to keep connection alive through proxies/browsers
+    const heartbeat = setInterval(() => {
+      res.write(': ping\n\n');
+      if (typeof res.flush === 'function') res.flush();
+    }, 10000);
+
     const handler = d => send(d);
     cl2gLogEmitter.on('log', handler);
-    req.on('close', () => cl2gLogEmitter.off('log', handler));
+    req.on('close', () => {
+      cl2gLogEmitter.off('log', handler);
+      clearInterval(heartbeat);
+    });
   });
 
   // ── POST /api/cl2g/upload ─────────────────────────────────────────────────
