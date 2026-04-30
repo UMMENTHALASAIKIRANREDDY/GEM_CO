@@ -2004,13 +2004,13 @@ How to answer my questions:
 
 Document structure: Each conversation starts with "Conversation N: Title" followed by [Human] and [Claude] labeled messages in chronological order.`;
 
-const GemSetupInstructions=()=>{
+const GemSetupInstructions=({folderName='ClaudeChats'})=>{
   const [copied,setCopied]=useState(false);
   const [open,setOpen]=useState(true);
   const copy=()=>{navigator.clipboard.writeText(GEM_INSTRUCTIONS).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500)}).catch(()=>{})};
   const steps=[
     {n:1,icon:'🌐',title:'Open Gemini Gems',desc:'Go to gemini.google.com → click Gems in the left sidebar → New Gem'},
-    {n:2,icon:'📁',title:'Add Knowledge from Google Drive',desc:'Under Knowledge, click "Add from Google Drive" → navigate to your ClaudeChats folder → select it → Insert'},
+    {n:2,icon:'📁',title:'Add Knowledge from Google Drive',desc:`Under Knowledge, click "Add from Google Drive" → navigate to your ${folderName} folder → select it → Insert`},
     {n:3,icon:'📋',title:'Paste the Gem Instructions',desc:'Copy the instructions below and paste them into the Instructions box of the Gem'},
     {n:4,icon:'💾',title:'Name & Save the Gem',desc:'Give the Gem a name (e.g. "My Claude History") → click Save — the Gem is now ready to use'},
   ];
@@ -2062,7 +2062,7 @@ const GemSetupInstructions=()=>{
 /* ═══════════════════════════════════════════ */
 /* ═══  CLAUDE→GEMINI: MIGRATE STEP        ═══ */
 /* ═══════════════════════════════════════════ */
-const StepCL2GMigrate=({cl2gStats,cl2gDone,onRunAnother,onBack,onStart,cl2gLive,onChangeDirection,lastRunWasDry,onStartLive,cl2gTotal})=>{
+const StepCL2GMigrate=({cl2gStats,cl2gDone,onRunAnother,onBack,onStart,cl2gLive,onChangeDirection,lastRunWasDry,onStartLive,cl2gTotal,folderName='ClaudeChats'})=>{
   const ring=cl2gDone?100:cl2gTotal>0?Math.min(Math.round((cl2gStats.users/cl2gTotal)*100),99):cl2gLive?5:0;
   return(
     <div className="fade-up">
@@ -2116,7 +2116,7 @@ const StepCL2GMigrate=({cl2gStats,cl2gDone,onRunAnother,onBack,onStart,cl2gLive,
             ))}
           </div>
 
-          {!lastRunWasDry&&<GemSetupInstructions/>}
+          {!lastRunWasDry&&<GemSetupInstructions folderName={folderName}/>}
 
           <div style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:16}}>
             {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{flex:'1 1 140px',justifyContent:'center'}}><IcoRocket s={14}/> Start Live Migration</Btn>}
@@ -2734,7 +2734,8 @@ function App(){
           sseRef.current.close();setC2gLive(false);setC2gDone(true);setStep(5);
           setReportRefreshKey(p=>p+1);
           const s2={...curStats};
-          const nextSteps=isDry?'':'\n\nNext steps (each migrated user should do this):\n1. Login to Google Gemini (gemini.google.com)\n2. Create a new Gem\n3. Upload the migrated DOCX file(s) from Google Drive as Knowledge\n4. Set instructions: "Use this file as knowledge and give responses from this document. If the user asks something not in the document, answer generally."\n5. Save the Gem';
+          const c2gFolder=c2gConfig.folderName||'CopilotChats';
+          const nextSteps=isDry?'':`\n\nNext steps (each migrated user should do this):\n1. Login to Google Gemini (gemini.google.com)\n2. Create a new Gem\n3. Under Knowledge, click "Add from Google Drive" → navigate to your ${c2gFolder} folder → select it → Insert\n4. Set instructions: "Use this file as knowledge and give responses from this document. If the user asks something not in the document, answer generally."\n5. Save the Gem`;
           setTimeout(()=>addAgentMsg('bot',
             s2.errors>0
               ? `Migration finished with **${s2.errors} error${s2.errors!==1?'s':''}**. Check below and retry if needed.`
@@ -2814,7 +2815,8 @@ function App(){
           // Delay report refresh to allow DB write to complete
           setTimeout(()=>setReportRefreshKey(p=>p+1),3000);
           const s2={...curStats};
-          const cl2gNextSteps=isDry?'':'\n\nNext steps — Create your Gemini Gem:\n1. Go to gemini.google.com → click Gems → New Gem\n2. Under Knowledge, click "Add from Google Drive"\n3. Select your ClaudeChats folder (contains 1–3 files max per user)\n4. Paste this into the Instructions box:\n\n"You are a personal knowledge assistant. The uploaded documents contain my complete Claude conversation history. RULES: (1) Always search the uploaded documents before answering. (2) Answer using exact content from the documents — quote or closely summarize what is there. (3) If asked about a past conversation, find and return the relevant Human/Claude message pairs verbatim. (4) To follow up on a conversation, read the full conversation thread from the document and continue naturally from where it left off. (5) Only if the topic is completely absent from all documents, say so, then optionally answer from general knowledge. (6) Never invent information not in the documents."\n\n5. Name the Gem and click Save';
+          const cl2gFolder=cl2gConfig.folderName||'ClaudeChats';
+          const cl2gNextSteps=isDry?'':`\n\nNext steps — Create your Gemini Gem:\n1. Go to gemini.google.com → click Gems → New Gem\n2. Under Knowledge, click "Add from Google Drive"\n3. Select your ${cl2gFolder} folder (contains 1–3 files max per user)\n4. Paste this into the Instructions box:\n\n"You are a personal knowledge assistant. The uploaded documents contain my complete Claude conversation history. RULES: (1) Always search the uploaded documents before answering. (2) Answer using exact content from the documents — quote or closely summarize what is there. (3) If asked about a past conversation, find and return the relevant Human/Claude message pairs verbatim. (4) To follow up on a conversation, read the full conversation thread from the document and continue naturally from where it left off. (5) Only if the topic is completely absent from all documents, say so, then optionally answer from general knowledge. (6) Never invent information not in the documents."\n\n5. Name the Gem and click Save`;
 
           setTimeout(()=>addAgentMsg('bot',
             s2.errors>0?`Migration finished with **${s2.errors} error${s2.errors!==1?'s':''}**. Check the log for details.`
@@ -3065,7 +3067,7 @@ function App(){
                   {step===2&&migDir==='claude-gemini'&&<StepCL2GUpload cl2gUploadData={cl2gUploadData} setCl2gUploadData={setCl2gUploadData} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast}/>}
                   {step===3&&migDir==='claude-gemini'&&<StepCL2GMap cl2gUploadData={cl2gUploadData} googleUsers={googleUsers} cl2gMappings={cl2gMappings} setCl2gMappings={setCl2gMappings} cl2gSelectedUuids={cl2gSelectedUuids} setCl2gSelectedUuids={setCl2gSelectedUuids} onNext={()=>setStep(4)} onBack={()=>setStep(2)} showToast={showToast}/>}
                   {step===4&&migDir==='claude-gemini'&&<StepCL2GOptions cl2gOptions={cl2gOptions} setCl2gOptions={setCl2gOptions} cl2gConfig={cl2gConfig} setCl2gConfig={setCl2gConfig} googleAuthed={googleAuthed} onRun={runCL2GMigration} onBack={()=>setStep(3)}/>}
-                  {(step===5||step===6)&&migDir==='claude-gemini'&&<StepCL2GMigrate cl2gStats={cl2gStats} cl2gDone={cl2gDone} onRunAnother={()=>{setCl2gDone(false);setCl2gStats({users:0,files:0,errors:0});setCl2gOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(4)} onStart={runCL2GMigration} cl2gLive={cl2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={cl2gLastDry} onStartLive={()=>runCL2GMigration(true)} cl2gTotal={cl2gTotal}/>}
+                  {(step===5||step===6)&&migDir==='claude-gemini'&&<StepCL2GMigrate cl2gStats={cl2gStats} cl2gDone={cl2gDone} onRunAnother={()=>{setCl2gDone(false);setCl2gStats({users:0,files:0,errors:0});setCl2gOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(4)} onStart={runCL2GMigration} cl2gLive={cl2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={cl2gLastDry} onStartLive={()=>runCL2GMigration(true)} cl2gTotal={cl2gTotal} folderName={cl2gConfig.folderName||'ClaudeChats'}/>}
                 </div>
               );
             })()}
