@@ -38,41 +38,6 @@ const AGENT_TOOLS = [
   {
     type: 'function',
     function: {
-      name: 'navigate_to_step',
-      description: 'Navigate the user to a specific migration step in the UI',
-      parameters: {
-        type: 'object',
-        properties: {
-          step_index: { type: 'number', description: '0=Connect Clouds, 1=Import Data, 2=Map Users, 3=Options, 4=Migrate, 5=Complete' },
-          reason: { type: 'string', description: 'Brief reason for navigating' }
-        },
-        required: ['step_index']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'start_migration',
-      description: 'Start a migration run. Only call when user explicitly asks to start or run migration.',
-      parameters: {
-        type: 'object',
-        properties: { dry_run: { type: 'boolean', description: 'true = preview only (recommended first), false = live migration' } },
-        required: ['dry_run']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'retry_failed',
-      description: 'Retry failed migration items from the last batch',
-      parameters: { type: 'object', properties: {}, required: [] }
-    }
-  },
-  {
-    type: 'function',
-    function: {
       name: 'show_reports',
       description: 'Open the migration reports panel',
       parameters: { type: 'object', properties: {}, required: [] }
@@ -121,6 +86,14 @@ const AGENT_TOOLS = [
         },
         required: ['users', 'files', 'errors']
       }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'show_post_migration_guide',
+      description: 'Show post-migration setup instructions. Call when user asks "what do I do next?", "how do I set up the Gem?", "where is my Copilot agent?", or clicks "What do I do next?"',
+      parameters: { type: 'object', properties: {}, required: [] }
     }
   }
 ];
@@ -1016,7 +989,7 @@ export function createG2CRouter(deps) {
 
     const {
       step = 0, migDir = null, live = false, migDone = false, stats = {}, lastRunWasDry = false,
-      uploadData = null, googleAuthed = false, msAuthed = false,
+      agentMode = 'guide', uploadData = null, googleAuthed = false, msAuthed = false,
       mappings_count = 0, selected_users_count = 0, options = {}
     } = migrationState;
 
@@ -1024,10 +997,22 @@ export function createG2CRouter(deps) {
       ? `\nRecent migration log (${migrationLogs.length} entries):\n${migrationLogs.join('\n')}\n`
       : '';
 
-    const systemPrompt = `You are the CloudFuze Migration Agent — a knowledgeable, conversational co-pilot for migrating conversations between Google Workspace and Microsoft 365 in both directions.
+    const dirLabel = migDir === 'gemini-copilot' ? 'Google Gemini → Microsoft Copilot'
+      : migDir === 'copilot-gemini' ? 'Microsoft Copilot → Google Drive'
+      : migDir === 'claude-gemini' ? 'Claude → Google Gemini'
+      : 'not selected';
 
-Current migration state:
-- Direction: ${migDir === 'gemini-copilot' ? 'Google Gemini → Microsoft Copilot' : migDir === 'copilot-gemini' ? 'Microsoft Copilot → Google Drive' : 'not selected'}
+    const modeContext = agentMode === 'running'
+      ? 'Migration is currently running. Answer questions about progress from the logs above. Do not suggest navigating anywhere or starting/stopping anything.'
+      : agentMode === 'done'
+      ? 'Migration is complete. If the user asks what to do next or how to set up Gemini Gems or find the Copilot agent, call show_post_migration_guide.'
+      : 'Guide the user through their current step. Answer questions clearly and concisely.';
+
+    const systemPrompt = `You are the CloudFuze Migration Agent — a helpful, knowledgeable guide for migrating conversations between Google Workspace and Microsoft 365.
+
+Current state:
+- Agent mode: ${agentMode} — ${modeContext}
+- Direction: ${dirLabel}
 - Step: ${step} — ${STEP_NAMES[step] || 'Unknown'}
 - Google Workspace connected: ${googleAuthed}
 - Microsoft 365 connected: ${msAuthed}
@@ -1039,13 +1024,14 @@ Current migration state:
 - Last run: ${lastRunWasDry ? 'dry run' : 'live'}
 - Stats: ${stats.users || 0} users · ${stats.pages || 0} pages/files migrated · ${stats.errors || 0} errors
 ${logsSection}
-Use the state and logs above to give specific, relevant answers. When the user asks about progress, results, or errors — answer from the actual data above, citing real numbers.
+Answer from the actual data above. Cite real numbers when relevant.
 
-Formatting: use markdown freely — **bold** for key numbers and values, - bullet lists for steps or options, ## headers only for longer structured answers. Match length to need.
+Formatting: markdown — **bold** for key values, bullet lists for steps, ## headers only for long answers. Match length to need.
 
-Personality: direct, warm, expert. Like a senior engineer helping a colleague. Never narrate what step the user is on — offer to help them move forward instead. Ask one focused question when you notice something worth exploring.
+Personality: direct, warm, expert. Like a senior engineer helping a colleague.
 
-You CAN take real actions via tools: navigate steps, start migration, retry, show reports, show mapping, show_status_card.`;
+You CAN take actions via tools: show_reports, show_mapping, show_status_card, show_post_migration_guide, get_migration_status, explain_log.
+Never suggest navigating to a step, starting a migration, or retrying — the user controls those buttons.`;
 
     const messages = [
       { role: 'system', content: systemPrompt },
@@ -1057,8 +1043,8 @@ You CAN take real actions via tools: navigate steps, start migration, retry, sho
       let response = await callAI(messages, AGENT_TOOLS);
       let choice = response.choices?.[0];
       let actionToExecute = null;
-      let navigateToStep = null;
       let statusCardData = null;
+      let postMigrationMigDir = null;
 
       if (choice?.finish_reason === 'tool_calls' && choice.message?.tool_calls) {
         const toolResults = [];
@@ -1067,22 +1053,6 @@ You CAN take real actions via tools: navigate steps, start migration, retry, sho
           try {
             const args = JSON.parse(tc.function.arguments || '{}');
             switch (tc.function.name) {
-              case 'navigate_to_step': {
-                const idx = Math.max(0, Math.min(5, args.step_index));
-                navigateToStep = idx;
-                result = JSON.stringify({ execute: 'navigate', step: idx, name: STEP_NAMES[idx] });
-                break;
-              }
-              case 'start_migration': {
-                actionToExecute = args.dry_run ? 'start_migration_dry' : 'start_migration_live';
-                result = JSON.stringify({ execute: actionToExecute, dry_run: args.dry_run });
-                break;
-              }
-              case 'retry_failed': {
-                actionToExecute = 'retry_failed';
-                result = JSON.stringify({ execute: 'retry_failed' });
-                break;
-              }
               case 'show_reports': {
                 actionToExecute = 'show_reports';
                 result = JSON.stringify({ execute: 'show_reports' });
@@ -1091,6 +1061,12 @@ You CAN take real actions via tools: navigate steps, start migration, retry, sho
               case 'show_mapping': {
                 actionToExecute = 'show_mapping';
                 result = JSON.stringify({ execute: 'show_mapping' });
+                break;
+              }
+              case 'show_post_migration_guide': {
+                actionToExecute = 'show_post_migration_guide';
+                postMigrationMigDir = migDir;
+                result = JSON.stringify({ execute: 'show_post_migration_guide', migDir });
                 break;
               }
               case 'get_migration_status': {
@@ -1103,7 +1079,7 @@ You CAN take real actions via tools: navigate steps, start migration, retry, sho
                 const isErr = /error|fail|exception/i.test(line);
                 const isWarn = /warn|skip|flag/i.test(line);
                 const isSuc = /success|created|complete/i.test(line);
-                result = isErr ? `This is an error: the migration engine encountered a problem. If this repeats, use Retry Failed.`
+                result = isErr ? `This is an error: the migration engine encountered a problem. Retry failed items after migration completes.`
                   : isWarn ? `This is a warning: something was skipped or needs attention but migration continued.`
                   : isSuc ? `This is a success message: the item was migrated successfully.`
                   : `This is an informational log from the migration engine showing normal progress.`;
@@ -1125,20 +1101,9 @@ You CAN take real actions via tools: navigate steps, start migration, retry, sho
       }
 
       const reply = choice?.message?.content || "I couldn't generate a response. Please try again.";
-      let widget = null;
-      const navStep = navigateToStep !== null ? navigateToStep : step;
-      if (!googleAuthed || !msAuthed) {
-        widget = { type: 'auth' };
-      } else if (navStep === 1 && !uploadData) {
-        widget = { type: 'upload' };
-      } else if ((navStep === 3 || actionToExecute === 'start_migration_dry' || actionToExecute === 'start_migration_live') && !options.hasFilePath) {
-        widget = { type: 'options' };
-      }
-
       const payload = { reply, quickReplies: [] };
       if (actionToExecute) payload.action = actionToExecute;
-      if (navigateToStep !== null) payload.navigate = navigateToStep;
-      if (widget) payload.widget = widget;
+      if (postMigrationMigDir) payload.migDir = postMigrationMigDir;
       if (statusCardData) payload.statusCard = statusCardData;
 
       res.json(payload);
