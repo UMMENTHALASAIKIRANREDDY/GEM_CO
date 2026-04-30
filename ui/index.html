@@ -1411,10 +1411,26 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
             <div key={em} style={{display:'grid',gridTemplateColumns:'32px 1fr 1fr',alignItems:'center',padding:'9px 14px',borderBottom:i<filtered.length-1?`1px solid ${C.bg}`:'none',background:c2gSelectedUsers.has(em)?C.tint:'white',transition:'background .15s',cursor:'pointer'}} onClick={()=>toggleUser(em)}>
               <input type="checkbox" checked={c2gSelectedUsers.has(em)} onChange={()=>toggleUser(em)} style={{accentColor:C.primary,width:15,height:15}} onClick={e=>e.stopPropagation()}/>
               <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}><Avatar name={u.displayName||em} email={em} size={26}/><span style={{fontSize:12,color:C.muted,fontFamily:'monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{em}</span></div>
-              <input value={c2gMappings[em]||''} onChange={e=>{e.stopPropagation();handleMappingChange(em,e.target.value)}}
-                placeholder="Enter Google email..."
-                style={{border:`1px solid ${mapped?C.primary+'50':C.border}`,borderRadius:5,padding:'5px 9px',fontSize:12,fontFamily:'inherit',outline:'none',marginRight:8,width:'100%',background:mapped?C.tint:'white'}}
-                onFocus={e=>{e.stopPropagation();e.target.style.borderColor=C.primary}} onBlur={e=>e.target.style.borderColor=mapped?C.primary+'50':C.border} onClick={e=>e.stopPropagation()}/>
+              <div style={{display:'flex',alignItems:'center',gap:6,minWidth:0,paddingRight:8}} onClick={e=>e.stopPropagation()}>
+                {mapped?(
+                  <>
+                    <Avatar name={c2gMappings[em]} email={c2gMappings[em]} size={22}/>
+                    <span style={{fontSize:12,color:C.dark,fontFamily:'monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>{c2gMappings[em]}</span>
+                    <button onClick={e=>{e.stopPropagation();handleMappingChange(em,'')}} title="Clear mapping" style={{flexShrink:0,background:'none',border:'none',cursor:'pointer',color:C.muted,fontSize:14,lineHeight:1,padding:'0 2px'}} onMouseEnter={e=>e.currentTarget.style.color='#ef4444'} onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
+                  </>
+                ):(
+                  googleUsers.length>0?(
+                    <select defaultValue="" onChange={e=>{e.stopPropagation();if(e.target.value)handleMappingChange(em,e.target.value);e.target.value=''}}
+                      onClick={e=>e.stopPropagation()}
+                      style={{border:'none',background:'transparent',fontSize:12,fontFamily:'inherit',color:C.muted,cursor:'pointer',outline:'none',width:'100%',padding:'2px 0'}}>
+                      <option value="" disabled>— assign —</option>
+                      {googleUsers.map(g=><option key={g.email||g.id} value={g.email||''}>{g.email||g.name}</option>)}
+                    </select>
+                  ):(
+                    <span style={{color:C.muted,fontSize:13}}>–</span>
+                  )
+                )}
+              </div>
             </div>
           );
         })}
