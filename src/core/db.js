@@ -26,9 +26,7 @@ function stripDbFromUri(raw) {
   const pathStart = raw.indexOf('/', afterScheme + 3);
   if (pathStart === -1) return raw; // no /dbname present, return as-is
   const queryStart = raw.indexOf('?', pathStart);
-  return queryStart === -1
-    ? raw.substring(0, pathStart)
-    : raw.substring(0, pathStart) + raw.substring(queryStart);
+  return raw.substring(0, pathStart);
 }
 
 function buildBaseUri() {
