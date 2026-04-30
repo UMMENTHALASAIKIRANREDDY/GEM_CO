@@ -22,7 +22,7 @@ COPY ui/ ./ui/
 RUN mkdir -p uploads customers
 
 # Expose the application port
-EXPOSE 3000
+EXPOSE 4000
 
 # Set NODE_ENV to production
 ENV NODE_ENV=production
