@@ -1276,24 +1276,34 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
       body:JSON.stringify({mappings:m,csvEmails:csv??null})}).catch(()=>{});
   };
 
+  // Dedup: ensure each destination email is used at most once (first source wins)
+  const dedupMappings=(mappings,userList)=>{
+    const used=new Set();const out={};
+    userList.forEach(u=>{
+      const em=(u.mail||u.userPrincipalName||'').toLowerCase();
+      const dest=(mappings[em]||'').toLowerCase();
+      if(dest&&!used.has(dest)){out[em]=dest;used.add(dest);}
+      else out[em]='';
+    });
+    return out;
+  };
+
   const runAutoMap=(currentMappings,currentCsv)=>{
-    if(currentCsv!==null)return; // don't overwrite CSV-sourced mappings
+    if(currentCsv!==null)return;
     if(!msUsers.length)return;
     const byLocal={};
     googleUsers.forEach(u=>{const em=(u.email||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
-    const m={...currentMappings};let changed=false;
-    const used=new Set(Object.values(m).filter(Boolean));
+    const m={};const used=new Set();
     msUsers.forEach(u=>{
       const em=(u.mail||u.userPrincipalName||'').toLowerCase();
-      if(!m[em]){
-        const loc=em.split('@')[0];const dest=byLocal[loc]||'';
-        if(dest&&!used.has(dest)){m[em]=dest;used.add(dest);}
-        else m[em]='';
-        changed=true;
-      }
+      const existing=(currentMappings[em]||'').toLowerCase();
+      if(existing&&!used.has(existing)){m[em]=existing;used.add(existing);}
+      else{const loc=em.split('@')[0];const dest=byLocal[loc]||'';
+        if(dest&&!used.has(dest)){m[em]=dest;used.add(dest);}else m[em]='';}
     });
-    if(changed)setC2gMappings(m);
-    if(c2gSelectedUsers.size===0)setC2gSelectedUsers(new Set(msUsers.map(u=>(u.mail||u.userPrincipalName||'').toLowerCase())));
+    setC2gMappings(m);
+    // Auto-select only mapped users
+    setC2gSelectedUsers(new Set(Object.entries(m).filter(([,v])=>v).map(([k])=>k)));
   };
 
   // On mount: load from DB first, then auto-map only if no CSV saved
@@ -1303,10 +1313,10 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
         setCsvEmails(doc.csvEmails);
         csvEmailsRef.current=doc.csvEmails;
         if(doc.mappings){
-          const merged={...c2gMappings,...doc.mappings};
-          setC2gMappings(merged);
+          const deduped=dedupMappings({...c2gMappings,...doc.mappings},msUsers);
+          setC2gMappings(deduped);
+          setC2gSelectedUsers(new Set(doc.csvEmails.filter(e=>deduped[e])));
         }
-        setC2gSelectedUsers(new Set(doc.csvEmails.filter(e=>doc.mappings?.[e])));
       } else {
         csvEmailsRef.current=null;
         runAutoMap(c2gMappings,null);
@@ -1736,19 +1746,16 @@ const StepCL2GMap=({cl2gUploadData,googleUsers,cl2gMappings,setCl2gMappings,cl2g
     if(!users.length||!googleUsers.length)return;
     const byLocal={};
     googleUsers.forEach(u=>{const em=(u.email||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
-    const m={...cl2gMappings};let changed=false;
-    const used=new Set(Object.values(m).filter(Boolean));
+    const m={};const used=new Set();
     users.forEach(u=>{
-      if(!m[u.uuid]){
-        const loc=(u.email_address||'').toLowerCase().split('@')[0];
-        const dest=byLocal[loc]||'';
-        if(dest&&!used.has(dest)){m[u.uuid]=dest;used.add(dest);}
-        else m[u.uuid]='';
-        changed=true;
-      }
+      const existing=(cl2gMappings[u.uuid]||'').toLowerCase();
+      if(existing&&!used.has(existing)){m[u.uuid]=existing;used.add(existing);}
+      else{const loc=(u.email_address||'').toLowerCase().split('@')[0];const dest=byLocal[loc]||'';
+        if(dest&&!used.has(dest)){m[u.uuid]=dest;used.add(dest);}else m[u.uuid]='';}
     });
-    if(changed)setCl2gMappings(m);
-    if(cl2gSelectedUuids.size===0)setCl2gSelectedUuids(new Set(users.map(u=>u.uuid)));
+    setCl2gMappings(m);
+    // Auto-select only mapped users
+    setCl2gSelectedUuids(new Set(Object.entries(m).filter(([,v])=>v).map(([k])=>k)));
   },[users,googleUsers]);
 
   const persistMappings=(mappings,csv)=>{
