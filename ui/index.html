@@ -1315,9 +1315,8 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
   };
 
   const downloadCsv=()=>{
-    const src=csvEmails||msUsers.map(u=>(u.mail||u.userPrincipalName||'').toLowerCase());
-    const rows=src.map(e=>`"${e}","${c2gMappings[e]||''}"`);
-    const csv='M365 Email,Google Email\n'+rows.join('\n');
+    const rows=msUsers.map(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();return`"${em}","${c2gMappings[em]||''}"`;});
+    const csv='Source User,Destination User\n'+rows.join('\n');
     const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='c2g-user-mappings.csv';a.click();
     showToast('CSV downloaded.');
   };
