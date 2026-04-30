@@ -52,10 +52,14 @@ async function ensureCollections() {
   // 3. uploads
   if (!existing.has('uploads')) await _db.createCollection('uploads');
 
-  // 4. userMappings — one mapping doc per direction+user; batchId index was wrong (all docs had null)
+  // 4. userMappings — one mapping doc per direction+user
   if (!existing.has('userMappings')) await _db.createCollection('userMappings');
   try { await _db.collection('userMappings').dropIndex('batchId_1'); } catch {}
-  await _db.collection('userMappings').createIndex({ direction: 1, appUserId: 1 }, { unique: true });
+  try { await _db.collection('userMappings').dropIndex('direction_1_appUserId_1'); } catch {}
+  await _db.collection('userMappings').createIndex(
+    { direction: 1, appUserId: 1 },
+    { unique: true, sparse: true }  // sparse: excludes docs where direction/appUserId are null
+  );
 
   // 5. reportsWorkspace
   if (!existing.has('reportsWorkspace')) await _db.createCollection('reportsWorkspace');
