@@ -2796,21 +2796,23 @@ function App(){
         if(silenceTimer.current){clearTimeout(silenceTimer.current);}
         if(cl2gLiveRef.current&&d.type!=='done'){
           silenceTimer.current=setTimeout(()=>{
-            // No event for 12s while live — assume done event was missed
+            // No event for 60s while live — assume done event was missed
             if(cl2gLiveRef.current){
               addLog('info','Migration complete (connection finalised).');
               if(sseRef.current){sseRef.current.close();}
               setCl2gLive(false);cl2gLiveRef.current=false;setCl2gDone(true);setStep(6);
-              setReportRefreshKey(p=>p+1);
+              // Delay report refresh to allow server to finish writing DB
+              setTimeout(()=>setReportRefreshKey(p=>p+1),3000);
             }
-          },12000);
+          },60000);
         }
         if(d.type==='done'){
           if(silenceTimer.current){clearTimeout(silenceTimer.current);}
           try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;}catch{}
           setCl2gStats({...curStats});
           sseRef.current.close();setCl2gLive(false);cl2gLiveRef.current=false;setCl2gDone(true);setStep(6);
-          setReportRefreshKey(p=>p+1);
+          // Delay report refresh to allow DB write to complete
+          setTimeout(()=>setReportRefreshKey(p=>p+1),3000);
           const s2={...curStats};
           const cl2gNextSteps=isDry?'':'\n\nNext steps — Create your Gemini Gem:\n1. Go to gemini.google.com → click Gems → New Gem\n2. Under Knowledge, click "Add from Google Drive"\n3. Select your ClaudeChats folder (contains 1–3 files max per user)\n4. Paste this into the Instructions box:\n\n"You are a personal knowledge assistant. The uploaded documents contain my complete Claude conversation history. RULES: (1) Always search the uploaded documents before answering. (2) Answer using exact content from the documents — quote or closely summarize what is there. (3) If asked about a past conversation, find and return the relevant Human/Claude message pairs verbatim. (4) To follow up on a conversation, read the full conversation thread from the document and continue naturally from where it left off. (5) Only if the topic is completely absent from all documents, say so, then optionally answer from general knowledge. (6) Never invent information not in the documents."\n\n5. Name the Gem and click Save';
 

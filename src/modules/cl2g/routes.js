@@ -216,6 +216,7 @@ export function createCL2GRouter({ db }) {
           const { migrateUserPair } = await import('./migration/migrate.js');
           const reportUsers = [];
 
+          dbLog.info(`[CL2G] Starting ${isDryRun ? 'dry run' : 'migration'} — ${pairs.length} user(s), uploadId=${uploadId}, extractPath=${uploadDoc.extractPath}`);
           cl2gLog('info', `Starting CL2G ${isDryRun ? 'dry run' : 'migration'} for ${pairs.length} user(s)...`);
           cl2gLog('total', JSON.stringify({ total: pairs.length }));
 
@@ -245,9 +246,12 @@ export function createCL2GRouter({ db }) {
             const status = r.errors?.length ? (r.filesUploaded > 0 ? 'partial' : 'failed') : 'success';
             reportUsers.push({ email: pair.sourceEmail, destEmail: pair.destEmail, displayName: r.sourceDisplayName, status, pages_created: r.filesUploaded, conversations_processed: r.conversationsCount, error_count: r.errors.length, errors: r.errors.map(e => ({ error_message: e })), files: r.files });
 
-            if (r.errors.length) r.errors.forEach(e => cl2gLog('warn', e));
+            if (r.errors.length) {
+              r.errors.forEach(e => { cl2gLog('warn', e); dbLog.warn(`[CL2G] ${r.sourceDisplayName}: ${e}`); });
+            }
             files  += r.filesUploaded;
             errors += r.errors.length;
+            dbLog.info(`[CL2G] ${r.sourceDisplayName} → ${pair.destEmail}: ${r.filesUploaded} files uploaded, ${r.errors.length} error(s)`);
             cl2gLog(status === 'failed' ? 'warn' : 'success', `${r.sourceDisplayName} → ${pair.destEmail}: ${r.filesUploaded} files, ${r.errors.length} error(s)`);
             cl2gLog('progress', JSON.stringify({ files, errors, users: reportUsers.length, total: pairs.length }));
           }
