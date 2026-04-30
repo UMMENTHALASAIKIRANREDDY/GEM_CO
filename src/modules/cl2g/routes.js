@@ -267,17 +267,31 @@ export function createCL2GRouter({ db }) {
           }
 
           const finalStatus = errors > 0 && files === 0 ? 'failed' : 'completed';
-          await db().collection('reportsWorkspace').updateOne(
-            { _id: batchId },
-            { $set: { status: finalStatus, endTime: new Date(), migratedConversations: files, migratedUsers: reportUsers.filter(u => u.status !== 'failed').length, failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors, report: { summary: { total_users: pairs.length, total_pages_created: files, total_errors: errors }, users: reportUsers } } }
-          );
+          // Isolate the final DB write — a failure here must not hide the real file count
+          try {
+            await db().collection('reportsWorkspace').updateOne(
+              { _id: batchId },
+              { $set: { status: finalStatus, endTime: new Date(), migratedConversations: files, migratedUsers: reportUsers.filter(u => u.status !== 'failed').length, failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors, report: { summary: { total_users: pairs.length, total_pages_created: files, total_errors: errors }, users: reportUsers } } }
+            );
+          } catch (dbErr) {
+            dbLog.error(`[CL2G] Final report DB write failed: ${dbErr.message}. Retrying...`);
+            await db().collection('reportsWorkspace').updateOne(
+              { _id: batchId },
+              { $set: { status: finalStatus, endTime: new Date(), migratedConversations: files, migratedUsers: reportUsers.filter(u => u.status !== 'failed').length, failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors, report: { summary: { total_users: pairs.length, total_pages_created: files, total_errors: errors }, users: reportUsers } } }
+            ).catch(e2 => dbLog.error(`[CL2G] Retry also failed: ${e2.message}`));
+          }
           cl2gLog('done', JSON.stringify({ files, errors, users: pairs.length, batchId }));
 
         } catch (e) {
           console.error('[CL2G] Unhandled error:', e);
+          dbLog.error(`[CL2G] Unhandled error after ${files} file(s) uploaded: ${e.message}`);
           cl2gLog('error', e.message || String(e));
-          await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: { status: 'failed', endTime: new Date(), error: e.message } }).catch(() => {});
-          cl2gLog('done', JSON.stringify({ files: 0, errors: 1, users: 0, batchId }));
+          // Use actual files/errors counts so UI shows correct numbers even on error
+          await db().collection('reportsWorkspace').updateOne(
+            { _id: batchId },
+            { $set: { status: files > 0 ? 'completed' : 'failed', endTime: new Date(), migratedConversations: files, totalErrors: errors + 1, error: e.message } }
+          ).catch(() => {});
+          cl2gLog('done', JSON.stringify({ files, errors: errors + 1, users: pairs.length, batchId }));
         }
       });
 
