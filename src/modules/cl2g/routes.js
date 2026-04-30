@@ -24,11 +24,20 @@ export function createCL2GRouter({ db }) {
 
   const upload = multer({
     dest: uploadsDir,
+    limits: { fileSize: 500 * 1024 * 1024 }, // 500 MB max
     fileFilter: (_req, file, cb) => {
       if (file.originalname.toLowerCase().endsWith('.zip')) cb(null, true);
       else cb(new Error('Only ZIP files are accepted'));
     },
   });
+
+  // Wrap multer to return JSON errors instead of HTML
+  function uploadMiddleware(req, res, next) {
+    upload.single('file')(req, res, (err) => {
+      if (err) return res.status(400).json({ error: err.message || 'Upload failed' });
+      next();
+    });
+  }
 
   // SSE emitter for migration logs
   const cl2gLogEmitter = new EventEmitter();
@@ -78,7 +87,7 @@ export function createCL2GRouter({ db }) {
   });
 
   // ── POST /api/cl2g/upload ─────────────────────────────────────────────────
-  router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
+  router.post('/upload', requireAuth, uploadMiddleware, async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
     const { appUserId, googleEmail } = getCtx(req);
@@ -130,7 +139,17 @@ export function createCL2GRouter({ db }) {
         .find({ appUserId })
         .sort({ uploadTime: -1 })
         .toArray();
-      res.json(uploads);
+
+      // Auto-purge records whose extracted files no longer exist on disk (server restart wipes /uploads)
+      const staleIds = uploads
+        .filter(u => u.extractPath && !fs.existsSync(u.extractPath))
+        .map(u => u._id);
+      if (staleIds.length) {
+        await db().collection('cl2gUploads').deleteMany({ _id: { $in: staleIds } });
+        dbLog.info(`cl2gUploads.purge — removed ${staleIds.length} stale record(s)`);
+      }
+
+      res.json(uploads.filter(u => !staleIds.includes(u._id)));
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
