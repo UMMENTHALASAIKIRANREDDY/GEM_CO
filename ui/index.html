@@ -2789,7 +2789,19 @@ function App(){
 
   /* Agent chat helpers */
   const addAgentMsg=useCallback((role,content,extras={})=>{
-    setAgentMsgs(prev=>[...prev,{id:Date.now()+Math.random(),role,content,...extras}]);
+    setAgentMsgs(prev=>{
+      // Strip widgets and quickReplies from previous messages so only the latest shows them
+      const hasWidget=!!extras.widget;
+      const hasQR=!!(extras.quickReplies?.length);
+      const cleaned=prev.map(m=>{
+        if(!m.widget&&!m.quickReplies)return m;
+        const upd={...m};
+        if(hasWidget&&m.widget?.type===extras.widget?.type)delete upd.widget;
+        if(hasQR)delete upd.quickReplies;
+        return upd;
+      });
+      return [...cleaned,{id:Date.now()+Math.random(),role,content,...extras}];
+    });
   },[]);
 
   const sendToAgent=useCallback(async(overrideMsg,isSystem=false)=>{
@@ -2814,7 +2826,8 @@ function App(){
       const data=await res.json();
       if(data.reply)addAgentMsg('bot',data.reply,{quickReplies:data.quickReplies,...(data.widget&&{widget:data.widget}),...(data.statusCard&&{statusCard:data.statusCard}),...(data.chips&&{chips:data.chips})});
       // Execute real actions returned by agent tools
-      if(data.navigate!=null)setStep(data.navigate);
+      // Only navigate if agent explicitly requests it AND user is not mid-migration
+      if(data.navigate!=null&&!live&&!c2gLive&&!migDone)setStep(data.navigate);
       if(data.action==='start_migration_dry'){setOptions(p=>({...p,dryRun:true}));setTimeout(()=>runMigration(false),200);}
       else if(data.action==='start_migration_live'){setOptions(p=>({...p,dryRun:false}));setTimeout(()=>runMigration(true),200);}
       else if(data.action==='retry_failed')retryFailed();
