@@ -5,6 +5,7 @@
  * Memory and Projects are kept as separate files (max 3 files total per user).
  */
 
+import fs from 'node:fs';
 import {
   Document, Packer, Paragraph, TextRun,
   HeadingLevel, BorderStyle, AlignmentType, PageBreak,
@@ -310,6 +311,11 @@ export async function migrateUserPair({
   };
 
   try {
+    if (!fs.existsSync(extractPath)) {
+      result.errors.push(`Upload directory not found: ${extractPath}. The uploaded ZIP was likely lost after a server restart. Please re-upload the ZIP file.`);
+      return result;
+    }
+
     const { conversations, memory, projects } = getUserData(extractPath, sourceUuid);
     result.conversationsCount = conversations.length;
 

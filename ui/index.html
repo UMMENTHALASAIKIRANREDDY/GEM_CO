@@ -1039,31 +1039,6 @@ const ShellBlock=({lines,onLineClick})=>{
 /* ══════════════════════════════════════════ */
 const PHASE_LABELS=['Connect Clouds','Import Data','Map Users','Configure','Migrate','Complete'];
 
-const STEP_GUIDE={
-  any:{
-    0:"Connect your cloud accounts. Google Workspace and Microsoft 365 are both needed for Gemini↔Copilot migration. Only Google is needed for Claude → Gemini.",
-    1:"Choose your migration direction. Gemini→Copilot and Copilot→Gemini both require both accounts connected.",
-  },
-  'gemini-copilot':{
-    2:"Import your Gemini data — upload a Vault ZIP file or export directly from Google Drive.",
-    3:"Map each Google user to their Microsoft 365 destination. Use Auto-map to fill matches by email, then review.",
-    4:"All set. Start with a dry run first to preview — no data changes until you go live.",
-  },
-  'copilot-gemini':{
-    2:"Map each Microsoft 365 user to their Google Drive destination. Use Auto-map to fill matches by email, then review.",
-    3:"Set the folder name and date range. Starting with a dry run is strongly recommended.",
-  },
-  'claude-gemini':{
-    2:"Upload your Claude export ZIP. You can export it from Claude.ai → Settings → Data Export.",
-    3:"Map each Claude user to their Google destination email. Auto-map fills matches by email.",
-    4:"Set the Google Drive folder name where files will land. Start with a dry run to preview first.",
-  },
-};
-function getStepGuide(step,migDir){
-  if(step<=1)return(STEP_GUIDE.any[step]||null);
-  return((STEP_GUIDE[migDir]||{})[step]||null);
-}
-
 const AuthWidget=({googleAuthed,msAuthed,onSignInGoogle,onSignInMs,googleUsers,msUsers,googleLoading,msLoading})=>(
   <div style={{background:'#f8fafc',borderRadius:10,border:`1px solid ${C.border}`,padding:14,marginLeft:36,marginTop:4}}>
     <div style={{fontSize:12,fontWeight:600,color:C.dark,marginBottom:10}}>Connect your cloud accounts</div>
@@ -1117,7 +1092,6 @@ const ChatWidget=({type,widgetProps={}})=>{
   if(type==='auth')return<AuthWidget {...(widgetProps.auth||{})}/>;
   if(type==='upload')return<UploadWidget {...(widgetProps.upload||{})}/>;
   if(type==='options')return<OptionsWidget {...(widgetProps.options||{})}/>;
-  if(type==='post_migration_guide')return<PostMigrationWidget migDir={widgetProps.migDir}/>;
   return null;
 };
 
@@ -2030,13 +2004,13 @@ How to answer my questions:
 
 Document structure: Each conversation starts with "Conversation N: Title" followed by [Human] and [Claude] labeled messages in chronological order.`;
 
-const GemSetupInstructions=()=>{
+const GemSetupInstructions=({folderName='ClaudeChats'})=>{
   const [copied,setCopied]=useState(false);
   const [open,setOpen]=useState(true);
   const copy=()=>{navigator.clipboard.writeText(GEM_INSTRUCTIONS).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500)}).catch(()=>{})};
   const steps=[
     {n:1,icon:'🌐',title:'Open Gemini Gems',desc:'Go to gemini.google.com → click Gems in the left sidebar → New Gem'},
-    {n:2,icon:'📁',title:'Add Knowledge from Google Drive',desc:'Under Knowledge, click "Add from Google Drive" → navigate to your ClaudeChats folder → select it → Insert'},
+    {n:2,icon:'📁',title:'Add Knowledge from Google Drive',desc:`Under Knowledge, click "Add from Google Drive" → navigate to your ${folderName} folder → select it → Insert`},
     {n:3,icon:'📋',title:'Paste the Gem Instructions',desc:'Copy the instructions below and paste them into the Instructions box of the Gem'},
     {n:4,icon:'💾',title:'Name & Save the Gem',desc:'Give the Gem a name (e.g. "My Claude History") → click Save — the Gem is now ready to use'},
   ];
@@ -2085,71 +2059,10 @@ const GemSetupInstructions=()=>{
   );
 };
 
-/* Post-migration inline chat widget */
-const PostMigrationWidget=({migDir})=>{
-  const [copied,setCopied]=useState(false);
-  const copy=()=>{navigator.clipboard.writeText(GEM_INSTRUCTIONS).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500)}).catch(()=>{})};
-
-  if(migDir==='gemini-copilot'){
-    return(
-      <div style={{borderRadius:10,border:'1px solid #e2e8f0',padding:'14px 16px',marginTop:8,background:'#f8fafc'}}>
-        <div style={{fontSize:12,fontWeight:700,color:'#0129AC',marginBottom:10}}>✅ What happens next</div>
-        <div style={{display:'flex',flexDirection:'column',gap:8}}>
-          {[
-            {n:1,text:'Users open Microsoft Copilot or Teams'},
-            {n:2,text:'The CloudFuze agent is already pinned in their sidebar'},
-            {n:3,text:'All migrated conversations are accessible — no install needed'},
-          ].map(s=>(
-            <div key={s.n} style={{display:'flex',gap:10,alignItems:'flex-start'}}>
-              <div style={{minWidth:22,height:22,borderRadius:'50%',background:'#0129AC',color:'white',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,flexShrink:0}}>{s.n}</div>
-              <div style={{fontSize:12,color:'#1e293b',paddingTop:3}}>{s.text}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  const steps=[
-    {n:1,icon:'🌐',title:'Open Gemini Gems',desc:'Go to gemini.google.com → click Gems in the left sidebar → New Gem'},
-    {n:2,icon:'📁',title:'Add Knowledge from Google Drive',desc:'Under Knowledge, click "Add from Google Drive" → navigate to your migrated folder → select all files → Insert'},
-    {n:3,icon:'📋',title:'Paste the Gem Instructions',desc:'Copy the instructions below and paste them into the Instructions box'},
-    {n:4,icon:'💾',title:'Name & Save the Gem',desc:'Give the Gem a name (e.g. "My Chat History") → click Save'},
-  ];
-  return(
-    <div style={{borderRadius:10,border:'1px solid #BFDBFE',padding:'14px 16px',marginTop:8,background:'#EFF6FF'}}>
-      <div style={{fontSize:12,fontWeight:700,color:'#1E3A5F',marginBottom:10}}>💎 Set Up Your Gemini Gem</div>
-      <div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:12}}>
-        {steps.map(s=>(
-          <div key={s.n} style={{display:'flex',gap:10,alignItems:'flex-start',background:'white',borderRadius:8,padding:'8px 12px',border:'1px solid #DBEAFE'}}>
-            <div style={{minWidth:24,height:24,borderRadius:'50%',background:'#1D4ED8',color:'white',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,flexShrink:0}}>{s.n}</div>
-            <div>
-              <div style={{fontSize:12,fontWeight:600,color:'#1E3A5F'}}>{s.icon} {s.title}</div>
-              <div style={{fontSize:11,color:'#4B5563',lineHeight:1.5}}>{s.desc}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-      <div style={{background:'white',border:'1px solid #BFDBFE',borderRadius:8,overflow:'hidden'}}>
-        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'6px 10px',background:'#DBEAFE'}}>
-          <span style={{fontSize:11,fontWeight:700,color:'#1E40AF'}}>📋 Gem Instructions</span>
-          <button onClick={copy} style={{fontSize:11,fontWeight:600,color:copied?'#16a34a':'#1D4ED8',background:copied?'#DCFCE7':'#EFF6FF',border:`1px solid ${copied?'#86EFAC':'#93C5FD'}`,borderRadius:6,padding:'3px 8px',cursor:'pointer',fontFamily:'inherit'}}>
-            {copied?'✓ Copied':'Copy'}
-          </button>
-        </div>
-        <pre style={{margin:0,padding:'10px 12px',fontSize:11,lineHeight:1.5,color:'#1E293B',whiteSpace:'pre-wrap',wordBreak:'break-word',fontFamily:'Consolas,monospace',maxHeight:160,overflowY:'auto'}}>{GEM_INSTRUCTIONS}</pre>
-      </div>
-      <div style={{marginTop:8,padding:'7px 10px',background:'#FEF9C3',border:'1px solid #FDE68A',borderRadius:7,fontSize:11,color:'#713F12'}}>
-        <strong>Tip:</strong> Add all migrated files (conversations, memory, projects) to the Gem for best results.
-      </div>
-    </div>
-  );
-};
-
 /* ═══════════════════════════════════════════ */
 /* ═══  CLAUDE→GEMINI: MIGRATE STEP        ═══ */
 /* ═══════════════════════════════════════════ */
-const StepCL2GMigrate=({cl2gStats,cl2gDone,onRunAnother,onBack,onStart,cl2gLive,onChangeDirection,lastRunWasDry,onStartLive,cl2gTotal})=>{
+const StepCL2GMigrate=({cl2gStats,cl2gDone,onRunAnother,onBack,onStart,cl2gLive,onChangeDirection,lastRunWasDry,onStartLive,cl2gTotal,folderName='ClaudeChats'})=>{
   const ring=cl2gDone?100:cl2gTotal>0?Math.min(Math.round((cl2gStats.users/cl2gTotal)*100),99):cl2gLive?5:0;
   return(
     <div className="fade-up">
@@ -2203,7 +2116,7 @@ const StepCL2GMigrate=({cl2gStats,cl2gDone,onRunAnother,onBack,onStart,cl2gLive,
             ))}
           </div>
 
-          {!lastRunWasDry&&<GemSetupInstructions/>}
+          {!lastRunWasDry&&<GemSetupInstructions folderName={folderName}/>}
 
           <div style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:16}}>
             {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{flex:'1 1 140px',justifyContent:'center'}}><IcoRocket s={14}/> Start Live Migration</Btn>}
@@ -2437,7 +2350,6 @@ function App(){
   const [agentMsgs,setAgentMsgs]=useState(()=>lsGet(K.agentMsgs,[]));
   const [agentTyping,setAgentTyping]=useState(false);
   const [agentInput,setAgentInput]=useState('');
-  const [agentMode,setAgentMode]=useState(()=>lsGet(K.migDone,false)?'done':'guide');
   const [leftMode,setLeftMode]=useState('viz'); // 'viz' | 'mapping'
   const [migDir,setMigDir]=useState(()=>lsGet(K.migDir,null)); // 'gemini-copilot' | 'copilot-gemini' | null
   const [c2gMappings,setC2gMappings]=useState(()=>lsGet(K.c2gMappings,{}));
@@ -2467,7 +2379,6 @@ function App(){
   const dividerRef=useRef(null);
   const panelDragRef=useRef(null);
   const greetedRef=useRef(false);
-  const prevGuideKeyRef=useRef(null);
   const sendToAgentRef=useRef(null);
 
   const showToast=useCallback((message,type='success')=>{
@@ -2572,6 +2483,70 @@ function App(){
   },[wsLoaded,step,uploadData,config,mappings,selectedUsers,options,migDone,stats,currentBatchId,lastRunWasDry]);
   useEffect(()=>{saveWorkspace()},[saveWorkspace]);
 
+  // ── Bidirectional sync: Steps panel events → Agent ──────────────────────────
+  const prevStepRef=useRef(null);
+  // Step change → agent guidance (guard: only after wsLoaded + genuine navigation)
+  useEffect(()=>{
+    if(!wsLoaded)return;
+    if(prevStepRef.current===null){prevStepRef.current=step;return;} // skip first render
+    if(prevStepRef.current===step)return;
+    prevStepRef.current=step;
+    const gc=[
+      null,
+      null,
+      uploadData
+        ? `Vault loaded — **${uploadData.total_users} users** ready. Want me to auto-map by email match, or would you prefer to set mappings manually?`
+        : `Ready to import. Upload a **Vault ZIP** or pull directly from Google Drive — which works better for you?`,
+      Object.keys(mappings).length>0
+        ? `**${Object.keys(mappings).length} user${Object.keys(mappings).length!==1?'s':''} mapped**. Head to Options to configure a dry run or live migration.`
+        : `Time to map users. I can auto-match by email — want me to explain what this step does?`,
+      options?.dryRun
+        ? `Dry run mode is on — no data will be changed. Ready to preview the migration?`
+        : `Options set. Starting with a **dry run** is recommended to catch issues before going live. Want to do that?`,
+      null,null
+    ];
+    const c2g=[
+      null,null,
+      `Map each Microsoft 365 user to their Google destination. I can suggest matches — just ask.`,
+      `Set your migration options. A **dry run** first is a good idea to preview what will be migrated.`,
+      null,null
+    ];
+    const triggers=migDir==='copilot-gemini'?c2g:gc;
+    const msg=triggers[step];
+    if(msg)sendToAgent(msg,true);
+  },[step,wsLoaded,migDir,uploadData,mappings,options]);
+
+  // Google auth → agent
+  const prevGoogleRef=useRef(null);
+  useEffect(()=>{
+    if(!wsLoaded)return;
+    if(prevGoogleRef.current===null){prevGoogleRef.current=googleAuthed;return;}
+    if(prevGoogleRef.current===googleAuthed)return;
+    prevGoogleRef.current=googleAuthed;
+    if(googleAuthed)sendToAgent(`Google Workspace connected — **${googleUsers.length} users** found. Connect Microsoft 365 next to continue.`,true);
+  },[googleAuthed,wsLoaded]);
+
+  // Microsoft auth → agent
+  const prevMsRef=useRef(null);
+  useEffect(()=>{
+    if(!wsLoaded)return;
+    if(prevMsRef.current===null){prevMsRef.current=msAuthed;return;}
+    if(prevMsRef.current===msAuthed)return;
+    prevMsRef.current=msAuthed;
+    if(msAuthed&&googleAuthed)sendToAgent('Both clouds are connected. What migration direction should we use — Gemini to Copilot, or Copilot to Gemini?',true);
+    else if(msAuthed)sendToAgent('Microsoft 365 connected. Still need to connect **Google Workspace** to continue.',true);
+  },[msAuthed,wsLoaded]);
+
+  // Data loaded → agent
+  const prevUploadRef=useRef(null);
+  useEffect(()=>{
+    if(!wsLoaded)return;
+    const id=uploadData?.id||null;
+    if(prevUploadRef.current===null){prevUploadRef.current=id;return;}
+    if(prevUploadRef.current===id)return;
+    prevUploadRef.current=id;
+    if(uploadData)sendToAgent(`Data loaded: **${uploadData.total_users} users**, ${uploadData.total_conversations||'?'} conversations. Want me to auto-map users by email, or review them manually?`,true);
+  },[uploadData,wsLoaded]);
 
   // Recover migration state after page refresh / laptop shutdown
   useEffect(()=>{
@@ -2618,9 +2593,10 @@ function App(){
     if(forceLive)setOptions(p=>({...p,dryRun:false}));
     setStep(5);setMigDone(false);setStats({users:0,pages:0,errors:0,flagged:0});setLogs([]);
     addLog('info',isDry?'Starting dry run...':'Starting live migration...');
-    setAgentMode('running');
+    addAgentMsg('bot',isDry?'Dry run started — no changes will be made. I\'ll let you know what happens.':'Migration started! I\'ll check in as we go.');
     setLive(true);
     const curStats={users:0,pages:0,errors:0,flagged:0};
+    const gcMilestones={firstUser:false,firstError:false};
 
     if(sseRef.current)sseRef.current.close();
     sseRef.current=new EventSource('/api/migration-log');
@@ -2632,18 +2608,26 @@ function App(){
         if(d.type==='info'&&d.message.includes('Processing:'))curStats.users++;
         if(d.type==='warn'&&d.message.includes('flagged')){const m=d.message.match(/(\d+) conversations flagged/);if(m)curStats.flagged+=parseInt(m[1])}
         setStats({...curStats});addLog(d.type,d.message);
+        // Proactive milestone messages
+        if(d.type==='info'&&d.message.includes('Processing:')&&!gcMilestones.firstUser){
+          gcMilestones.firstUser=true;
+          setTimeout(()=>addAgentMsg('bot','First user being processed — migration is underway.'),200);
+        }
+        if((d.type==='error'||d.type==='warn')&&!gcMilestones.firstError){
+          gcMilestones.firstError=true;
+          setTimeout(()=>addAgentMsg('bot','Hit an issue with one item — migration continues with the rest. I\'ll summarize at the end.'),200);
+        }
         if(d.type==='done'){
           if(d.batch_id)setCurrentBatchId(d.batch_id);
           sseRef.current.close();setLive(false);setMigDone(true);setRetrying(false);setStep(6);
           setReportRefreshKey(p=>p+1);
-          setAgentMode('done');
           const s={...curStats};
           setTimeout(()=>addAgentMsg('bot',
             s.errors>0
               ? `Migration finished with **${s.errors} error${s.errors!==1?'s':''}**. The items below failed — retry to recover them.`
               : `All done! **${s.pages} pages** migrated across **${s.users} user${s.users!==1?'s':''}**. Everything looks clean.`,
             {statusCard:{users:s.users,files:s.pages,errors:s.errors},
-             quickReplies:s.errors>0?['Retry Failed','Download Report','Start Another']:['Download Report','What do I do next?','Start Another']}
+             quickReplies:s.errors>0?['Retry Failed','Download Report','Start Another']:['Download Report','Start Another']}
           ),600);
         }
       }catch{}
@@ -2663,8 +2647,6 @@ function App(){
   // keepData=true → same vault, different users (go to Step 2)
   // keepData=false → new import (clear everything, go to Step 1)
   const runAnotherBatch=(keepData=true)=>{
-    setAgentMode('guide');
-    prevGuideKeyRef.current=null; // allow guide message to fire again
     setMigDone(false);setStats({users:0,pages:0,errors:0,flagged:0});setLogs([]);setCurrentBatchId(null);
     setOptions(p=>({...p,dryRun:true,fromDate:'',toDate:''}));
     if(keepData){
@@ -2676,7 +2658,6 @@ function App(){
 
   const retryFailed=async(overrideCustomerName)=>{
     if(!currentBatchId||retrying)return;
-    setAgentMode('running');
     setRetrying(true);
     setMigDone(false);
     setRetryMode(false);
@@ -2724,8 +2705,9 @@ function App(){
     }
     setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gTotal(0);setC2gLive(true);setStep(4);setLogs([]);
     addLog('info',isDry?'Starting dry run...':'Starting Copilot → Gemini migration...');
-    setAgentMode('running');
+    addAgentMsg('bot',isDry?'Dry run started — no files will be uploaded. I\'ll show you what would be migrated.':'Copilot → Gemini migration started! I\'ll check in as we go.');
     const curStats={users:0,files:0,errors:0};
+    const c2gMilestones={firstUser:false,firstError:false};
     if(sseRef.current)sseRef.current.close();
     sseRef.current=new EventSource('/api/c2g/migrate-log');
     sseRef.current.onmessage=e=>{
@@ -2737,21 +2719,31 @@ function App(){
         if(d.type==='total'){try{const p=JSON.parse(d.message);if(p.total)setC2gTotal(p.total);}catch{}}
         if(d.type==='progress'){try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;if(p.total)setC2gTotal(p.total);}catch{}}
         setC2gStats({...curStats});addLog(d.type,d.message||'');
+        // Proactive milestone messages
+        if(d.type==='info'&&d.message?.includes('Processing:')&&!c2gMilestones.firstUser){
+          c2gMilestones.firstUser=true;
+          setTimeout(()=>addAgentMsg('bot','First user being processed — migration is underway.'),200);
+        }
+        if((d.type==='error'||d.type==='warn')&&!c2gMilestones.firstError){
+          c2gMilestones.firstError=true;
+          setTimeout(()=>addAgentMsg('bot','Hit an issue with one item — migration continues. I\'ll summarize errors at the end.'),200);
+        }
         if(d.type==='done'){
           try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;}catch{}
           setC2gStats({...curStats});
           sseRef.current.close();setC2gLive(false);setC2gDone(true);setStep(5);
           setReportRefreshKey(p=>p+1);
-          setAgentMode('done');
           const s2={...curStats};
+          const c2gFolder=c2gConfig.folderName||'CopilotChats';
+          const nextSteps=isDry?'':`\n\nNext steps (each migrated user should do this):\n1. Login to Google Gemini (gemini.google.com)\n2. Create a new Gem\n3. Under Knowledge, click "Add from Google Drive" → navigate to your ${c2gFolder} folder → select it → Insert\n4. Set instructions: "Use this file as knowledge and give responses from this document. If the user asks something not in the document, answer generally."\n5. Save the Gem`;
           setTimeout(()=>addAgentMsg('bot',
             s2.errors>0
               ? `Migration finished with **${s2.errors} error${s2.errors!==1?'s':''}**. Check below and retry if needed.`
               : isDry
                 ? `Dry run complete — **${s2.files} file${s2.files!==1?'s':''}** would be uploaded for **${s2.users} user${s2.users!==1?'s':''}**. Ready to go live?`
-                : `All done! **${s2.files} file${s2.files!==1?'s':''}** uploaded to Google Drive across **${s2.users} user${s2.users!==1?'s':''}**.`,
+                : `All done! **${s2.files} file${s2.files!==1?'s':''}** uploaded to Google Drive across **${s2.users} user${s2.users!==1?'s':''}**.${nextSteps}`,
             {statusCard:{users:s2.users,files:s2.files,errors:s2.errors,label:isDry?'Dry Run Preview':'Migration Results'},
-             quickReplies:isDry?['Start Live Migration','Start Another']:s2.errors>0?['Download Report','Start Another']:['Download Report','What do I do next?','Start Another']}
+             quickReplies:isDry?['Start Live Migration','Start Another']:s2.errors>0?['Download Report','Start Another']:['Download Report','Start Another']}
           ),400);
         }
       }catch(parseErr){console.error('C2G SSE parse error',parseErr,e.data)}
@@ -2789,7 +2781,6 @@ function App(){
     if(!pairs.length){addAgentMsg('bot','⚠️ No user mappings found. Go back and fill in the Google destination emails.');return;}
     setCl2gDone(false);setCl2gStats({users:0,files:0,errors:0});setCl2gTotal(0);setCl2gLive(true);cl2gLiveRef.current=true;setStep(5);setLogs([]);
     addLog('info',isDry?'Starting CL2G dry run...':'Starting Claude → Gemini migration...');
-    setAgentMode('running');
     const curStats={users:0,files:0,errors:0};
     if(sseRef.current)sseRef.current.close();
     sseRef.current=new EventSource('/api/cl2g/migrate-log');
@@ -2806,30 +2797,32 @@ function App(){
         if(silenceTimer.current){clearTimeout(silenceTimer.current);}
         if(cl2gLiveRef.current&&d.type!=='done'){
           silenceTimer.current=setTimeout(()=>{
-            // No event for 12s while live — assume done event was missed
+            // No event for 60s while live — assume done event was missed
             if(cl2gLiveRef.current){
               addLog('info','Migration complete (connection finalised).');
               if(sseRef.current){sseRef.current.close();}
               setCl2gLive(false);cl2gLiveRef.current=false;setCl2gDone(true);setStep(6);
-              setReportRefreshKey(p=>p+1);
-              setAgentMode('done');
+              // Delay report refresh to allow server to finish writing DB
+              setTimeout(()=>setReportRefreshKey(p=>p+1),3000);
             }
-          },12000);
+          },60000);
         }
         if(d.type==='done'){
           if(silenceTimer.current){clearTimeout(silenceTimer.current);}
           try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;}catch{}
           setCl2gStats({...curStats});
           sseRef.current.close();setCl2gLive(false);cl2gLiveRef.current=false;setCl2gDone(true);setStep(6);
-          setReportRefreshKey(p=>p+1);
-          setAgentMode('done');
+          // Delay report refresh to allow DB write to complete
+          setTimeout(()=>setReportRefreshKey(p=>p+1),3000);
           const s2={...curStats};
+          const cl2gFolder=cl2gConfig.folderName||'ClaudeChats';
+          const cl2gNextSteps=isDry?'':`\n\nNext steps — Create your Gemini Gem:\n1. Go to gemini.google.com → click Gems → New Gem\n2. Under Knowledge, click "Add from Google Drive"\n3. Select your ${cl2gFolder} folder (contains 1–3 files max per user)\n4. Paste this into the Instructions box:\n\n"You are a personal knowledge assistant. The uploaded documents contain my complete Claude conversation history. RULES: (1) Always search the uploaded documents before answering. (2) Answer using exact content from the documents — quote or closely summarize what is there. (3) If asked about a past conversation, find and return the relevant Human/Claude message pairs verbatim. (4) To follow up on a conversation, read the full conversation thread from the document and continue naturally from where it left off. (5) Only if the topic is completely absent from all documents, say so, then optionally answer from general knowledge. (6) Never invent information not in the documents."\n\n5. Name the Gem and click Save`;
+
           setTimeout(()=>addAgentMsg('bot',
             s2.errors>0?`Migration finished with **${s2.errors} error${s2.errors!==1?'s':''}**. Check the log for details.`
             :isDry?`Dry run complete — **${s2.files} file${s2.files!==1?'s':''}** would be uploaded for **${s2.users} user${s2.users!==1?'s':''}**. Ready to go live?`
-            :`All done! **${s2.files} file${s2.files!==1?'s':''}** uploaded to Google Drive across **${s2.users} user${s2.users!==1?'s':''}**.`,
-            {statusCard:{users:s2.users,files:s2.files,errors:s2.errors,label:isDry?'Dry Run Preview':'Migration Results'},
-             quickReplies:isDry?['Start Live Migration','Start Another']:s2.errors>0?['Download Report','Start Another']:['Download Report','What do I do next?','Start Another']}
+            :`All done! **${s2.files} file${s2.files!==1?'s':''}** uploaded to Google Drive across **${s2.users} user${s2.users!==1?'s':''}**.${cl2gNextSteps}`,
+            {statusCard:{users:s2.users,files:s2.files,errors:s2.errors,label:isDry?'Dry Run Preview':'Migration Results'},quickReplies:isDry?['Start Live Migration','Start Another']:['Start Another']}
           ),400);
         }
       }catch(parseErr){console.error('CL2G SSE parse error',parseErr)}
@@ -2845,8 +2838,6 @@ function App(){
   },[cl2gLive,cl2gSelectedUuids,cl2gMappings,cl2gOptions,cl2gConfig,cl2gUploadData,addLog,addAgentMsg]);
 
   const handleChangeDirection=useCallback(()=>{
-    setAgentMode('guide');
-    prevGuideKeyRef.current=null;
     setMigDir(null);setStep(1);
     setUploadData(null);setMappings({});setSelectedUsers(new Set());setMigDone(false);
     setStats({users:0,pages:0,errors:0,flagged:0});setCurrentBatchId(null);setLogs([]);
@@ -2905,7 +2896,7 @@ function App(){
       const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({message:userMsg,history,isSystemTrigger:isSystem,
           migrationLogs:(live||c2gLive)?logs.slice(-100).map(l=>`[${l.ts}][${l.type}] ${l.message}`):[],
-          migrationState:{step,migDir,live,migDone,stats,lastRunWasDry,currentBatchId,agentMode,
+          migrationState:{step,migDir,live,migDone,stats,lastRunWasDry,currentBatchId,
             uploadData:uploadData?{id:uploadData.id,total_users:uploadData.total_users,total_conversations:uploadData.total_conversations}:null,
             googleAuthed,msAuthed,
             mappings_count:Object.keys(mappings).length,
@@ -2913,11 +2904,14 @@ function App(){
             options:{dryRun:options.dryRun,hasFilePath:!!config.filePath}}})});
       const data=await res.json();
       if(data.reply)addAgentMsg('bot',data.reply,{quickReplies:data.quickReplies,...(data.widget&&{widget:data.widget}),...(data.statusCard&&{statusCard:data.statusCard}),...(data.chips&&{chips:data.chips})});
-      if(data.action==='show_reports')setShowReports(true);
+      // Execute real actions returned by agent tools
+      // Only navigate if agent explicitly requests it AND user is not mid-migration
+      if(data.navigate!=null&&!live&&!c2gLive&&!migDone)setStep(data.navigate);
+      if(data.action==='start_migration_dry'){setOptions(p=>({...p,dryRun:true}));setTimeout(()=>runMigration(false),200);}
+      else if(data.action==='start_migration_live'){setOptions(p=>({...p,dryRun:false}));setTimeout(()=>runMigration(true),200);}
+      else if(data.action==='retry_failed')retryFailed();
+      else if(data.action==='show_reports')setShowReports(true);
       else if(data.action==='show_mapping')setLeftMode('mapping');
-      else if(data.action==='show_post_migration_guide'){
-        addAgentMsg('bot','Here are your next steps:',{widget:{type:'post_migration_guide',migDir:data.migDir||migDir}});
-      }
     }catch{addAgentMsg('bot',"Sorry, I couldn't connect right now. Please try again.");}
     setAgentTyping(false);
   },[agentInput,agentMsgs,logs,step,live,migDone,stats,lastRunWasDry,currentBatchId,uploadData,googleAuthed,msAuthed,mappings,selectedUsers,options,config,addAgentMsg]);
@@ -2929,24 +2923,18 @@ function App(){
   const handleAgentQuickReply=useCallback(qr=>{
     if(qr==='Retry Failed')retryFailed();
     else if(qr==='Start Another Migration')runAnotherBatch(false);
-    else if(qr==='Start Another')runAnotherBatch(true);
-    else if(qr==='Start Live Migration'){setOptions(p=>({...p,dryRun:false}));addAgentMsg('user','Start live migration');setTimeout(()=>{if(migDir==='copilot-gemini')runC2GMigration(true);else if(migDir==='claude-gemini')runCL2GMigration(true);else runMigration(true);},200);}
-    else if(qr==='What do I do next?'){sendToAgent('What do I do next after the migration is complete?');}
+    else if(qr==='Start Dry Run'){setOptions(p=>({...p,dryRun:true}));addAgentMsg('user','Start dry run');setTimeout(()=>runMigration(false),200);}
+    else if(qr==='Start Migration'){setOptions(p=>({...p,dryRun:false}));addAgentMsg('user','Start live migration');setTimeout(()=>runMigration(true),200);}
+    else if(qr==='Show me the mapping'||qr==='Auto-map users'){setStep(migDir==='copilot-gemini'?2:3);sendToAgent(qr);}
+    else if(qr==='Connect Google Workspace'){setStep(0);sendToAgent('How do I connect Google Workspace?');}
+    else if(qr==='Connect Microsoft 365'){setStep(0);sendToAgent('How do I connect Microsoft 365?');}
+    else if(qr==='Upload a Vault ZIP'){setStep(2);sendToAgent('I want to upload a Vault ZIP file.');}
+    else if(qr==='Export from Google Drive'){setStep(2);sendToAgent('I want to export from Google Workspace directly.');}
     else{sendToAgent(qr);}
-  },[sendToAgent,retryFailed,runAnotherBatch,runMigration,runC2GMigration,runCL2GMigration,addAgentMsg,setOptions,migDir]);
+  },[sendToAgent,retryFailed,runAnotherBatch,runMigration,addAgentMsg,setOptions,setStep]);
 
   // Always keep sendToAgentRef current so initial greeting can call it without stale closure
   sendToAgentRef.current=sendToAgent;
-
-  // ── Page-aware guide: fires one message per step in guide mode ───────────────
-  useEffect(()=>{
-    if(!wsLoaded||agentMode!=='guide')return;
-    const key=`${step}:${migDir||'none'}`;
-    if(prevGuideKeyRef.current===key)return;
-    prevGuideKeyRef.current=key;
-    const msg=getStepGuide(step,migDir);
-    if(msg)addAgentMsg('bot',msg);
-  },[wsLoaded,agentMode,step,migDir]);
 
   // ── Chat widget auth handlers ────────────────────────────────────────────────
   const handleChatSignInGoogle=useCallback(()=>{
@@ -3000,13 +2988,12 @@ function App(){
     options:{options,setOptions,config,setConfig,onStart:()=>runMigration()}
   }),[googleAuthed,msAuthed,handleChatSignInGoogle,handleChatSignInMs,googleUsers,msUsers,chatGLoading,chatMLoading,handleChatUpload,chatUploading,uploadData,options,config]);
 
-  // ── Initial greeting (static, fires once after ws hydration if chat is empty) ──
+  // ── Initial greeting (fires once after ws hydration if chat is empty) ────────
   useEffect(()=>{
     if(!wsLoaded||greetedRef.current)return;
     greetedRef.current=true;
     if(agentMsgs.length===0){
-      const msg=getStepGuide(step,migDir)||"Welcome to CloudFuze GEM. Connect your cloud accounts on the left to get started.";
-      addAgentMsg('bot',msg);
+      sendToAgentRef.current('The user just opened CloudFuze GEM. Greet them briefly — this tool migrates conversations between Google Workspace and Microsoft 365. Tell them to connect both accounts to get started. 2 sentences max.',true);
     }
   },[wsLoaded]);
 
@@ -3080,7 +3067,7 @@ function App(){
                   {step===2&&migDir==='claude-gemini'&&<StepCL2GUpload cl2gUploadData={cl2gUploadData} setCl2gUploadData={setCl2gUploadData} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast}/>}
                   {step===3&&migDir==='claude-gemini'&&<StepCL2GMap cl2gUploadData={cl2gUploadData} googleUsers={googleUsers} cl2gMappings={cl2gMappings} setCl2gMappings={setCl2gMappings} cl2gSelectedUuids={cl2gSelectedUuids} setCl2gSelectedUuids={setCl2gSelectedUuids} onNext={()=>setStep(4)} onBack={()=>setStep(2)} showToast={showToast}/>}
                   {step===4&&migDir==='claude-gemini'&&<StepCL2GOptions cl2gOptions={cl2gOptions} setCl2gOptions={setCl2gOptions} cl2gConfig={cl2gConfig} setCl2gConfig={setCl2gConfig} googleAuthed={googleAuthed} onRun={runCL2GMigration} onBack={()=>setStep(3)}/>}
-                  {(step===5||step===6)&&migDir==='claude-gemini'&&<StepCL2GMigrate cl2gStats={cl2gStats} cl2gDone={cl2gDone} onRunAnother={()=>{setCl2gDone(false);setCl2gStats({users:0,files:0,errors:0});setCl2gOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(4)} onStart={runCL2GMigration} cl2gLive={cl2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={cl2gLastDry} onStartLive={()=>runCL2GMigration(true)} cl2gTotal={cl2gTotal}/>}
+                  {(step===5||step===6)&&migDir==='claude-gemini'&&<StepCL2GMigrate cl2gStats={cl2gStats} cl2gDone={cl2gDone} onRunAnother={()=>{setCl2gDone(false);setCl2gStats({users:0,files:0,errors:0});setCl2gOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(4)} onStart={runCL2GMigration} cl2gLive={cl2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={cl2gLastDry} onStartLive={()=>runCL2GMigration(true)} cl2gTotal={cl2gTotal} folderName={cl2gConfig.folderName||'ClaudeChats'}/>}
                 </div>
               );
             })()}
