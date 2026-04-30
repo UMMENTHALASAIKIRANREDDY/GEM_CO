@@ -1735,8 +1735,8 @@ const StepCL2GMap=({cl2gUploadData,googleUsers,cl2gMappings,setCl2gMappings,cl2g
 
   const downloadCsv=()=>{
     const src=csvEmails?users.filter(u=>csvEmails.includes(u.uuid)):users;
-    const rows=src.map(u=>`"${u.email_address||''}","${cl2gMappings[u.uuid]||''}","${u.full_name||''}"`);
-    const csv='Claude Email,Google Email,Display Name\n'+rows.join('\n');
+    const rows=src.map(u=>`"${u.email_address||''}","${cl2gMappings[u.uuid]||''}"`);
+    const csv='Claude Email,Google Email\n'+rows.join('\n');
     const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='cl2g-user-mappings.csv';a.click();
     showToast('CSV downloaded.');
   };
