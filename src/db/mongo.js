@@ -17,7 +17,12 @@ const G2C_DB = process.env.G2C_DB || 'gemco';
  */
 export async function connectMongo(retries = 5, delayMs = 3000) {
   await connectDb(G2C_DB, retries, delayMs);
-  await ensureCollections();
+  try {
+    await ensureCollections();
+  } catch (e) {
+    // Collections likely already exist — non-fatal on transient DB errors
+    logger.warn(`ensureCollections non-fatal error: ${e.message}`);
+  }
 }
 
 /**
