@@ -49,30 +49,97 @@ function readJson(dir, filename) {
 
 /**
  * Claude ZIPs sometimes extract into a single subdirectory instead of the root.
- * Walk one level of subdirectories to find where conversations.json lives.
+ * Walk up to two levels of subdirectories to find where conversations.json lives,
+ * or where a conversations/ directory lives (newer export format).
  */
 function resolveDataDir(extractDir) {
+  // Check root first
   if (fs.existsSync(path.join(extractDir, 'conversations.json'))) return extractDir;
+  if (fs.existsSync(path.join(extractDir, 'conversations')) &&
+      fs.statSync(path.join(extractDir, 'conversations')).isDirectory()) return extractDir;
+
   try {
     const entries = fs.readdirSync(extractDir, { withFileTypes: true });
     for (const e of entries) {
-      if (e.isDirectory()) {
-        const sub = path.join(extractDir, e.name);
-        if (fs.existsSync(path.join(sub, 'conversations.json'))) return sub;
+      if (!e.isDirectory()) continue;
+      const sub = path.join(extractDir, e.name);
+      // One level deep
+      if (fs.existsSync(path.join(sub, 'conversations.json'))) return sub;
+      if (fs.existsSync(path.join(sub, 'conversations')) &&
+          fs.statSync(path.join(sub, 'conversations')).isDirectory()) return sub;
+      // Two levels deep
+      try {
+        const subEntries = fs.readdirSync(sub, { withFileTypes: true });
+        for (const se of subEntries) {
+          if (!se.isDirectory()) continue;
+          const sub2 = path.join(sub, se.name);
+          if (fs.existsSync(path.join(sub2, 'conversations.json'))) return sub2;
+          if (fs.existsSync(path.join(sub2, 'conversations')) &&
+              fs.statSync(path.join(sub2, 'conversations')).isDirectory()) return sub2;
+        }
+      } catch {}
+    }
+  } catch {}
+  return extractDir; // fallback
+}
+
+/**
+ * Log the top-level structure of the extracted ZIP for debugging.
+ */
+function logExtractStructure(extractDir) {
+  try {
+    const list = fs.readdirSync(extractDir).slice(0, 20);
+    console.log(`[CL2G zipParser] Extract root (${extractDir}):`, list);
+    for (const name of list) {
+      const full = path.join(extractDir, name);
+      if (fs.statSync(full).isDirectory()) {
+        const sub = fs.readdirSync(full).slice(0, 10);
+        console.log(`  ${name}/`, sub);
       }
     }
   } catch {}
-  return extractDir; // fallback: return original even if not found
+}
+
+/**
+ * Read all JSON files from a directory and merge them into a single array.
+ * Used when Claude exports conversations as individual files in a conversations/ folder.
+ */
+function readJsonDir(dir) {
+  try {
+    const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));
+    const result = [];
+    for (const f of files) {
+      try {
+        const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+        if (Array.isArray(data)) result.push(...data);
+        else if (data && typeof data === 'object') result.push(data);
+      } catch {}
+    }
+    return result;
+  } catch {
+    return [];
+  }
 }
 
 // ── Main parser ──────────────────────────────────────────────────────────────
 
 export function parseClaudeExport(extractDir) {
+  logExtractStructure(extractDir);
   const dataDir      = resolveDataDir(extractDir);
+  console.log(`[CL2G zipParser] dataDir resolved to: ${dataDir}`);
+
   const users        = readJson(dataDir, 'users.json')        || [];
-  const conversations= readJson(dataDir, 'conversations.json')|| [];
+
+  // Support both single-file (conversations.json) and directory (conversations/) formats
+  const convsFile    = readJson(dataDir, 'conversations.json');
+  const conversations= convsFile != null
+    ? convsFile
+    : readJsonDir(path.join(dataDir, 'conversations'));
+
   const memories     = readJson(dataDir, 'memories.json')     || [];
   const projects     = readJson(dataDir, 'projects.json')     || [];
+
+  console.log(`[CL2G zipParser] Found: ${users.length} users, ${conversations.length} convs, ${memories.length} memories, ${projects.length} projects`);
 
   // Index memories by account_uuid
   const memoryByUser = {};
@@ -119,7 +186,10 @@ export function parseClaudeExport(extractDir) {
 
 export function getUserData(extractDir, userUuid) {
   const dataDir       = resolveDataDir(extractDir);
-  const conversations = readJson(dataDir, 'conversations.json') || [];
+  const convsFile     = readJson(dataDir, 'conversations.json');
+  const conversations = convsFile != null
+    ? convsFile
+    : readJsonDir(path.join(dataDir, 'conversations'));
   const memories      = readJson(dataDir, 'memories.json')      || [];
   const projects      = readJson(dataDir, 'projects.json')      || [];
 
