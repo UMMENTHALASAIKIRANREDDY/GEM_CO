@@ -44,23 +44,43 @@ export async function listGoogleUsers(accessToken) {
 function getServiceAccountKeyPath() {
   return (
     process.env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE ||
-    path.join(process.cwd(), "google-service-account.json")
+    path.join(process.cwd(), "service_account.json")
   );
 }
 
 export function getServiceAccountAuth(userEmail) {
+  // Priority 1: inline JSON in env var (base64 or raw) — works on cloud deployments
+  const inlineJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_JSON;
+  if (inlineJson) {
+    let credentials;
+    try {
+      // Try raw JSON first, then base64-decoded
+      try { credentials = JSON.parse(inlineJson); }
+      catch { credentials = JSON.parse(Buffer.from(inlineJson, 'base64').toString('utf8')); }
+    } catch {
+      throw new Error('GOOGLE_SERVICE_ACCOUNT_KEY_JSON is set but could not be parsed as JSON or base64 JSON.');
+    }
+    return new GoogleAuth({
+      credentials,
+      scopes: ['https://www.googleapis.com/auth/drive'],
+      clientOptions: { subject: userEmail },
+    });
+  }
+
+  // Priority 2: file path
   const keyPath = getServiceAccountKeyPath();
   if (!fs.existsSync(keyPath)) {
     throw new Error(
-      `Service account key file not found at ${keyPath}. Set GOOGLE_SERVICE_ACCOUNT_KEY_FILE in .env.`
+      `Service account key file not found at ${keyPath}. ` +
+      `Either place service_account.json in the project root, set GOOGLE_SERVICE_ACCOUNT_KEY_FILE, ` +
+      `or set GOOGLE_SERVICE_ACCOUNT_KEY_JSON with the JSON content (raw or base64).`
     );
   }
-  const auth = new GoogleAuth({
+  return new GoogleAuth({
     keyFile: keyPath,
-    scopes: ["https://www.googleapis.com/auth/drive"],
+    scopes: ['https://www.googleapis.com/auth/drive'],
     clientOptions: { subject: userEmail },
   });
-  return auth;
 }
 
 // ── Drive helpers ────────────────────────────────────────────────────
