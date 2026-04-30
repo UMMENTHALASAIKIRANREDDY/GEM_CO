@@ -492,22 +492,27 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
     }
   },[uploadData?.id]);
 
-  // Auto-map by email local-part similarity on mount / when uploadData changes
+  // Auto-map by email local-part — each M365 email used at most once
   useEffect(()=>{
     if(!uploadData?.users?.length)return;
     const byLocal={};
-    msUsers.forEach(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=u.mail||u.userPrincipalName||''});
-    const m={...mappings};let changed=false;
+    msUsers.forEach(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
+    const m={};const used=new Set();
     uploadData.users.forEach(u=>{
-      if(!m[u.email]){const gl=u.email.split('@')[0].toLowerCase();m[u.email]=byLocal[gl]||'';changed=true}
+      const existing=(mappings[u.email]||'').toLowerCase();
+      if(existing&&!used.has(existing)){m[u.email]=existing;used.add(existing);}
+      else{const loc=u.email.split('@')[0].toLowerCase();const dest=byLocal[loc]||'';
+        if(dest&&!used.has(dest)){m[u.email]=dest;used.add(dest);}else m[u.email]='';}
     });
-    if(changed)setMappings(m);
-    if(selectedUsers.size===0)setSelectedUsers(new Set(uploadData.users.map(u=>u.email)));
+    setMappings(m);
+    // Auto-select only mapped users
+    setSelectedUsers(new Set(Object.entries(m).filter(([,v])=>v).map(([k])=>k)));
   },[uploadData,msUsers]);
 
   const downloadCsv=()=>{
-    const rows=(uploadData?.users||[]).map(u=>`"${u.email}","${mappings[u.email]||''}"`);
-    const csv='Google Email,M365 Email\n'+rows.join('\n');
+    const sorted=[...users].sort((a,b)=>{const ma=!!mappings[a.email],mb=!!mappings[b.email];if(ma!==mb)return ma?-1:1;return a.email.localeCompare(b.email)});
+    const rows=sorted.map(u=>`"${u.email}","${mappings[u.email]||''}"`);
+    const csv='Source User,Destination User\n'+rows.join('\n');
     const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='user-mappings.csv';a.click();
     showToast('User mapping CSV downloaded successfully.');
   };
@@ -517,9 +522,9 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
     const r=new FileReader();
     r.onload=e=>{
       const lines=e.target.result.split(/\r?\n/).slice(1);
-      const m={...mappings};
-      for(const l of lines){if(!l.trim())continue;const c=parseCsvLine(l);if(c.length>=2&&c[0])m[c[0]]=c[1]}
-      setMappings(m);setSelectedUsers(new Set(Object.keys(m)));
+      const m={};const used=new Set();
+      for(const l of lines){if(!l.trim())continue;const c=parseCsvLine(l);if(c.length>=2&&c[0]){const dst=c[1].trim().toLowerCase();if(dst&&!used.has(dst)){m[c[0].trim().toLowerCase()]=dst;used.add(dst);}else if(!dst)m[c[0].trim().toLowerCase()]=''}}
+      setMappings(m);setSelectedUsers(new Set(Object.entries(m).filter(([,v])=>v).map(([k])=>k)));
       setCsvUploading(false);
       showToast('User mapping uploaded successfully.');
     };
@@ -573,10 +578,26 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
             <div key={u.email} style={{display:'grid',gridTemplateColumns:'32px 1fr 1fr 60px',alignItems:'center',padding:'9px 14px',borderBottom:i<filtered.length-1?`1px solid ${C.bg}`:'none',background:selectedUsers.has(u.email)?C.tint:'white',transition:'background .15s',cursor:'pointer'}} onClick={()=>toggleUser(u.email)}>
               <input type="checkbox" checked={selectedUsers.has(u.email)} onChange={()=>toggleUser(u.email)} style={{accentColor:C.primary,width:15,height:15}} onClick={e=>e.stopPropagation()}/>
               <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}><Avatar name={u.email} email={u.email} size={26}/><div style={{minWidth:0}}><span style={{fontSize:12,color:C.muted,fontFamily:'monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',display:'block'}}>{u.email}</span>{alreadyMigrated&&<span style={{fontSize:10,color:'#92400e',background:'#fef3c7',padding:'1px 5px',borderRadius:3,fontWeight:600}}>Previously migrated</span>}</div></div>
-              <input value={mappings[u.email]||''} onChange={e=>{e.stopPropagation();setMappings(p=>({...p,[u.email]:e.target.value}))}}
-                placeholder="Enter M365 email..."
-                style={{border:`1px solid ${mapped?C.primary+'50':C.border}`,borderRadius:5,padding:'5px 9px',fontSize:12,fontFamily:'inherit',outline:'none',marginRight:8,width:'100%',background:mapped?C.tint:'white'}}
-                onFocus={e=>{e.stopPropagation();e.target.style.borderColor=C.primary}} onBlur={e=>e.target.style.borderColor=mapped?C.primary+'50':C.border} onClick={e=>e.stopPropagation()}/>
+              <div style={{display:'flex',alignItems:'center',gap:6,minWidth:0,paddingRight:8}} onClick={e=>e.stopPropagation()}>
+                {mapped?(
+                  <>
+                    <Avatar name={mappings[u.email]} email={mappings[u.email]} size={22}/>
+                    <span style={{fontSize:12,color:C.dark,fontFamily:'monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>{mappings[u.email]}</span>
+                    <button onClick={e=>{e.stopPropagation();setMappings(p=>({...p,[u.email]:''}))} } title="Clear mapping" style={{flexShrink:0,background:'none',border:'none',cursor:'pointer',color:C.muted,fontSize:14,lineHeight:1,padding:'0 2px'}} onMouseEnter={e=>e.currentTarget.style.color='#ef4444'} onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
+                  </>
+                ):(
+                  msUsers.length>0?(
+                    <select defaultValue="" onChange={e=>{e.stopPropagation();if(e.target.value){setMappings(p=>({...p,[u.email]:e.target.value}));setSelectedUsers(p=>{const n=new Set(p);n.add(u.email);return n});}e.target.value=''}}
+                      onClick={e=>e.stopPropagation()}
+                      style={{border:'none',background:'transparent',fontSize:12,fontFamily:'inherit',color:C.muted,cursor:'pointer',outline:'none',width:'100%',padding:'2px 0'}}>
+                      <option value="" disabled>— assign —</option>
+                      {msUsers.map(m=>{const em=(m.mail||m.userPrincipalName||'').toLowerCase();return<option key={em} value={em}>{em}</option>})}
+                    </select>
+                  ):(
+                    <span style={{color:C.muted,fontSize:13}}>–</span>
+                  )
+                )}
+              </div>
               <div style={{textAlign:'right',fontSize:12,color:C.muted,fontWeight:500}}>{u.conversation_count}</div>
             </div>
           );
