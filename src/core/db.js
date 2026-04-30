@@ -52,7 +52,14 @@ export async function connectDb(dbName, retries = 5, delayMs = 3000) {
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      const client = new MongoClient(uri);
+      const client = new MongoClient(uri, {
+        serverSelectionTimeoutMS: 10000,
+        connectTimeoutMS: 10000,
+        socketTimeoutMS: 0,       // no socket timeout — let the OS handle it
+        maxPoolSize: 10,
+        retryWrites: true,        // auto-retry write ops on transient network errors
+        retryReads: true,
+      });
       await client.connect();
       const db = client.db(dbName);
       connections.set(dbName, { client, db });
