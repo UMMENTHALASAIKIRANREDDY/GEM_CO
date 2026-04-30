@@ -213,6 +213,16 @@ export function createCL2GRouter({ db }) {
             { upsert: true }
           );
 
+          // Verify the extracted ZIP directory is still present on disk
+          if (!uploadDoc.extractPath || !fs.existsSync(uploadDoc.extractPath)) {
+            const msg = `Upload files not found on disk (${uploadDoc.extractPath}). The server may have restarted and lost the uploaded ZIP. Please re-upload the ZIP file and try again.`;
+            dbLog.error(`[CL2G] ${msg}`);
+            cl2gLog('error', msg);
+            await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: { status: 'failed', endTime: new Date(), error: msg } }).catch(() => {});
+            cl2gLog('done', JSON.stringify({ files: 0, errors: 1, users: 0, batchId }));
+            return;
+          }
+
           const { migrateUserPair } = await import('./migration/migrate.js');
           const reportUsers = [];
 
