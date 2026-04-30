@@ -1269,31 +1269,50 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
   const [search,setSearch]=useState('');
   const [csvUploading,setCsvUploading]=useState(false);
   const [csvEmails,setCsvEmails]=useState(null);
+  const csvEmailsRef=useRef(null);
 
-  // On mount: fetch saved CSV mapping from DB, then run auto-map for any unmapped users
-  useEffect(()=>{
-    fetch('/api/c2g/user-mappings').then(r=>r.ok?r.json():null).then(doc=>{
-      if(doc?.csvEmails){
-        setCsvEmails(doc.csvEmails);
-        if(doc.mappings)setC2gMappings(prev=>({...prev,...doc.mappings}));
-        setC2gSelectedUsers(new Set((doc.csvEmails).filter(e=>doc.mappings?.[e])));
-      }
-    }).catch(()=>{});
-  },[]);
+  const persistMappings=(m,csv)=>{
+    fetch('/api/c2g/user-mappings',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({mappings:m,csvEmails:csv??null})}).catch(()=>{});
+  };
 
-  // Auto-map by email local-part whenever users load
-  useEffect(()=>{
+  const runAutoMap=(currentMappings,currentCsv)=>{
+    if(currentCsv!==null)return; // don't overwrite CSV-sourced mappings
     if(!msUsers.length)return;
     const byLocal={};
     googleUsers.forEach(u=>{const em=(u.email||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
-    const m={...c2gMappings};let changed=false;
+    const m={...currentMappings};let changed=false;
     msUsers.forEach(u=>{
       const em=(u.mail||u.userPrincipalName||'').toLowerCase();
-      if(!m[em]){const loc=em.split('@')[0];m[em]=byLocal[loc]||'';changed=true}
+      if(!m[em]){const loc=em.split('@')[0];m[em]=byLocal[loc]||'';changed=true;}
     });
     if(changed)setC2gMappings(m);
-    if(c2gSelectedUsers.size===0)setC2gSelectedUsers(new Set(msUsers.map(u=>u.mail||u.userPrincipalName||'')));
-  },[msUsers,googleUsers]);
+    if(c2gSelectedUsers.size===0)setC2gSelectedUsers(new Set(msUsers.map(u=>(u.mail||u.userPrincipalName||'').toLowerCase())));
+  };
+
+  // On mount: load from DB first, then auto-map only if no CSV saved
+  useEffect(()=>{
+    fetch('/api/c2g/user-mappings').then(r=>r.ok?r.json():null).then(doc=>{
+      if(doc?.csvEmails&&doc.csvEmails.length>0){
+        setCsvEmails(doc.csvEmails);
+        csvEmailsRef.current=doc.csvEmails;
+        if(doc.mappings){
+          const merged={...c2gMappings,...doc.mappings};
+          setC2gMappings(merged);
+        }
+        setC2gSelectedUsers(new Set(doc.csvEmails.filter(e=>doc.mappings?.[e])));
+      } else {
+        csvEmailsRef.current=null;
+        runAutoMap(c2gMappings,null);
+      }
+    }).catch(()=>{ csvEmailsRef.current=null; runAutoMap(c2gMappings,null); });
+  },[]);
+
+  const handleMappingChange=(email,val)=>{
+    const m={...c2gMappings,[email]:val};
+    setC2gMappings(m);
+    persistMappings(m,csvEmailsRef.current);
+  };
 
   const downloadCsv=()=>{
     const src=csvEmails||msUsers.map(u=>(u.mail||u.userPrincipalName||'').toLowerCase());
@@ -1323,9 +1342,9 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
       setC2gMappings(merged);
       setC2gSelectedUsers(new Set(csvKeys.filter(k=>m[k])));
       setCsvEmails(csvKeys);
+      csvEmailsRef.current=csvKeys;
       setCsvUploading(false);
-      // Persist to DB
-      fetch('/api/c2g/user-mappings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mappings:m,csvEmails:csvKeys})}).catch(()=>{});
+      persistMappings(m,csvKeys);
       showToast(`CSV uploaded — ${csvKeys.length} user(s).`);
     };
     r.onerror=()=>{setCsvUploading(false);showToast('Failed to read CSV file.','error')};
@@ -1334,9 +1353,8 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
 
   const clearCsv=()=>{
     setCsvEmails(null);
-    // Delete from DB
+    csvEmailsRef.current=null;
     fetch('/api/c2g/user-mappings',{method:'DELETE'}).catch(()=>{});
-    // Restore auto-mapping from cloud users
     const byLocal={};
     googleUsers.forEach(u=>{const em=(u.email||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
     const m={};
@@ -1394,7 +1412,7 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
             <div key={em} style={{display:'grid',gridTemplateColumns:'32px 1fr 1fr',alignItems:'center',padding:'9px 14px',borderBottom:i<filtered.length-1?`1px solid ${C.bg}`:'none',background:c2gSelectedUsers.has(em)?C.tint:'white',transition:'background .15s',cursor:'pointer'}} onClick={()=>toggleUser(em)}>
               <input type="checkbox" checked={c2gSelectedUsers.has(em)} onChange={()=>toggleUser(em)} style={{accentColor:C.primary,width:15,height:15}} onClick={e=>e.stopPropagation()}/>
               <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}><Avatar name={u.displayName||em} email={em} size={26}/><span style={{fontSize:12,color:C.muted,fontFamily:'monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{em}</span></div>
-              <input value={c2gMappings[em]||''} onChange={e=>{e.stopPropagation();setC2gMappings(p=>({...p,[em]:e.target.value}))}}
+              <input value={c2gMappings[em]||''} onChange={e=>{e.stopPropagation();handleMappingChange(em,e.target.value)}}
                 placeholder="Enter Google email..."
                 style={{border:`1px solid ${mapped?C.primary+'50':C.border}`,borderRadius:5,padding:'5px 9px',fontSize:12,fontFamily:'inherit',outline:'none',marginRight:8,width:'100%',background:mapped?C.tint:'white'}}
                 onFocus={e=>{e.stopPropagation();e.target.style.borderColor=C.primary}} onBlur={e=>e.target.style.borderColor=mapped?C.primary+'50':C.border} onClick={e=>e.stopPropagation()}/>
@@ -1835,9 +1853,10 @@ const StepCL2GMap=({cl2gUploadData,googleUsers,cl2gMappings,setCl2gMappings,cl2g
         })}
         {filtered.length===0&&<div style={{textAlign:'center',padding:'24px',fontSize:13,color:C.muted}}>No users found.</div>}
       </div>
-      <div style={{flexShrink:0,display:'flex',gap:10,paddingTop:12}}>
+      {cl2gSelectedUuids.size===0&&<div style={{display:'flex',alignItems:'center',gap:8,padding:'10px 12px',background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:8,fontSize:12,color:'#991B1B',marginBottom:8}}><IcoWarn s={13}/>Select at least one user to continue.</div>}
+      <div style={{flexShrink:0,display:'flex',gap:10,paddingTop:4}}>
         <Btn variant="ghost" onClick={onBack}>← Back</Btn>
-        <Btn onClick={onNext} style={{flex:1,justifyContent:'center'}}>Continue →</Btn>
+        <Btn onClick={onNext} disabled={cl2gSelectedUuids.size===0} style={{flex:1,justifyContent:'center'}}>Continue →</Btn>
       </div>
     </div>
   );
@@ -2674,7 +2693,8 @@ function App(){
     const isDry=forceLive===true?false:cl2gOptions.dryRun;
     if(forceLive)setCl2gOptions(p=>({...p,dryRun:false}));
     setCl2gLastDry(isDry);
-    const keys=cl2gSelectedUuids.size>0?[...cl2gSelectedUuids]:Object.keys(cl2gMappings);
+    if(cl2gSelectedUuids.size===0){addAgentMsg('bot','⚠️ No users selected. Go back to the user mapping step and select at least one user.');return;}
+    const keys=[...cl2gSelectedUuids];
     const pairs=[];
     keys.forEach(uuid=>{
       if(cl2gMappings[uuid]){
