@@ -3076,6 +3076,8 @@ function App(){
       addAgentMsg('bot','Cancelled. Let me know when you\'re ready to proceed.',{quickReplies:migDir?['What do I do next?','Check status']:['Gemini → Copilot','Copilot → Gemini','Claude → Gemini']});
       return;
     }
+    // Direction chips — navigate to step 1 first so user sees the direction panel, then set direction
+    if(qr==='Choose direction'||qr==='What\'s the difference?'){setStep(1);addAgentMsg('user',qr);setTimeout(()=>sendToAgentRef.current(qr),300);return;}
     if(qr==='Gemini → Copilot'||qr==='gemini-copilot'){setMigDir('gemini-copilot');setStep(2);addAgentMsg('user',qr);}
     else if(qr==='Copilot → Gemini'||qr==='copilot-gemini'){setMigDir('copilot-gemini');setStep(2);addAgentMsg('user',qr);}
     else if(qr==='Claude → Gemini'||qr==='claude-gemini'||qr==='Claude → Gemini — Google only'){setMigDir('claude-gemini');setStep(2);addAgentMsg('user',qr);}

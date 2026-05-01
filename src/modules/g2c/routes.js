@@ -1347,7 +1347,8 @@ navigate_to_step, select_direction, start_migration, retry_failed, auto_map_user
         const needsMs = migDir === 'gemini-copilot' || migDir === 'copilot-gemini';
         const authMissing = (needsGoogle && !googleAuthed) || (needsMs && !msAuthed);
 
-        if (step === 0 || authMissing) {
+        if (authMissing) {
+          // Only show auth widget when accounts are actually missing for the chosen direction
           payload.widget = { type: 'auth_connect' };
         } else if (!isRunning && !isDone && effectiveMappingsCount > 0) {
           // Only show migration_actions at the options step or later
