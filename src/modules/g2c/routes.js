@@ -1227,7 +1227,7 @@ Confirm before going live (dryRun: false). When intent is ambiguous, ask with ch
                   : mappings_count;
                 if (effectiveMappings === 0) blockers.push('No users mapped');
                 if (live || c2g_live || cl2g_live) { blockers.push('Migration already running'); }
-                if (selected_users_count < mappings_count) warnings.push(`${mappings_count - selected_users_count} users have no destination mapping — they will be skipped`);
+                if (selected_users_count < effectiveMappings) warnings.push(`${effectiveMappings - selected_users_count} users have no destination mapping — they will be skipped`);
                 result = JSON.stringify({ blockers, warnings, ready: blockers.length === 0 });
                 break;
               }
