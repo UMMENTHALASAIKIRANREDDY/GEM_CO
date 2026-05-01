@@ -1630,7 +1630,7 @@ const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c
 /* ══════════════════════════════════════════ */
 /* ═══  CLAUDE→GEMINI: UPLOAD ZIP STEP    ═══ */
 /* ══════════════════════════════════════════ */
-const StepCL2GUpload=({cl2gUploadData,setCl2gUploadData,onNext,onBack,showToast})=>{
+const StepCL2GUpload=({cl2gUploadData,setCl2gUploadData,onNext,onBack,showToast,onUploadComplete})=>{
   const fileRef=useRef(null);
   const menuRef=useRef(null);
   const [uploading,setUploading]=useState(false);
@@ -1668,6 +1668,7 @@ const StepCL2GUpload=({cl2gUploadData,setCl2gUploadData,onNext,onBack,showToast}
       let d;try{d=JSON.parse(text);}catch{throw new Error(`Upload failed (${r.status})`)}
       if(!r.ok)throw new Error(d.error||'Upload failed');
       setCl2gUploadData({uploadId:d.uploadId,users:d.users||[],totalConversations:d.totalConversations||0,totalMemories:d.totalMemories||0,totalProjects:d.totalProjects||0,fileName:file.name});
+      if(onUploadComplete)(onUploadComplete((d.users||[]).length));
       await loadUploads();
       showToast(`Uploaded — ${d.totalConversations} conversations, ${d.users?.length||0} users found.`);
     }catch(e){showToast(e.message,'error')}
@@ -2607,6 +2608,11 @@ function App(){
     // Reset mappings for fresh import so auto-map runs again
     setMappings({});
     setSelectedUsers(new Set());
+    if(agentMode==='guide'){
+      const n=data.total_users||data.users?.length||0;
+      addAgentMsg('bot',`Vault data loaded — **${n} user${n!==1?'s':''}** found. Want me to auto-map them by email?`,
+        {quickReplies:['Yes, auto-map','I\'ll map manually']});
+    }
     setTimeout(()=>setStep(3),400);
   };
 
@@ -3022,11 +3028,19 @@ function App(){
           fetch('/api/google/users').then(r=>r.json()).then(d=>{
             if(d.users)setGoogleUsers(d.users);
             setGoogleAuthed(true);setChatGLoading(false);
+            if(agentMode==='guide'){
+              const msg=msAuthed
+                ?`Google Workspace connected! Both accounts ready. Choose a direction to get started.`
+                :migDir==='claude-gemini'
+                  ?`Google connected! You're all set for Claude → Gemini. Ready to upload your Claude ZIP?`
+                  :`Google connected! Now connect Microsoft 365 to unlock Gemini↔Copilot migration — or choose Claude → Gemini which only needs Google.`;
+              addAgentMsg('bot',msg,{quickReplies:msAuthed?['Gemini → Copilot','Copilot → Gemini','Claude → Gemini']:['Connect Microsoft 365','Claude → Gemini — Google only']});
+            }
           }).catch(()=>{setGoogleAuthed(true);setChatGLoading(false);});
         },500);
       }
     });
-  },[]);
+  },[agentMode,msAuthed,migDir,addAgentMsg]);
 
   const handleChatSignInMs=useCallback(()=>{
     setChatMLoading(true);
@@ -3039,11 +3053,17 @@ function App(){
           fetch('/api/ms/users').then(r=>r.json()).then(d=>{
             if(d.users)setMsUsers(d.users);
             setMsAuthed(true);setChatMLoading(false);
+            if(agentMode==='guide'){
+              const msg=googleAuthed
+                ?`Microsoft 365 connected! Both accounts ready — choose your migration direction.`
+                :`Microsoft 365 connected! Now connect Google Workspace to complete setup.`;
+              addAgentMsg('bot',msg,{quickReplies:googleAuthed?['Gemini → Copilot','Copilot → Gemini']:['Connect Google Workspace']});
+            }
           }).catch(()=>{setMsAuthed(true);setChatMLoading(false);});
         },500);
       }
     });
-  },[config.tenantId]);
+  },[config.tenantId,agentMode,googleAuthed,addAgentMsg]);
 
   const handleChatUpload=useCallback(async file=>{
     setChatUploading(true);
@@ -3151,7 +3171,7 @@ function App(){
                   {step===3&&migDir==='copilot-gemini'&&<StepC2GOptions c2gOptions={c2gOptions} setC2gOptions={setC2gOptions} c2gConfig={c2gConfig} setC2gConfig={setC2gConfig} googleAuthed={googleAuthed} msAuthed={msAuthed} onRun={runC2GMigration} onBack={()=>setStep(2)}/>}
                   {(step===4||step===5)&&migDir==='copilot-gemini'&&<StepC2GMigrate c2gStats={c2gStats} c2gDone={c2gDone} c2gBatchId={null} onRunAnother={()=>{setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(3)} onStart={runC2GMigration} c2gLive={c2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={c2gLastDry} onStartLive={()=>runC2GMigration(true)} c2gTotal={c2gTotal}/>}
                   {/* Claude → Gemini steps */}
-                  {step===2&&migDir==='claude-gemini'&&<StepCL2GUpload cl2gUploadData={cl2gUploadData} setCl2gUploadData={setCl2gUploadData} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast}/>}
+                  {step===2&&migDir==='claude-gemini'&&<StepCL2GUpload cl2gUploadData={cl2gUploadData} setCl2gUploadData={setCl2gUploadData} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast} onUploadComplete={(n)=>{if(agentMode==='guide')addAgentMsg('bot',`ZIP uploaded — **${n} user${n!==1?'s':''}** found. Want me to auto-map them by email?`,{quickReplies:['Yes, auto-map','I\'ll map manually','What is auto-map?']});}}/>}
                   {step===3&&migDir==='claude-gemini'&&<StepCL2GMap cl2gUploadData={cl2gUploadData} googleUsers={googleUsers} cl2gMappings={cl2gMappings} setCl2gMappings={setCl2gMappings} cl2gSelectedUuids={cl2gSelectedUuids} setCl2gSelectedUuids={setCl2gSelectedUuids} onNext={()=>setStep(4)} onBack={()=>setStep(2)} showToast={showToast}/>}
                   {step===4&&migDir==='claude-gemini'&&<StepCL2GOptions cl2gOptions={cl2gOptions} setCl2gOptions={setCl2gOptions} cl2gConfig={cl2gConfig} setCl2gConfig={setCl2gConfig} googleAuthed={googleAuthed} onRun={runCL2GMigration} onBack={()=>setStep(3)}/>}
                   {(step===5||step===6)&&migDir==='claude-gemini'&&<StepCL2GMigrate cl2gStats={cl2gStats} cl2gDone={cl2gDone} onRunAnother={()=>{setCl2gDone(false);setCl2gStats({users:0,files:0,errors:0});setCl2gOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(4)} onStart={runCL2GMigration} cl2gLive={cl2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={cl2gLastDry} onStartLive={()=>runCL2GMigration(true)} cl2gTotal={cl2gTotal} folderName={cl2gConfig.folderName||'ClaudeChats'}/>}
