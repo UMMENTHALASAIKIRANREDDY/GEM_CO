@@ -3026,7 +3026,7 @@ function App(){
     }
     else if(qr==='What do I do next?'){sendToAgent('What do I do next?');}
     else{sendToAgent(qr);}
-  },[sendToAgent,retryFailed,runAnotherBatch,runMigration,runC2GMigration,runCL2GMigration,triggerAutoMap,addAgentMsg,setOptions,setStep,setMigDir,migDir,setC2gOptions,setCl2gOptions,handleChatSignInGoogle,handleChatSignInMs]);
+  },[sendToAgent,retryFailed,runAnotherBatch,runMigration,runC2GMigration,runCL2GMigration,triggerAutoMap,addAgentMsg,setOptions,setStep,setMigDir,setAgentMode,migDir,setC2gOptions,setCl2gOptions,handleChatSignInGoogle,handleChatSignInMs]);
 
   // Always keep sendToAgentRef current so initial greeting can call it without stale closure
   sendToAgentRef.current=sendToAgent;
