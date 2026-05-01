@@ -95,6 +95,83 @@ const AGENT_TOOLS = [
       description: 'Show post-migration setup instructions. Call when user asks "what do I do next?", "how do I set up the Gem?", "where is my Copilot agent?", or clicks "What do I do next?"',
       parameters: { type: 'object', properties: {}, required: [] }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'navigate_to_step',
+      description: 'Navigate the left panel to a specific step number. Use when user asks to go somewhere ("take me to mapping", "go back to upload").',
+      parameters: {
+        type: 'object',
+        properties: { step: { type: 'number', description: 'Step index: 0=Connect, 1=Direction, 2=Upload/Import, 3=Map Users, 4=Options, 5=Migration' } },
+        required: ['step']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'select_direction',
+      description: 'Set the migration direction and advance the left panel to step 2. Use when user says which direction they want.',
+      parameters: {
+        type: 'object',
+        properties: { migDir: { type: 'string', enum: ['gemini-copilot', 'copilot-gemini', 'claude-gemini'], description: 'Migration direction' } },
+        required: ['migDir']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'start_migration',
+      description: 'Start migration. Always call pre_flight_check first. Confirm with user before dryRun=false if no dry run has been done.',
+      parameters: {
+        type: 'object',
+        properties: { dryRun: { type: 'boolean', description: 'true = dry run (safe preview), false = live migration (writes data)' } },
+        required: ['dryRun']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'retry_failed',
+      description: 'Retry failed items from the last migration batch. Only call if migration is done and errors > 0.',
+      parameters: { type: 'object', properties: {}, required: [] }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'auto_map_users',
+      description: 'Automatically map source users to destination users by email match. Works for all directions.',
+      parameters: { type: 'object', properties: {}, required: [] }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'set_migration_config',
+      description: 'Set migration options. Call when user specifies folder name, date range, or dry/live preference.',
+      parameters: {
+        type: 'object',
+        properties: {
+          folderName: { type: 'string', description: 'Destination folder name in Google Drive or OneNote' },
+          fromDate: { type: 'string', description: 'Start date filter ISO string or empty string for no filter' },
+          toDate: { type: 'string', description: 'End date filter ISO string or empty string for no filter' },
+          dryRun: { type: 'boolean', description: 'Set dry run toggle' }
+        },
+        required: []
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'pre_flight_check',
+      description: 'Validate state before starting migration. Always call this before start_migration. Returns list of blockers and warnings.',
+      parameters: { type: 'object', properties: {}, required: [] }
+    }
   }
 ];
 
@@ -1031,7 +1108,7 @@ Formatting: markdown — **bold** for key values, bullet lists for steps, ## hea
 Personality: direct, warm, expert. Like a senior engineer helping a colleague.
 
 You CAN take actions via tools: show_reports, show_mapping, show_status_card, show_post_migration_guide, get_migration_status, explain_log.
-Never suggest navigating to a step, starting a migration, or retrying — the user controls those buttons.`;
+You CAN act on behalf of the user via tools. Always run pre_flight_check before start_migration. Confirm before going live (dryRun: false). When intent is ambiguous, ask with chips. Generate contextual quickReplies on every response.`;
 
     const messages = [
       { role: 'system', content: systemPrompt },
@@ -1043,6 +1120,7 @@ Never suggest navigating to a step, starting a migration, or retrying — the us
       let response = await callAI(messages, AGENT_TOOLS);
       let choice = response.choices?.[0];
       let actionToExecute = null;
+      let actionPayload = {};
       let statusCardData = null;
       let postMigrationMigDir = null;
 
@@ -1090,6 +1168,60 @@ Never suggest navigating to a step, starting a migration, or retrying — the us
                 result = `Status card shown: ${args.users||0} users, ${args.files||0} files, ${args.errors||0} errors.`;
                 break;
               }
+              case 'navigate_to_step': {
+                const s = typeof args.step === 'number' ? args.step : parseInt(args.step, 10);
+                actionToExecute = 'navigate_to_step';
+                actionPayload = { step: s };
+                result = JSON.stringify({ execute: 'navigate_to_step', step: s });
+                break;
+              }
+              case 'select_direction': {
+                actionToExecute = 'select_direction';
+                actionPayload = { migDir: args.migDir };
+                result = JSON.stringify({ execute: 'select_direction', migDir: args.migDir });
+                break;
+              }
+              case 'start_migration': {
+                actionToExecute = args.dryRun ? 'start_migration_dry' : 'start_migration_live';
+                actionPayload = { dryRun: args.dryRun };
+                result = JSON.stringify({ execute: 'start_migration', dryRun: args.dryRun });
+                break;
+              }
+              case 'retry_failed': {
+                actionToExecute = 'retry_failed';
+                result = JSON.stringify({ execute: 'retry_failed' });
+                break;
+              }
+              case 'auto_map_users': {
+                actionToExecute = 'auto_map_users';
+                result = JSON.stringify({ execute: 'auto_map_users' });
+                break;
+              }
+              case 'set_migration_config': {
+                actionToExecute = 'set_config';
+                actionPayload = { config: args };
+                result = JSON.stringify({ execute: 'set_config', config: args });
+                break;
+              }
+              case 'pre_flight_check': {
+                const blockers = [];
+                const warnings = [];
+                if (migDir === 'claude-gemini' || migDir === 'gemini-copilot') {
+                  if (!googleAuthed) blockers.push('Google Workspace not connected');
+                }
+                if (migDir === 'gemini-copilot' || migDir === 'copilot-gemini') {
+                  if (!msAuthed) blockers.push('Microsoft 365 not connected');
+                }
+                if (!migDir) blockers.push('No migration direction selected');
+                if ((migDir === 'claude-gemini' || migDir === 'gemini-copilot') && !uploadData) {
+                  blockers.push('No file uploaded yet');
+                }
+                if (mappings_count === 0) blockers.push('No users mapped');
+                if (live) blockers.push('Migration already running');
+                if (selected_users_count < mappings_count) warnings.push(`${mappings_count - selected_users_count} users have no destination mapping — they will be skipped`);
+                result = JSON.stringify({ blockers, warnings, ready: blockers.length === 0 });
+                break;
+              }
               default: result = 'Unknown tool.';
             }
           } catch (e) { result = 'Tool execution error.'; }
@@ -1102,7 +1234,7 @@ Never suggest navigating to a step, starting a migration, or retrying — the us
 
       const reply = choice?.message?.content || "I couldn't generate a response. Please try again.";
       const payload = { reply, quickReplies: [] };
-      if (actionToExecute) payload.action = actionToExecute;
+      if (actionToExecute) { payload.action = actionToExecute; Object.assign(payload, actionPayload); }
       if (postMigrationMigDir) payload.migDir = postMigrationMigDir;
       if (statusCardData) payload.statusCard = statusCardData;
 
