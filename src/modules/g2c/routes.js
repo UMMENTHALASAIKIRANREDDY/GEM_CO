@@ -1067,7 +1067,9 @@ export function createG2CRouter(deps) {
     const {
       step = 0, migDir = null, live = false, migDone = false, stats = {}, lastRunWasDry = false,
       agentMode = 'guide', uploadData = null, googleAuthed = false, msAuthed = false,
-      mappings_count = 0, selected_users_count = 0, options = {}
+      mappings_count = 0, selected_users_count = 0, options = {},
+      c2g_mappings_count = 0, cl2g_upload_users = 0, cl2g_mappings_count = 0,
+      c2g_done = false, cl2g_done = false, c2g_live = false, cl2g_live = false
     } = migrationState;
 
     const logsSection = migrationLogs.length > 0
@@ -1100,6 +1102,10 @@ Current state:
 - Migration done: ${migDone}
 - Last run: ${lastRunWasDry ? 'dry run' : 'live'}
 - Stats: ${stats.users || 0} users · ${stats.pages || 0} pages/files migrated · ${stats.errors || 0} errors
+- C2G mapped users: ${c2g_mappings_count}
+- CL2G upload users: ${cl2g_upload_users}, mapped: ${cl2g_mappings_count}
+- C2G done: ${c2g_done}, CL2G done: ${cl2g_done}
+- C2G live: ${c2g_live}, CL2G live: ${cl2g_live}
 ${logsSection}
 Answer from the actual data above. Cite real numbers when relevant.
 
@@ -1216,8 +1222,11 @@ Confirm before going live (dryRun: false). When intent is ambiguous, ask with ch
                 if ((migDir === 'claude-gemini' || migDir === 'gemini-copilot') && !uploadData) {
                   blockers.push('No file uploaded yet');
                 }
-                if (mappings_count === 0) blockers.push('No users mapped');
-                if (live) blockers.push('Migration already running');
+                const effectiveMappings = migDir === 'copilot-gemini' ? c2g_mappings_count
+                  : migDir === 'claude-gemini' ? cl2g_mappings_count
+                  : mappings_count;
+                if (effectiveMappings === 0) blockers.push('No users mapped');
+                if (live || c2g_live || cl2g_live) { blockers.push('Migration already running'); }
                 if (selected_users_count < mappings_count) warnings.push(`${mappings_count - selected_users_count} users have no destination mapping — they will be skipped`);
                 result = JSON.stringify({ blockers, warnings, ready: blockers.length === 0 });
                 break;

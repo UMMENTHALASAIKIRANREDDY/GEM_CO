@@ -2964,7 +2964,14 @@ function App(){
             googleAuthed,msAuthed,
             mappings_count:Object.keys(mappings).length,
             selected_users_count:selectedUsers.size,
-            options:{dryRun:options.dryRun,hasFilePath:!!config.filePath}}})});
+            options:{dryRun:options.dryRun,hasFilePath:!!config.filePath},
+            c2g_mappings_count:Object.keys(c2gMappings).length,
+            cl2g_upload_users:cl2gUploadData?.users?.length||0,
+            cl2g_mappings_count:Object.keys(cl2gMappings).length,
+            c2g_done:c2gDone,
+            cl2g_done:cl2gDone,
+            c2g_live:c2gLive,
+            cl2g_live:cl2gLive}})});
       const data=await res.json();
       if(data.reply)addAgentMsg('bot',data.reply,{quickReplies:data.quickReplies,...(data.widget&&{widget:data.widget}),...(data.statusCard&&{statusCard:data.statusCard}),...(data.chips&&{chips:data.chips})});
       // Execute real actions returned by agent tools
