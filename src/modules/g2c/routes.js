@@ -79,6 +79,8 @@ function generateSuggestedChips({ step=0, migDir, googleAuthed, msAuthed, live, 
   // Done
   if (isDone && lastRunWasDry) return ['Go Live now', 'Show me the report', 'What changed?'];
   if (isDone) return ['What do I do next?', 'Download report', 'Start Another'];
+  // Step 5+ means migration panel even if migDone not set (e.g. errors stopped it)
+  if (step >= 5) return ['Check status', 'Retry failed', 'Show me the report'];
   return ['Check status'];
 }
 
@@ -1173,7 +1175,7 @@ ${uiContext || currentPanelContext}
 - Direction: ${dirLabel}
 - Google Workspace: ${googleAuthed ? '✓ connected' : '✗ not connected'}
 - Microsoft 365: ${msAuthed ? '✓ connected' : '✗ not connected'}
-- Mappings: ${effectiveMappingsCount} users mapped
+- Mappings: ${step < 2 ? 'N/A at this step (user has not reached mapping yet)' : `${effectiveMappingsCount} users mapped`}
 - Migration running: ${isRunning} | Done: ${isDone}
 - Last run: ${lastRunWasDry ? 'dry run' : 'live'} | Stats: ${stats.users||0} users · ${stats.pages||0} pages · ${stats.errors||0} errors
 ${logsSection}
@@ -1349,9 +1351,9 @@ navigate_to_step, select_direction, start_migration, retry_failed, auto_map_user
           payload.widget = { type: 'auth_connect' };
         } else if (!isRunning && !isDone && effectiveMappingsCount > 0) {
           // Only show migration_actions at the options step or later
-          const isOptionsStep = (migDir === 'copilot-gemini' && step >= 3)
-            || (migDir === 'claude-gemini' && step >= 4)
-            || (migDir === 'gemini-copilot' && step >= 4);
+          const isOptionsStep = (migDir === 'copilot-gemini' && step === 3)
+            || (migDir === 'claude-gemini' && step === 4)
+            || (migDir === 'gemini-copilot' && step === 4);
           if (isOptionsStep) {
             payload.widget = { type: 'migration_actions' };
           }
