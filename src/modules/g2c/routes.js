@@ -34,21 +34,51 @@ const dbLog = getLogger('db:ops');
 
 // ─── Agent Chat constants ─────────────────────────────────────────────────────
 
-function generateSuggestedChips({ migDir, googleAuthed, msAuthed, live, migDone,
-  lastRunWasDry, uploadData, mappings_count, c2g_mappings_count, cl2g_mappings_count }) {
-  if (!migDir) return ['Gemini → Copilot', 'Copilot → Gemini', 'Claude → Gemini', 'What do I need?'];
-  const needsGoogle = migDir === 'gemini-copilot' || migDir === 'claude-gemini';
-  if (needsGoogle && !googleAuthed) return ['Connect Google Workspace', 'What do I need?'];
-  if ((migDir === 'gemini-copilot' || migDir === 'copilot-gemini') && !msAuthed)
-    return ['Connect Microsoft 365', 'Skip for now'];
+function generateSuggestedChips({ step=0, migDir, googleAuthed, msAuthed, live, migDone,
+  lastRunWasDry, uploadData, mappings_count, c2g_mappings_count, cl2g_mappings_count,
+  c2g_done, cl2g_done, c2g_live, cl2g_live }) {
+  const isRunning = live || c2g_live || cl2g_live;
+  const isDone = migDone || c2g_done || cl2g_done;
   const effectiveMappings = migDir === 'copilot-gemini' ? c2g_mappings_count
     : migDir === 'claude-gemini' ? cl2g_mappings_count : mappings_count;
-  if (!uploadData && migDir !== 'copilot-gemini') return ['How do I export?', 'What format?'];
-  if (effectiveMappings === 0) return ['Auto-map users', 'Show mapping table'];
-  if (live) return ['Check status', 'How long will this take?'];
-  if (!migDone) return ['Start Dry Run', 'What is a dry run?', 'Go straight to live'];
-  if (lastRunWasDry) return ['Start Live Migration', 'Show me the report', 'Start Another'];
-  if (migDone) return ['What do I do next?', 'Download report', 'Start Another'];
+
+  // Step 0: Connect Clouds
+  if (step === 0 || !migDir) {
+    if (!googleAuthed && !msAuthed) return ['Connect Google', 'Connect Microsoft 365', 'What do I need?'];
+    if (!googleAuthed) return ['Connect Google Workspace', 'What do I need?'];
+    if (!msAuthed) return ['Connect Microsoft 365', 'Skip — do Claude→Gemini'];
+    return ['Choose direction', "What's the difference?"];
+  }
+  // Step 1: Direction
+  if (step === 1) {
+    const opts = ['Claude → Gemini'];
+    if (googleAuthed && msAuthed) opts.unshift('Gemini → Copilot', 'Copilot → Gemini');
+    opts.push("What's the difference?");
+    return opts;
+  }
+  // Step 2: Upload / Map (depends on direction)
+  if (step === 2) {
+    if (migDir === 'gemini-copilot') return ['How do I export from Google?', "What's in the ZIP?", 'Select users instead'];
+    if (migDir === 'claude-gemini') return ['How do I export from Claude?', "What's in the ZIP?"];
+    if (migDir === 'copilot-gemini') return effectiveMappings > 0
+      ? ['Auto-map users', 'What is auto-map?', 'How mapping works']
+      : ['Auto-map users', 'What is auto-map?'];
+  }
+  // Step 3: Map Users (G2C / CL2G)
+  if (step === 3 && migDir !== 'copilot-gemini') {
+    if (effectiveMappings === 0) return ['Auto-map users', 'What is auto-map?', 'Skip unmapped users'];
+    return ['Auto-map users', 'All looks good', 'How many are mapped?'];
+  }
+  // Step 3 C2G / Step 4 G2C+CL2G: Options
+  if ((step === 3 && migDir === 'copilot-gemini') || step === 4) {
+    if (isRunning) return ['Check status', 'How long will this take?'];
+    return ['Start Dry Run', 'What is a dry run?', 'Go straight to live', 'Change folder name'];
+  }
+  // Running
+  if (isRunning) return ['Check status', 'How long will this take?', 'Any errors so far?'];
+  // Done
+  if (isDone && lastRunWasDry) return ['Go Live now', 'Show me the report', 'What changed?'];
+  if (isDone) return ['What do I do next?', 'Download report', 'Start Another'];
   return ['Check status'];
 }
 
@@ -215,6 +245,7 @@ async function callAI(messages, tools) {
   }
 
   if (openaiKey) {
+    console.log('[callAI] using OpenAI key, model=gpt-4o');
     const body = { model: 'gpt-4o', messages, max_tokens: 700, temperature: 0.35 };
     if (tools) body.tools = tools;
     const r = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -222,7 +253,7 @@ async function callAI(messages, tools) {
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
       body: JSON.stringify(body)
     });
-    if (!r.ok) throw new Error(`OpenAI error ${r.status}`);
+    if (!r.ok) { const errBody = await r.text(); console.error('[callAI] OpenAI error', r.status, errBody); throw new Error(`OpenAI error ${r.status}: ${errBody}`); }
     return await r.json();
   }
 
@@ -1080,6 +1111,7 @@ export function createG2CRouter(deps) {
   // Agent Chat
   router.post('/chat', (req, res, next) => { if (!req.session?.appUser) return res.status(401).json({ error: 'Not logged in' }); next(); }, async (req, res) => {
     const { message, history = [], migrationState = {}, migrationLogs = [] } = req.body;
+    console.log(`[chat] msg="${message}" user=${req.session?.appUser?.email} step=${migrationState?.step} migDir=${migrationState?.migDir} googleAuthed=${migrationState?.googleAuthed} msAuthed=${migrationState?.msAuthed}`);
     if (!message) return res.status(400).json({ error: 'message required' });
 
     const {
@@ -1087,7 +1119,8 @@ export function createG2CRouter(deps) {
       agentMode = 'guide', uploadData = null, googleAuthed = false, msAuthed = false,
       mappings_count = 0, selected_users_count = 0, options = {},
       c2g_mappings_count = 0, cl2g_upload_users = 0, cl2g_mappings_count = 0,
-      c2g_done = false, cl2g_done = false, c2g_live = false, cl2g_live = false
+      c2g_done = false, cl2g_done = false, c2g_live = false, cl2g_live = false,
+      uiContext = ''
     } = migrationState;
 
     const logsSection = migrationLogs.length > 0
@@ -1099,50 +1132,88 @@ export function createG2CRouter(deps) {
       : migDir === 'claude-gemini' ? 'Claude → Google Gemini'
       : 'not selected';
 
-    const modeContext = agentMode === 'running'
-      ? 'Migration is currently running. Answer questions about progress from the logs above. Do not suggest navigating anywhere or starting/stopping anything.'
-      : agentMode === 'done'
-      ? 'Migration is complete. If the user asks what to do next or how to set up Gemini Gems or find the Copilot agent, call show_post_migration_guide.'
-      : 'Guide the user through their current step. Answer questions clearly and concisely.';
+    const effectiveMappingsCount = migDir === 'copilot-gemini' ? c2g_mappings_count
+      : migDir === 'claude-gemini' ? cl2g_mappings_count : mappings_count;
+    const isRunning = live || c2g_live || cl2g_live;
+    const isDone = migDone || c2g_done || cl2g_done;
 
-    const systemPrompt = `You are the CloudFuze Migration Agent — a helpful, knowledgeable guide for migrating conversations between Google Workspace and Microsoft 365.
+    // What panel is actually open right now + what the user needs to do
+    let currentPanelContext = '';
+    if (!migDir) {
+      if (step === 0) currentPanelContext = 'LEFT PANEL: Connect Clouds. User needs to connect Google Workspace and/or Microsoft 365 depending on direction. Suggest they connect accounts and then pick a direction.';
+      else if (step === 1) currentPanelContext = 'LEFT PANEL: Choose Direction. User sees Gemini→Copilot, Copilot→Gemini, Claude→Gemini options. Ask which direction they want and call select_direction.';
+    } else if (migDir === 'gemini-copilot') {
+      if (step === 0) currentPanelContext = 'LEFT PANEL: Connect Clouds (Gemini→Copilot). Needs Google Workspace + Microsoft 365 connected.';
+      else if (step === 1) currentPanelContext = 'LEFT PANEL: Choose Direction. Direction already selected as Gemini→Copilot.';
+      else if (step === 2) currentPanelContext = `LEFT PANEL: Import Data (Gemini→Copilot). User can select Google Workspace users from a list OR upload a Google Vault ZIP. Upload data: ${uploadData ? `✓ ${uploadData.total_users} users loaded` : '✗ not uploaded yet'}. If not uploaded, guide them to upload or select users from the list on the left.`;
+      else if (step === 3) currentPanelContext = `LEFT PANEL: Map Users (Gemini→Copilot). Map Google users → Microsoft 365 users. Currently ${mappings_count} users mapped, ${selected_users_count} selected. If 0 mapped, offer auto_map_users tool.`;
+      else if (step === 4) currentPanelContext = `LEFT PANEL: Options (Gemini→Copilot). Configure folder name, date range, dry run toggle. Currently dryRun=${options.dryRun}. User can start migration from here or via chat.`;
+      else if (step >= 5) currentPanelContext = `LEFT PANEL: Migration (Gemini→Copilot). Running: ${live}. Done: ${migDone}. Stats: ${stats.users||0} users, ${stats.pages||0} pages, ${stats.errors||0} errors.`;
+    } else if (migDir === 'copilot-gemini') {
+      if (step === 0) currentPanelContext = 'LEFT PANEL: Connect Clouds (Copilot→Gemini). Needs Microsoft 365 + Google Workspace connected.';
+      else if (step <= 1) currentPanelContext = 'LEFT PANEL: Choose Direction. Direction is Copilot→Gemini.';
+      else if (step === 2) currentPanelContext = `LEFT PANEL: Map Users (Copilot→Gemini). Map Microsoft 365 users → Google Drive. Currently ${c2g_mappings_count} users mapped. If 0, offer auto_map_users.`;
+      else if (step === 3) currentPanelContext = `LEFT PANEL: Options (Copilot→Gemini). Configure and start migration. dryRun=${options.dryRun}.`;
+      else currentPanelContext = `LEFT PANEL: Migration (Copilot→Gemini). Running: ${c2g_live}. Done: ${c2g_done}.`;
+    } else if (migDir === 'claude-gemini') {
+      if (step === 0) currentPanelContext = 'LEFT PANEL: Connect Clouds (Claude→Gemini). Only Google Workspace needed.';
+      else if (step <= 1) currentPanelContext = 'LEFT PANEL: Choose Direction. Direction is Claude→Gemini.';
+      else if (step === 2) currentPanelContext = `LEFT PANEL: Upload ZIP (Claude→Gemini). User needs to upload a Claude export ZIP file. Upload status: ${cl2g_upload_users > 0 ? `✓ ${cl2g_upload_users} users` : '✗ not uploaded'}. Guide them to drag and drop or click to browse.`;
+      else if (step === 3) currentPanelContext = `LEFT PANEL: Map Users (Claude→Gemini). Map Claude users → Google Gemini. Currently ${cl2g_mappings_count} mapped. If 0, offer auto_map_users.`;
+      else if (step === 4) currentPanelContext = `LEFT PANEL: Options (Claude→Gemini). Configure and start migration. dryRun=${options.dryRun}.`;
+      else currentPanelContext = `LEFT PANEL: Migration (Claude→Gemini). Running: ${cl2g_live}. Done: ${cl2g_done}.`;
+    }
 
-Current state:
-- Agent mode: ${agentMode} — ${modeContext}
+    const systemPrompt = `You are the CloudFuze Migration Agent. You are an active participant — you act on behalf of the user, not just advise.
+
+## What the user sees right now
+${uiContext || currentPanelContext}
+
+## Full State
 - Direction: ${dirLabel}
-- Step: ${step} — ${STEP_NAMES[step] || 'Unknown'}
-- Google Workspace connected: ${googleAuthed}
-- Microsoft 365 connected: ${msAuthed}
-- Vault data loaded: ${uploadData ? `yes (${uploadData.total_users} users, ${uploadData.total_conversations || '?'} conversations)` : 'no'}
-- User mappings configured: ${mappings_count} (${selected_users_count} selected)
-- Dry run mode: ${options.dryRun ? 'yes' : 'no'}
-- Migration running: ${live}
-- Migration done: ${migDone}
-- Last run: ${lastRunWasDry ? 'dry run' : 'live'}
-- Stats: ${stats.users || 0} users · ${stats.pages || 0} pages/files migrated · ${stats.errors || 0} errors
-- C2G mapped users: ${c2g_mappings_count}
-- CL2G upload users: ${cl2g_upload_users}, mapped: ${cl2g_mappings_count}
-- C2G done: ${c2g_done}, CL2G done: ${cl2g_done}
-- C2G live: ${c2g_live}, CL2G live: ${cl2g_live}
+- Google Workspace: ${googleAuthed ? '✓ connected' : '✗ not connected'}
+- Microsoft 365: ${msAuthed ? '✓ connected' : '✗ not connected'}
+- Mappings: ${effectiveMappingsCount} users mapped
+- Migration running: ${isRunning} | Done: ${isDone}
+- Last run: ${lastRunWasDry ? 'dry run' : 'live'} | Stats: ${stats.users||0} users · ${stats.pages||0} pages · ${stats.errors||0} errors
 ${logsSection}
-Answer from the actual data above. Cite real numbers when relevant.
+## How to respond
+- Address what's on the LEFT PANEL RIGHT NOW. Be specific to what the user sees.
+- Give 1-2 sentences of context, then state the next step clearly.
+- If user intent is clear (start, go, migrate, auto map) → use the tool immediately, don't just explain.
+- Keep responses SHORT. No long instruction lists.
+- Format: **bold** key values, bullets only for multi-step sequences.
 
-Formatting: markdown — **bold** for key values, bullet lists for steps, ## headers only for long answers. Match length to need.
+## Action rules
+- Direction name ("Gemini to Copilot", "Claude to Gemini" etc) → call select_direction immediately (safe)
+- "show reports" / "show mapping" / "navigate to step X" → call those tools immediately (safe)
+- "auto map" / "map users" → call auto_map_users — frontend will ask user to confirm before executing
+- "start" / "dry run" / "go" / "migrate" → call pre_flight_check first, then start_migration — frontend will ask user to confirm before executing
+- "go live" → call pre_flight_check first, then start_migration dryRun:false — frontend will ask user to confirm
+- "retry" → call retry_failed — frontend will ask user to confirm
+- NEVER execute start_migration without calling pre_flight_check first
+- When intent is ambiguous → ask a clarifying question with chips, do not guess
 
-Personality: direct, warm, expert. Like a senior engineer helping a colleague.
+## Tools
+navigate_to_step, select_direction, start_migration, retry_failed, auto_map_users, set_migration_config, pre_flight_check, show_reports, show_mapping, show_status_card, show_post_migration_guide, get_migration_status, explain_log`;
 
-You CAN act on behalf of the user via tools: navigate_to_step, select_direction, start_migration (always run pre_flight_check first), retry_failed, auto_map_users, set_migration_config, pre_flight_check, show_reports, show_mapping, show_status_card, show_post_migration_guide, get_migration_status, explain_log.
-Confirm before going live (dryRun: false). When intent is ambiguous, ask with chips. Generate contextual quickReplies on every response.`;
+    const isStepContext = message === '__step_context__';
+    const stepContextInstruction = isStepContext
+      ? '\n\n[AUTO CONTEXT] The user just navigated to this step. Write 1-2 sentences: what they see right now on the left panel, and exactly what to do next. Be specific to their actual state (auth, upload, mappings). Do not ask questions. End with a clear action.'
+      : '';
 
     const messages = [
-      { role: 'system', content: systemPrompt },
-      ...history.slice(-12),
-      { role: 'user', content: message }
+      { role: 'system', content: systemPrompt + stepContextInstruction },
+      ...(isStepContext ? [] : history.slice(-12)),
+      { role: 'user', content: isStepContext ? 'What should I do on this step?' : message }
     ];
 
     try {
-      let response = await callAI(messages, AGENT_TOOLS);
+      console.log(`[chat] calling AI with ${messages.length} messages, ${isStepContext ? 0 : AGENT_TOOLS.length} tools`);
+      // System triggers must never call destructive tools — text only
+      let response = await callAI(messages, isStepContext ? null : AGENT_TOOLS);
       let choice = response.choices?.[0];
+      console.log(`[chat] AI finish_reason=${choice?.finish_reason} tool_calls=${choice?.message?.tool_calls?.length||0}`);
       let actionToExecute = null;
       let actionPayload = {};
       let statusCardData = null;
@@ -1267,11 +1338,23 @@ Confirm before going live (dryRun: false). When intent is ambiguous, ask with ch
       if (actionToExecute) { payload.action = actionToExecute; Object.assign(payload, actionPayload); }
       if (postMigrationMigDir) payload.migDir = postMigrationMigDir;
       if (statusCardData) payload.statusCard = statusCardData;
-      if (preFlightResult) {
-        if (preFlightResult.ready) {
-          payload.widget = { type: 'migration_actions' };
-        } else if (preFlightResult.blockers.some(b => b.includes('connected'))) {
+
+      // Step-gated widget injection
+      if (!payload.widget) {
+        const needsGoogle = migDir === 'gemini-copilot' || migDir === 'claude-gemini';
+        const needsMs = migDir === 'gemini-copilot' || migDir === 'copilot-gemini';
+        const authMissing = (needsGoogle && !googleAuthed) || (needsMs && !msAuthed);
+
+        if (step === 0 || authMissing) {
           payload.widget = { type: 'auth_connect' };
+        } else if (!isRunning && !isDone && effectiveMappingsCount > 0) {
+          // Only show migration_actions at the options step or later
+          const isOptionsStep = (migDir === 'copilot-gemini' && step >= 3)
+            || (migDir === 'claude-gemini' && step >= 4)
+            || (migDir === 'gemini-copilot' && step >= 4);
+          if (isOptionsStep) {
+            payload.widget = { type: 'migration_actions' };
+          }
         }
       }
 

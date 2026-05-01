@@ -2462,6 +2462,7 @@ function App(){
   const [panelSwapped,setPanelSwapped]=useState(false);
   const [agentMsgs,setAgentMsgs]=useState(()=>lsGet(K.agentMsgs,[]));
   const [agentTyping,setAgentTyping]=useState(false);
+  const [pendingAction,setPendingAction]=useState(null); // {action, payload, label}
   const [agentInput,setAgentInput]=useState('');
   const [agentMode,setAgentMode]=useState(()=>lsGet(K.migDone,false)?'done':'guide');
   const [leftMode,setLeftMode]=useState('viz'); // 'viz' | 'mapping'
@@ -2974,7 +2975,8 @@ function App(){
 
   const sendToAgent=useCallback(async(overrideMsg,isSystem=false)=>{
     const userMsg=overrideMsg||agentInput.trim();
-    if(!userMsg)return;
+    if(!userMsg){console.log('[Agent] sendToAgent called with empty message, skipping');return;}
+    console.log(`[Agent] sendToAgent msg="${userMsg}" isSystem=${isSystem} step=${step} migDir=${migDir} googleAuthed=${googleAuthed} msAuthed=${msAuthed}`);
     if(!isSystem){
       if(/^clear( chat)?$/i.test(userMsg.trim())){setAgentInput('');setAgentMsgs([]);return;}
       setAgentInput('');addAgentMsg('user',userMsg);
@@ -2982,51 +2984,98 @@ function App(){
     setAgentTyping(true);
     try{
       const history=agentMsgs.filter(m=>!m.shellBlock).map(m=>({role:m.role==='bot'?'assistant':'user',content:m.content})).slice(-12);
+      const uiContext=(()=>{
+        if(step===0){const g=googleAuthed?'✓ Google connected':'✗ Google not connected';const m=msAuthed?'✓ Microsoft 365 connected':'✗ Microsoft 365 not connected';return `Left panel: Connect Clouds. ${g}. ${m}. User needs to connect accounts then click Next.`;}
+        if(step===1){const opts=[];if(googleAuthed&&msAuthed)opts.push('Gemini→Copilot','Copilot→Gemini','Claude→Gemini');else if(googleAuthed)opts.push('Claude→Gemini (available)','Gemini→Copilot (needs MS)','Copilot→Gemini (needs MS)');else if(msAuthed)opts.push('Gemini→Copilot (needs Google)','Copilot→Gemini (needs Google)');else opts.push('All directions locked — need to connect accounts first');return `Left panel: Choose Direction. Options: ${opts.join(', ')}.`;}
+        if(step===2&&migDir==='gemini-copilot'){const u=uploadData?`${uploadData.total_users} users loaded`:'no data uploaded';return `Left panel: Import Data (Gemini→Copilot). Two tabs: "User\'s List" and "Upload ZIP". Upload status: ${u}. User needs to select users or upload a Vault ZIP.`;}
+        if(step===2&&migDir==='copilot-gemini'){const n=Object.keys(c2gMappings).length;return `Left panel: Map Users (Copilot→Gemini). ${n} users mapped so far. Auto-map button visible.`;}
+        if(step===2&&migDir==='claude-gemini'){const u=cl2gUploadData?.users?.length||0;return `Left panel: Upload ZIP (Claude→Gemini). ${u>0?`${u} users loaded from ZIP`:'No ZIP uploaded yet'}. Drag-drop area visible.`;}
+        if(step===3&&migDir==='gemini-copilot'){const n=Object.keys(mappings).length;return `Left panel: Map Users (Gemini→Copilot). ${n} users mapped. Auto-map button visible.`;}
+        if(step===3&&migDir==='claude-gemini'){const n=Object.keys(cl2gMappings).length;return `Left panel: Map Users (Claude→Gemini). ${n} users mapped. Auto-map button visible.`;}
+        if(step===3&&migDir==='copilot-gemini'){return `Left panel: Options (Copilot→Gemini). Folder name, date range, dry run toggle visible. Start Migration button visible.`;}
+        if(step===4&&migDir==='gemini-copilot'){return `Left panel: Options (Gemini→Copilot). Folder: "${config.filePath||'GeminiChats'}". Dry run: ${options.dryRun?'ON':'OFF'}. Start Migration button visible.`;}
+        if(step===4&&migDir==='claude-gemini'){return `Left panel: Options (Claude→Gemini). Dry run: ${cl2gOptions?.dryRun?'ON':'OFF'}. Start Migration button visible.`;}
+        if(live||c2gLive||cl2gLive){return `Left panel: Migration in progress. Live log stream visible.`;}
+        if(migDone||c2gDone||cl2gDone){return `Left panel: Migration complete. Stats: ${stats?.users||0} users, ${stats?.pages||0} files, ${stats?.errors||0} errors.`;}
+        return `Left panel: Step ${step}, direction ${migDir||'not selected'}.`;
+      })();
+      const migrationState={step,migDir,live,migDone,stats,lastRunWasDry,currentBatchId,agentMode,
+        uploadData:uploadData?{id:uploadData.id,total_users:uploadData.total_users,total_conversations:uploadData.total_conversations}:null,
+        googleAuthed,msAuthed,
+        mappings_count:Object.keys(mappings).length,
+        selected_users_count:selectedUsers.size,
+        options:{dryRun:options.dryRun,hasFilePath:!!config.filePath},
+        c2g_mappings_count:Object.keys(c2gMappings).length,
+        cl2g_upload_users:cl2gUploadData?.users?.length||0,
+        cl2g_mappings_count:Object.keys(cl2gMappings).length,
+        c2g_done:c2gDone,
+        cl2g_done:cl2gDone,
+        c2g_live:c2gLive,
+        cl2g_live:cl2gLive,
+        uiContext};
+      console.log('[Agent] POST /api/chat state:', migrationState);
       const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({message:userMsg,history,isSystemTrigger:isSystem,
           migrationLogs:(live||c2gLive)?logs.slice(-100).map(l=>`[${l.ts}][${l.type}] ${l.message}`):[],
-          migrationState:{step,migDir,live,migDone,stats,lastRunWasDry,currentBatchId,agentMode,
-            uploadData:uploadData?{id:uploadData.id,total_users:uploadData.total_users,total_conversations:uploadData.total_conversations}:null,
-            googleAuthed,msAuthed,
-            mappings_count:Object.keys(mappings).length,
-            selected_users_count:selectedUsers.size,
-            options:{dryRun:options.dryRun,hasFilePath:!!config.filePath},
-            c2g_mappings_count:Object.keys(c2gMappings).length,
-            cl2g_upload_users:cl2gUploadData?.users?.length||0,
-            cl2g_mappings_count:Object.keys(cl2gMappings).length,
-            c2g_done:c2gDone,
-            cl2g_done:cl2gDone,
-            c2g_live:c2gLive,
-            cl2g_live:cl2gLive}})});
+          migrationState})});
+      console.log(`[Agent] /api/chat response status=${res.status}`);
+      if(!res.ok){const err=await res.text();console.error('[Agent] /api/chat error:',err);addAgentMsg('bot',`Error ${res.status}: ${err}`);setAgentTyping(false);return;}
       const data=await res.json();
+      console.log('[Agent] response data:', JSON.stringify({action:data.action,widget:data.widget?.type,quickReplies:data.quickReplies,replyLen:data.reply?.length}));
+      const CONFIRM_ACTIONS={
+        'start_migration_dry':{label:'Start Dry Run',desc:'Run a dry run — no data will be changed.'},
+        'start_migration_live':{label:'Go Live',desc:'Start the real migration. Data will be written.'},
+        'auto_map_users':{label:'Auto-map users',desc:'Map all users by email match automatically.'},
+        'retry_failed':{label:'Retry failed',desc:'Re-run all failed items from the last batch.'},
+      };
+      if(data.action&&CONFIRM_ACTIONS[data.action]){
+        const c=CONFIRM_ACTIONS[data.action];
+        console.log('[Agent] confirm required for',data.action);
+        setPendingAction({action:data.action,payload:data});
+        addAgentMsg('bot',`${data.reply||''}\n\n**Confirm:** ${c.desc}`,{quickReplies:['Yes, proceed','Cancel']});
+        setAgentTyping(false);
+        return;
+      }
       if(data.reply)addAgentMsg('bot',data.reply,{quickReplies:data.quickReplies,...(data.widget&&{widget:data.widget}),...(data.statusCard&&{statusCard:data.statusCard}),...(data.chips&&{chips:data.chips})});
-      // Execute real actions returned by agent tools
-      if(data.action==='navigate_to_step'&&data.step!=null)setStep(data.step);
-      else if(data.action==='select_direction'&&data.migDir){setMigDir(data.migDir);setStep(2);}
-      else if(data.action==='start_migration_dry'){
-        if(migDir==='copilot-gemini'){setC2gOptions(p=>({...p,dryRun:true}));setTimeout(()=>runC2GMigration(false),200);}
-        else if(migDir==='claude-gemini'){setCl2gOptions(p=>({...p,dryRun:true}));setTimeout(()=>runCL2GMigration(false),200);}
-        else{setOptions(p=>({...p,dryRun:true}));setTimeout(()=>runMigration(false),200);}
-      }
-      else if(data.action==='start_migration_live'){
-        if(migDir==='copilot-gemini')setTimeout(()=>runC2GMigration(true),200);
-        else if(migDir==='claude-gemini')setTimeout(()=>runCL2GMigration(true),200);
-        else{setOptions(p=>({...p,dryRun:false}));setTimeout(()=>runMigration(true),200);}
-      }
-      else if(data.action==='retry_failed')retryFailed();
-      else if(data.action==='auto_map_users')triggerAutoMap();
-      else if(data.action==='set_config')applyAgentConfig(data.config||{});
-      else if(data.action==='show_reports')setShowReports(true);
-      else if(data.action==='show_mapping')setLeftMode('mapping');
-    }catch{addAgentMsg('bot',"Sorry, I couldn't connect right now. Please try again.");}
+      else console.warn('[Agent] No reply in response',data);
+      // Execute safe actions immediately (no confirmation needed)
+      if(data.action==='navigate_to_step'&&data.step!=null){console.log('[Agent] navigate_to_step',data.step);setStep(data.step);}
+      else if(data.action==='select_direction'&&data.migDir){console.log('[Agent] select_direction',data.migDir);setMigDir(data.migDir);setStep(2);}
+      else if(data.action==='set_config'){console.log('[Agent] set_config',data.config);applyAgentConfig(data.config||{});}
+      else if(data.action==='show_reports'){console.log('[Agent] show_reports');setShowReports(true);}
+      else if(data.action==='show_mapping'){console.log('[Agent] show_mapping');setLeftMode('mapping');}
+    }catch(e){console.error('[Agent] fetch error:',e);addAgentMsg('bot',"Sorry, I couldn't connect right now. Please try again.");}
     setAgentTyping(false);
-  },[agentInput,agentMsgs,logs,step,live,c2gLive,migDone,stats,lastRunWasDry,currentBatchId,uploadData,googleAuthed,msAuthed,mappings,selectedUsers,options,config,agentMode,migDir,runMigration,runC2GMigration,runCL2GMigration,retryFailed,triggerAutoMap,applyAgentConfig,addAgentMsg,setMigDir,setStep,setC2gOptions,setCl2gOptions,setOptions,setShowReports,setLeftMode]);
+  },[agentInput,agentMsgs,logs,step,live,c2gLive,migDone,stats,lastRunWasDry,currentBatchId,uploadData,googleAuthed,msAuthed,mappings,selectedUsers,options,config,agentMode,migDir,cl2gMappings,cl2gUploadData,cl2gOptions,c2gMappings,c2gDone,cl2gDone,c2gLive,cl2gLive,runMigration,runC2GMigration,runCL2GMigration,retryFailed,triggerAutoMap,applyAgentConfig,addAgentMsg,setMigDir,setStep,setC2gOptions,setCl2gOptions,setOptions,setShowReports,setLeftMode,setPendingAction]);
 
   const handleLogLineClick=useCallback(line=>{
     sendToAgent(`Explain this log line: "${line.text}"`);
   },[sendToAgent]);
 
   const handleAgentQuickReply=useCallback(qr=>{
+    if(qr==='Yes, proceed'&&pendingAction){
+      const{action,payload}=pendingAction;
+      setPendingAction(null);
+      addAgentMsg('user','Yes, proceed');
+      console.log('[Agent] confirmed action:',action);
+      if(action==='start_migration_dry'){
+        if(migDir==='copilot-gemini'){setC2gOptions(p=>({...p,dryRun:true}));setTimeout(()=>runC2GMigration(false),200);}
+        else if(migDir==='claude-gemini'){setCl2gOptions(p=>({...p,dryRun:true}));setTimeout(()=>runCL2GMigration(false),200);}
+        else{setOptions(p=>({...p,dryRun:true}));setTimeout(()=>runMigration(false),200);}
+      }else if(action==='start_migration_live'){
+        if(migDir==='copilot-gemini')setTimeout(()=>runC2GMigration(true),200);
+        else if(migDir==='claude-gemini')setTimeout(()=>runCL2GMigration(true),200);
+        else{setOptions(p=>({...p,dryRun:false}));setTimeout(()=>runMigration(true),200);}
+      }else if(action==='auto_map_users'){triggerAutoMap();}
+      else if(action==='retry_failed'){retryFailed();}
+      return;
+    }
+    if(qr==='Cancel'&&pendingAction){
+      setPendingAction(null);
+      addAgentMsg('user','Cancel');
+      addAgentMsg('bot','Cancelled. Let me know when you\'re ready to proceed.',{quickReplies:migDir?['What do I do next?','Check status']:['Gemini → Copilot','Copilot → Gemini','Claude → Gemini']});
+      return;
+    }
     if(qr==='Gemini → Copilot'||qr==='gemini-copilot'){setMigDir('gemini-copilot');setStep(2);addAgentMsg('user',qr);}
     else if(qr==='Copilot → Gemini'||qr==='copilot-gemini'){setMigDir('copilot-gemini');setStep(2);addAgentMsg('user',qr);}
     else if(qr==='Claude → Gemini'||qr==='claude-gemini'||qr==='Claude → Gemini — Google only'){setMigDir('claude-gemini');setStep(2);addAgentMsg('user',qr);}
@@ -3059,7 +3108,7 @@ function App(){
     }
     else if(qr==='What do I do next?'){sendToAgent('What do I do next?');}
     else{sendToAgent(qr);}
-  },[sendToAgent,retryFailed,runAnotherBatch,runMigration,runC2GMigration,runCL2GMigration,triggerAutoMap,addAgentMsg,setOptions,setStep,setMigDir,setAgentMode,migDir,setC2gOptions,setCl2gOptions,handleChatSignInGoogle,handleChatSignInMs]);
+  },[sendToAgent,retryFailed,runAnotherBatch,runMigration,runC2GMigration,runCL2GMigration,triggerAutoMap,addAgentMsg,setOptions,setStep,setMigDir,setAgentMode,migDir,setC2gOptions,setCl2gOptions,handleChatSignInGoogle,handleChatSignInMs,pendingAction,setPendingAction]);
 
   // Always keep sendToAgentRef current so initial greeting can call it without stale closure
   sendToAgentRef.current=sendToAgent;
@@ -3143,26 +3192,15 @@ function App(){
     }
   }),[googleAuthed,msAuthed,handleChatSignInGoogle,handleChatSignInMs,googleUsers,msUsers,chatGLoading,chatMLoading,handleChatUpload,chatUploading,uploadData,options,config,migDir,runMigration,runC2GMigration,runCL2GMigration]);
 
-  // ── Initial greeting (fires once after ws hydration if chat is empty) ────────
+  // ── Agent context: fires on load + every left-panel navigation ───────────────
   useEffect(()=>{
-    if(!wsLoaded||greetedRef.current)return;
-    greetedRef.current=true;
-    if(agentMsgs.length===0){
-      const msg=getStepGuide(step,migDir)||'Welcome to CloudFuze GEM. Connect your cloud accounts to get started.';
-      addAgentMsg('bot',msg);
-    }
-  },[wsLoaded]);
-
-  // ── Guide useEffect: update agent message when step/migDir changes in guide mode ──
-  useEffect(()=>{
-    if(agentMode!=='guide')return;
+    if(!wsLoaded||agentMode==='running')return;
     const key=`${step}:${migDir}`;
     if(prevGuideKeyRef.current===key)return;
     prevGuideKeyRef.current=key;
-    if(!greetedRef.current)return; // don't fire before initial greeting
-    const msg=getStepGuide(step,migDir);
-    if(msg)addAgentMsg('bot',msg);
-  },[agentMode,step,migDir]);
+    console.log('[Agent] Context trigger key=',key,'wsLoaded=',wsLoaded);
+    setTimeout(()=>sendToAgentRef.current('__step_context__',true),400);
+  },[wsLoaded,agentMode,step,migDir]);
 
   return(
     <div style={{display:'flex',flexDirection:'column',height:'100vh',fontFamily:'Poppins,system-ui,sans-serif'}}>
