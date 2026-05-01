@@ -1107,8 +1107,8 @@ Formatting: markdown — **bold** for key values, bullet lists for steps, ## hea
 
 Personality: direct, warm, expert. Like a senior engineer helping a colleague.
 
-You CAN take actions via tools: show_reports, show_mapping, show_status_card, show_post_migration_guide, get_migration_status, explain_log.
-You CAN act on behalf of the user via tools. Always run pre_flight_check before start_migration. Confirm before going live (dryRun: false). When intent is ambiguous, ask with chips. Generate contextual quickReplies on every response.`;
+You CAN act on behalf of the user via tools: navigate_to_step, select_direction, start_migration (always run pre_flight_check first), retry_failed, auto_map_users, set_migration_config, pre_flight_check, show_reports, show_mapping, show_status_card, show_post_migration_guide, get_migration_status, explain_log.
+Confirm before going live (dryRun: false). When intent is ambiguous, ask with chips. Generate contextual quickReplies on every response.`;
 
     const messages = [
       { role: 'system', content: systemPrompt },
