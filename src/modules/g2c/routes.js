@@ -34,6 +34,24 @@ const dbLog = getLogger('db:ops');
 
 // ─── Agent Chat constants ─────────────────────────────────────────────────────
 
+function generateSuggestedChips({ migDir, googleAuthed, msAuthed, live, migDone,
+  lastRunWasDry, uploadData, mappings_count, c2g_mappings_count, cl2g_mappings_count }) {
+  if (!migDir) return ['Gemini → Copilot', 'Copilot → Gemini', 'Claude → Gemini', 'What do I need?'];
+  const needsGoogle = migDir === 'gemini-copilot' || migDir === 'claude-gemini';
+  if (needsGoogle && !googleAuthed) return ['Connect Google Workspace', 'What do I need?'];
+  if ((migDir === 'gemini-copilot' || migDir === 'copilot-gemini') && !msAuthed)
+    return ['Connect Microsoft 365', 'Skip for now'];
+  const effectiveMappings = migDir === 'copilot-gemini' ? c2g_mappings_count
+    : migDir === 'claude-gemini' ? cl2g_mappings_count : mappings_count;
+  if (!uploadData && migDir !== 'copilot-gemini') return ['How do I export?', 'What format?'];
+  if (effectiveMappings === 0) return ['Auto-map users', 'Show mapping table'];
+  if (live) return ['Check status', 'How long will this take?'];
+  if (!migDone) return ['Start Dry Run', 'What is a dry run?', 'Go straight to live'];
+  if (lastRunWasDry) return ['Start Live Migration', 'Show me the report', 'Start Another'];
+  if (migDone) return ['What do I do next?', 'Download report', 'Start Another'];
+  return ['Check status'];
+}
+
 const AGENT_TOOLS = [
   {
     type: 'function',
@@ -192,7 +210,7 @@ async function callAI(messages, tools) {
       headers: { 'Content-Type': 'application/json', 'api-key': azureKey },
       body: JSON.stringify(body)
     });
-    if (!r.ok) throw new Error(`Azure OpenAI error ${r.status}: ${await r.text()}`);
+    if (!r.ok) { const errBody = await r.text(); console.error('[callAI] Azure error', r.status, errBody); throw new Error(`Azure OpenAI error ${r.status}: ${errBody}`); }
     return await r.json();
   }
 
@@ -1129,6 +1147,7 @@ Confirm before going live (dryRun: false). When intent is ambiguous, ask with ch
       let actionPayload = {};
       let statusCardData = null;
       let postMigrationMigDir = null;
+      let preFlightResult = null;
 
       if (choice?.finish_reason === 'tool_calls' && choice.message?.tool_calls) {
         const toolResults = [];
@@ -1228,7 +1247,9 @@ Confirm before going live (dryRun: false). When intent is ambiguous, ask with ch
                 if (effectiveMappings === 0) blockers.push('No users mapped');
                 if (live || c2g_live || cl2g_live) { blockers.push('Migration already running'); }
                 if (selected_users_count < effectiveMappings) warnings.push(`${effectiveMappings - selected_users_count} users have no destination mapping — they will be skipped`);
-                result = JSON.stringify({ blockers, warnings, ready: blockers.length === 0 });
+                const pfResult = { blockers, warnings, ready: blockers.length === 0 };
+                preFlightResult = pfResult;
+                result = JSON.stringify(pfResult);
                 break;
               }
               default: result = 'Unknown tool.';
@@ -1242,10 +1263,17 @@ Confirm before going live (dryRun: false). When intent is ambiguous, ask with ch
       }
 
       const reply = choice?.message?.content || "I couldn't generate a response. Please try again.";
-      const payload = { reply, quickReplies: [] };
+      const payload = { reply, quickReplies: generateSuggestedChips(migrationState) };
       if (actionToExecute) { payload.action = actionToExecute; Object.assign(payload, actionPayload); }
       if (postMigrationMigDir) payload.migDir = postMigrationMigDir;
       if (statusCardData) payload.statusCard = statusCardData;
+      if (preFlightResult) {
+        if (preFlightResult.ready) {
+          payload.widget = { type: 'migration_actions' };
+        } else if (preFlightResult.blockers.some(b => b.includes('connected'))) {
+          payload.widget = { type: 'auth_connect' };
+        }
+      }
 
       res.json(payload);
     } catch (err) {
