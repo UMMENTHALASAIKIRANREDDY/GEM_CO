@@ -2658,6 +2658,58 @@ function App(){
     }catch(err){addLog('error',err.message);setLive(false)}
   };
 
+  const triggerAutoMap=useCallback(()=>{
+    if(migDir==='gemini-copilot'){
+      const newMappings={...mappings};
+      (uploadData?.users||[]).forEach(u=>{
+        const match=msUsers.find(m=>m.email?.toLowerCase()===u.email?.toLowerCase());
+        if(match&&!newMappings[u.email])newMappings[u.email]=match.email;
+      });
+      setMappings(newMappings);
+      const mapped=Object.values(newMappings).filter(Boolean).length;
+      const total=(uploadData?.users||[]).length;
+      addAgentMsg('bot',`Auto-mapped **${mapped}** of **${total}** users by email match.${mapped<total?` **${total-mapped}** have no match — fill them in on the left.`:' All users mapped!'}`);
+    } else if(migDir==='copilot-gemini'){
+      const newMappings={...c2gMappings};
+      msUsers.forEach(u=>{
+        const match=googleUsers.find(g=>g.email?.toLowerCase()===u.email?.toLowerCase());
+        if(match&&!newMappings[u.email])newMappings[u.email]=match.email;
+      });
+      setC2gMappings(newMappings);
+      const mapped=Object.values(newMappings).filter(Boolean).length;
+      const total=msUsers.length;
+      addAgentMsg('bot',`Auto-mapped **${mapped}** of **${total}** users.${mapped<total?` **${total-mapped}** unmatched — fill in on the left.`:' All mapped!'}`);
+    } else if(migDir==='claude-gemini'){
+      const newMappings={...cl2gMappings};
+      (cl2gUploadData?.users||[]).forEach(u=>{
+        const match=googleUsers.find(g=>g.email?.toLowerCase()===u.email_address?.toLowerCase());
+        if(match&&!newMappings[u.uuid])newMappings[u.uuid]=match.email;
+      });
+      setCl2gMappings(newMappings);
+      const mapped=Object.values(newMappings).filter(Boolean).length;
+      const total=(cl2gUploadData?.users||[]).length;
+      addAgentMsg('bot',`Auto-mapped **${mapped}** of **${total}** users.${mapped<total?` **${total-mapped}** unmatched — fill in on the left.`:' All mapped!'}`);
+    }
+  },[migDir,mappings,uploadData,msUsers,googleUsers,c2gMappings,cl2gMappings,cl2gUploadData,setMappings,setC2gMappings,setCl2gMappings,addAgentMsg]);
+
+  const applyAgentConfig=useCallback((cfg={})=>{
+    if(cfg.folderName!==undefined){
+      if(migDir==='copilot-gemini')setC2gConfig(p=>({...p,folderName:cfg.folderName}));
+      else if(migDir==='claude-gemini')setCl2gConfig(p=>({...p,folderName:cfg.folderName}));
+      else setConfig(p=>({...p,folderName:cfg.folderName}));
+    }
+    if(cfg.fromDate!==undefined||cfg.toDate!==undefined){
+      if(migDir==='copilot-gemini')setC2gOptions(p=>({...p,fromDate:cfg.fromDate??p.fromDate,toDate:cfg.toDate??p.toDate}));
+      else if(migDir==='claude-gemini')setCl2gOptions(p=>({...p,fromDate:cfg.fromDate??p.fromDate,toDate:cfg.toDate??p.toDate}));
+      else setOptions(p=>({...p,fromDate:cfg.fromDate??p.fromDate,toDate:cfg.toDate??p.toDate}));
+    }
+    if(cfg.dryRun!==undefined){
+      if(migDir==='copilot-gemini')setC2gOptions(p=>({...p,dryRun:cfg.dryRun}));
+      else if(migDir==='claude-gemini')setCl2gOptions(p=>({...p,dryRun:cfg.dryRun}));
+      else setOptions(p=>({...p,dryRun:cfg.dryRun}));
+    }
+  },[migDir,setConfig,setOptions,setC2gConfig,setC2gOptions,setCl2gConfig,setCl2gOptions]);
+
   // Run Another Batch: two modes
   // keepData=true → same vault, different users (go to Step 2)
   // keepData=false → new import (clear everything, go to Step 1)
@@ -2910,16 +2962,26 @@ function App(){
       const data=await res.json();
       if(data.reply)addAgentMsg('bot',data.reply,{quickReplies:data.quickReplies,...(data.widget&&{widget:data.widget}),...(data.statusCard&&{statusCard:data.statusCard}),...(data.chips&&{chips:data.chips})});
       // Execute real actions returned by agent tools
-      // Only navigate if agent explicitly requests it AND user is not mid-migration
-      if(data.navigate!=null&&!live&&!c2gLive&&!migDone)setStep(data.navigate);
-      if(data.action==='start_migration_dry'){setOptions(p=>({...p,dryRun:true}));setTimeout(()=>runMigration(false),200);}
-      else if(data.action==='start_migration_live'){setOptions(p=>({...p,dryRun:false}));setTimeout(()=>runMigration(true),200);}
+      if(data.action==='navigate_to_step'&&data.step!=null)setStep(data.step);
+      else if(data.action==='select_direction'&&data.migDir){setMigDir(data.migDir);setStep(2);}
+      else if(data.action==='start_migration_dry'){
+        if(migDir==='copilot-gemini'){setC2gOptions(p=>({...p,dryRun:true}));setTimeout(()=>runC2GMigration(false),200);}
+        else if(migDir==='claude-gemini'){setCl2gOptions(p=>({...p,dryRun:true}));setTimeout(()=>runCL2GMigration(false),200);}
+        else{setOptions(p=>({...p,dryRun:true}));setTimeout(()=>runMigration(false),200);}
+      }
+      else if(data.action==='start_migration_live'){
+        if(migDir==='copilot-gemini')setTimeout(()=>runC2GMigration(true),200);
+        else if(migDir==='claude-gemini')setTimeout(()=>runCL2GMigration(true),200);
+        else{setOptions(p=>({...p,dryRun:false}));setTimeout(()=>runMigration(true),200);}
+      }
       else if(data.action==='retry_failed')retryFailed();
+      else if(data.action==='auto_map_users')triggerAutoMap();
+      else if(data.action==='set_config')applyAgentConfig(data.config||{});
       else if(data.action==='show_reports')setShowReports(true);
       else if(data.action==='show_mapping')setLeftMode('mapping');
     }catch{addAgentMsg('bot',"Sorry, I couldn't connect right now. Please try again.");}
     setAgentTyping(false);
-  },[agentInput,agentMsgs,logs,step,live,migDone,stats,lastRunWasDry,currentBatchId,uploadData,googleAuthed,msAuthed,mappings,selectedUsers,options,config,agentMode,addAgentMsg]);
+  },[agentInput,agentMsgs,logs,step,live,migDone,stats,lastRunWasDry,currentBatchId,uploadData,googleAuthed,msAuthed,mappings,selectedUsers,options,config,agentMode,migDir,runMigration,runC2GMigration,runCL2GMigration,retryFailed,triggerAutoMap,applyAgentConfig,addAgentMsg,setMigDir,setStep,setC2gOptions,setCl2gOptions,setOptions,setShowReports,setLeftMode]);
 
   const handleLogLineClick=useCallback(line=>{
     sendToAgent(`Explain this log line: "${line.text}"`);
