@@ -2994,7 +2994,30 @@ function App(){
   },[sendToAgent]);
 
   const handleAgentQuickReply=useCallback(qr=>{
-    if(qr==='Retry Failed')retryFailed();
+    if(qr==='Gemini → Copilot'||qr==='gemini-copilot'){setMigDir('gemini-copilot');setStep(2);addAgentMsg('user',qr);}
+    else if(qr==='Copilot → Gemini'||qr==='copilot-gemini'){setMigDir('copilot-gemini');setStep(2);addAgentMsg('user',qr);}
+    else if(qr==='Claude → Gemini'||qr==='claude-gemini'||qr==='Claude → Gemini — Google only'){setMigDir('claude-gemini');setStep(2);addAgentMsg('user',qr);}
+    else if(qr==='Connect Google Workspace'||qr==='Connect Google'){addAgentMsg('user',qr);handleChatSignInGoogle();}
+    else if(qr==='Connect Microsoft 365'||qr==='Connect Microsoft'){addAgentMsg('user',qr);handleChatSignInMs();}
+    else if(qr==='Yes, auto-map'||qr==='Auto-map users'){addAgentMsg('user',qr);triggerAutoMap();}
+    else if(qr==='Skip unmapped users'){sendToAgent('Skip the unmapped users and proceed');}
+    else if(qr==='Fill them in'){
+      setStep(migDir==='copilot-gemini'?2:3);
+      addAgentMsg('bot','Open the mapping table on the left and fill in the missing destination emails.');
+    }
+    else if(qr==='Start dry run'||qr==='Start Dry Run'){
+      addAgentMsg('user','Start dry run');
+      if(migDir==='copilot-gemini'){setC2gOptions(p=>({...p,dryRun:true}));setTimeout(()=>runC2GMigration(false),200);}
+      else if(migDir==='claude-gemini'){setCl2gOptions(p=>({...p,dryRun:true}));setTimeout(()=>runCL2GMigration(false),200);}
+      else{setOptions(p=>({...p,dryRun:true}));setTimeout(()=>runMigration(false),200);}
+    }
+    else if(qr==='Go live now'||qr==='Go straight to live'||qr==='Start Live Migration'){
+      addAgentMsg('user',qr);
+      if(migDir==='copilot-gemini')setTimeout(()=>runC2GMigration(true),200);
+      else if(migDir==='claude-gemini')setTimeout(()=>runCL2GMigration(true),200);
+      else{setOptions(p=>({...p,dryRun:false}));setTimeout(()=>runMigration(true),200);}
+    }
+    else if(qr==='Retry Failed')retryFailed();
     else if(qr==='Start Another'||qr==='Start Another Migration'){
       if(migDir==='copilot-gemini'){setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gOptions(p=>({...p,dryRun:true}));setStep(2);}
       else if(migDir==='claude-gemini'){setCl2gDone(false);setCl2gStats({users:0,files:0,errors:0});setCl2gOptions(p=>({...p,dryRun:true}));setStep(2);}
@@ -3002,17 +3025,8 @@ function App(){
       setAgentMode('guide');
     }
     else if(qr==='What do I do next?'){sendToAgent('What do I do next?');}
-    else if(qr==='Start Live Migration'){
-      if(migDir==='copilot-gemini')runC2GMigration(true);
-      else if(migDir==='claude-gemini')runCL2GMigration(true);
-      else runMigration(true);
-    }
-    else if(qr==='Start Dry Run'){setOptions(p=>({...p,dryRun:true}));addAgentMsg('user','Start dry run');setTimeout(()=>runMigration(false),200);}
-    else if(qr==='Start Migration'){setOptions(p=>({...p,dryRun:false}));addAgentMsg('user','Start live migration');setTimeout(()=>runMigration(true),200);}
-    else if(qr==='Connect Google Workspace'){setStep(0);sendToAgent('How do I connect Google Workspace?');}
-    else if(qr==='Connect Microsoft 365'){setStep(0);sendToAgent('How do I connect Microsoft 365?');}
     else{sendToAgent(qr);}
-  },[sendToAgent,retryFailed,runAnotherBatch,runMigration,runC2GMigration,runCL2GMigration,addAgentMsg,setOptions,setStep,migDir]);
+  },[sendToAgent,retryFailed,runAnotherBatch,runMigration,runC2GMigration,runCL2GMigration,triggerAutoMap,addAgentMsg,setOptions,setStep,setMigDir,migDir,setC2gOptions,setCl2gOptions,handleChatSignInGoogle,handleChatSignInMs]);
 
   // Always keep sendToAgentRef current so initial greeting can call it without stale closure
   sendToAgentRef.current=sendToAgent;
