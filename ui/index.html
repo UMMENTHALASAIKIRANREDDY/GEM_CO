@@ -2981,7 +2981,7 @@ function App(){
       else if(data.action==='show_mapping')setLeftMode('mapping');
     }catch{addAgentMsg('bot',"Sorry, I couldn't connect right now. Please try again.");}
     setAgentTyping(false);
-  },[agentInput,agentMsgs,logs,step,live,migDone,stats,lastRunWasDry,currentBatchId,uploadData,googleAuthed,msAuthed,mappings,selectedUsers,options,config,agentMode,migDir,runMigration,runC2GMigration,runCL2GMigration,retryFailed,triggerAutoMap,applyAgentConfig,addAgentMsg,setMigDir,setStep,setC2gOptions,setCl2gOptions,setOptions,setShowReports,setLeftMode]);
+  },[agentInput,agentMsgs,logs,step,live,c2gLive,migDone,stats,lastRunWasDry,currentBatchId,uploadData,googleAuthed,msAuthed,mappings,selectedUsers,options,config,agentMode,migDir,runMigration,runC2GMigration,runCL2GMigration,retryFailed,triggerAutoMap,applyAgentConfig,addAgentMsg,setMigDir,setStep,setC2gOptions,setCl2gOptions,setOptions,setShowReports,setLeftMode]);
 
   const handleLogLineClick=useCallback(line=>{
     sendToAgent(`Explain this log line: "${line.text}"`);
