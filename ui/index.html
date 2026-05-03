@@ -2523,9 +2523,13 @@ function App(){
     }).then(u=>{
       if(!u)return;
       setAppUser(u);
-      // Handle user switching — clear old localStorage if different user
+      // Handle user switching — clear old localStorage AND React state if different user
       const prevUid=localStorage.getItem('gem_active_user')||'';
-      if(prevUid && prevUid!==u._id){ lsClearAll(); }
+      if(prevUid && prevUid!==u._id){
+        lsClearAll();
+        setAgentMsgs([]);
+        greetedRef.current=false;
+      }
       localStorage.setItem('gem_active_user',u._id);
 
       // Hydrate from MongoDB — DB is authoritative for cross-device state
