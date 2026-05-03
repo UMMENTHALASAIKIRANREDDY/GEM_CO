@@ -585,19 +585,19 @@ export function createG2CRouter(deps) {
   router.get('/user-mappings/latest', async (req, res) => {
     const wsFilter = getWorkspaceFilter(req);
     if (!wsFilter) return res.json(null);
-    const doc = await db().collection('userMappings').findOne({ batchId: 'latest', ...wsFilter });
+    const doc = await db().collection('userMappings').findOne({ migDir: 'gemini-copilot', batchId: 'latest', ...wsFilter });
     res.json(doc || null);
   });
 
   router.post('/user-mappings', async (req, res) => {
     const { customerName, mappings, selectedUsers } = req.body;
-    const { googleEmail, msEmail } = getWorkspaceContext(req);
+    const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
     await db().collection('userMappings').updateOne(
-      { batchId: 'latest', googleEmail, msEmail },
-      { $set: { customerName, mappings, selectedUsers, googleEmail, msEmail, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+      { appUserId, migDir: 'gemini-copilot', batchId: 'latest' },
+      { $set: { customerName, mappings, selectedUsers, appUserId, migDir: 'gemini-copilot', googleEmail, msEmail, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
       { upsert: true }
     );
-    dbLog.info(`userMappings.upsert — ${Object.keys(mappings || {}).length} mappings, ${(selectedUsers || []).length} selected`);
+    dbLog.info(`userMappings.upsert — G2C ${Object.keys(mappings || {}).length} mappings, ${(selectedUsers || []).length} selected`);
     res.json({ ok: true });
   });
 
@@ -639,11 +639,11 @@ export function createG2CRouter(deps) {
     const startTime = new Date();
 
     await db().collection('userMappings').updateOne(
-      { batchId },
-      { $set: { customerName: customer_name, mappings: user_mappings, createdAt: startTime, appUserId, googleEmail, msEmail } },
+      { appUserId, migDir: 'gemini-copilot', batchId },
+      { $set: { customerName: customer_name, mappings: user_mappings, migDir: 'gemini-copilot', createdAt: startTime, appUserId, googleEmail, msEmail } },
       { upsert: true }
     );
-    dbLog.info(`userMappings.upsert — batch ${batchId} (${Object.keys(user_mappings).length} mappings)`);
+    dbLog.info(`userMappings.upsert — G2C batch ${batchId} (${Object.keys(user_mappings).length} mappings)`);
 
     await db().collection('reportsWorkspace').updateOne(
       { _id: batchId },
@@ -864,7 +864,7 @@ export function createG2CRouter(deps) {
     const batchDoc = await db().collection('reportsWorkspace').findOne({ _id: batchId });
     if (!batchDoc) return res.status(404).json({ error: 'Batch not found' });
 
-    const mappingDoc = await db().collection('userMappings').findOne({ batchId });
+    const mappingDoc = await db().collection('userMappings').findOne({ appUserId, migDir: 'gemini-copilot', batchId });
     const uploadDoc = await db().collection('uploads').findOne({}, { sort: { uploadTime: -1 } });
 
     const retryTargets = {};
@@ -952,7 +952,7 @@ export function createG2CRouter(deps) {
           const uploadDoc = uploadId
             ? await db().collection('uploads').findOne({ _id: uploadId })
             : await db().collection('uploads').findOne({}, { sort: { uploadTime: -1 } });
-          const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid });
+          const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: 'gemini-copilot' });
           return runMigration({
             extract_path: migrationState.uploadExtractPath || uploadDoc?.extractPath,
             tenant_id: migrationState.tenantId || null,
@@ -970,7 +970,7 @@ export function createG2CRouter(deps) {
       retryMigration: async ({ batchId: retryFromBatchId, appUserId: uid }) => {
         const batchDoc = await db().collection('reportsWorkspace').findOne({ _id: retryFromBatchId });
         if (!batchDoc) return { error: 'Batch not found' };
-        const mappingDoc = await db().collection('userMappings').findOne({ batchId: retryFromBatchId });
+        const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: 'gemini-copilot', batchId: retryFromBatchId });
         const uploadDoc = await db().collection('uploads').findOne({}, { sort: { uploadTime: -1 } });
         const retryTargets = {};
         for (const u of batchDoc.report?.users || []) {

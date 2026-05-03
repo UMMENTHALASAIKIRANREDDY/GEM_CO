@@ -137,11 +137,7 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
           if (dest) { mappings[src.email] = dest.email; matched++; }
         }
 
-        const collName = migDir === 'copilot-gemini' ? 'c2gUserMappings'
-          : migDir === 'claude-gemini' ? 'cl2gUserMappings'
-          : 'userMappings';
-
-        await db.collection(collName).updateOne(
+        await db.collection('userMappings').updateOne(
           { appUserId, migDir },
           { $set: { mappings, updatedAt: new Date() } },
           { upsert: true }

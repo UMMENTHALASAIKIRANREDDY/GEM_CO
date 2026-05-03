@@ -174,7 +174,7 @@ export function createCL2GRouter({ db }) {
   router.get('/user-mappings', requireAuth, async (req, res) => {
     try {
       const { appUserId } = getCtx(req);
-      const doc = await db().collection('userMappings').findOne({ direction: 'claude-gemini', appUserId });
+      const doc = await db().collection('userMappings').findOne({ appUserId, migDir: 'claude-gemini' });
       res.json(doc || null);
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
@@ -185,8 +185,8 @@ export function createCL2GRouter({ db }) {
       const { appUserId, googleEmail } = getCtx(req);
       const { mappings, csvEmails } = req.body;
       await db().collection('userMappings').updateOne(
-        { direction: 'claude-gemini', appUserId },
-        { $set: { direction: 'claude-gemini', appUserId, googleEmail, mappings, csvEmails, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+        { appUserId, migDir: 'claude-gemini' },
+        { $set: { migDir: 'claude-gemini', appUserId, googleEmail, mappings, csvEmails, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
         { upsert: true }
       );
       dbLog.info(`userMappings.upsert — CL2G ${Object.keys(mappings || {}).length} mappings`);
@@ -198,7 +198,7 @@ export function createCL2GRouter({ db }) {
   router.delete('/user-mappings', requireAuth, async (req, res) => {
     try {
       const { appUserId } = getCtx(req);
-      await db().collection('userMappings').deleteOne({ direction: 'claude-gemini', appUserId });
+      await db().collection('userMappings').deleteOne({ appUserId, migDir: 'claude-gemini' });
       res.json({ ok: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });

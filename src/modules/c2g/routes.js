@@ -54,7 +54,7 @@ export function createC2GRouter(deps) {
   router.get('/user-mappings', requireAuth, async (req, res) => {
     try {
       const { appUserId } = getWorkspaceContext(req);
-      const doc = await db().collection('userMappings').findOne({ direction: 'c2g', appUserId });
+      const doc = await db().collection('userMappings').findOne({ appUserId, migDir: 'copilot-gemini' });
       res.json(doc || null);
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
@@ -65,8 +65,8 @@ export function createC2GRouter(deps) {
       const { appUserId, msEmail, googleEmail } = getWorkspaceContext(req);
       const { mappings, csvEmails } = req.body;
       await db().collection('userMappings').updateOne(
-        { direction: 'c2g', appUserId },
-        { $set: { direction: 'c2g', appUserId, msEmail, googleEmail, mappings, csvEmails, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+        { appUserId, migDir: 'copilot-gemini' },
+        { $set: { migDir: 'copilot-gemini', appUserId, msEmail, googleEmail, mappings, csvEmails, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
         { upsert: true }
       );
       dbLog.info(`userMappings.upsert — C2G ${Object.keys(mappings || {}).length} mappings, ${(csvEmails || []).length} CSV emails`);
@@ -78,7 +78,7 @@ export function createC2GRouter(deps) {
   router.delete('/user-mappings', requireAuth, async (req, res) => {
     try {
       const { appUserId } = getWorkspaceContext(req);
-      await db().collection('userMappings').deleteOne({ direction: 'c2g', appUserId });
+      await db().collection('userMappings').deleteOne({ appUserId, migDir: 'copilot-gemini' });
       res.json({ ok: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });

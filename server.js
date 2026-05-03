@@ -263,6 +263,24 @@ app.put('/api/workspace', async (req, res) => {
   res.json({ ok: true });
 });
 
+// User config — tenantId, customerName (permanent per user, updatable)
+app.get('/api/config', requireAuth, async (req, res) => {
+  const { appUserId } = getWorkspaceContext(req);
+  const cfg = await db().collection('userConfig').findOne({ appUserId });
+  res.json(cfg || { tenantId: null, customerName: 'Gemini' });
+});
+
+app.put('/api/config', requireAuth, async (req, res) => {
+  const { appUserId } = getWorkspaceContext(req);
+  const { tenantId, customerName } = req.body;
+  await db().collection('userConfig').updateOne(
+    { appUserId },
+    { $set: { tenantId, customerName, updatedAt: new Date() } },
+    { upsert: true }
+  );
+  res.json({ ok: true });
+});
+
 // Admin: manage app users
 app.get('/api/users', requireAuth, async (req, res) => {
   if (req.session.appUser.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
