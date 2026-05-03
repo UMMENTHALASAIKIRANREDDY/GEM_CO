@@ -476,10 +476,11 @@ export function createG2CRouter(deps) {
 
   router.delete('/uploads/:id', async (req, res) => {
     const { id } = req.params;
-    const entry = await db().collection('uploads').findOne({ _id: id });
+    const { appUserId } = getWorkspaceContext(req);
+    const entry = await db().collection('uploads').findOne({ _id: id, appUserId });
     if (!entry) return res.status(404).json({ error: 'Upload not found' });
     try { fs.rmSync(entry.extractPath, { recursive: true, force: true }); } catch {}
-    await db().collection('uploads').deleteOne({ _id: id });
+    await db().collection('uploads').deleteOne({ _id: id, appUserId });
     dbLog.info(`uploads.delete — ${id}`);
     res.json({ ok: true });
   });
@@ -865,7 +866,7 @@ export function createG2CRouter(deps) {
     if (!batchDoc) return res.status(404).json({ error: 'Batch not found' });
 
     const mappingDoc = await db().collection('userMappings').findOne({ appUserId, migDir: 'gemini-copilot', batchId });
-    const uploadDoc = await db().collection('uploads').findOne({}, { sort: { uploadTime: -1 } });
+    const uploadDoc = await db().collection('uploads').findOne({ appUserId }, { sort: { uploadTime: -1 } });
 
     const retryTargets = {};
     for (const u of batchDoc.report?.users || []) {
@@ -950,8 +951,8 @@ export function createG2CRouter(deps) {
           const msEmail = req.session.msEmail || null;
           const uploadId = migrationState.uploadData?.id;
           const uploadDoc = uploadId
-            ? await db().collection('uploads').findOne({ _id: uploadId })
-            : await db().collection('uploads').findOne({}, { sort: { uploadTime: -1 } });
+            ? await db().collection('uploads').findOne({ _id: uploadId, appUserId: uid })
+            : await db().collection('uploads').findOne({ appUserId: uid }, { sort: { uploadTime: -1 } });
           const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: 'gemini-copilot' });
           return runMigration({
             extract_path: migrationState.uploadExtractPath || uploadDoc?.extractPath,
@@ -971,7 +972,7 @@ export function createG2CRouter(deps) {
         const batchDoc = await db().collection('reportsWorkspace').findOne({ _id: retryFromBatchId });
         if (!batchDoc) return { error: 'Batch not found' };
         const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: 'gemini-copilot', batchId: retryFromBatchId });
-        const uploadDoc = await db().collection('uploads').findOne({}, { sort: { uploadTime: -1 } });
+        const uploadDoc = await db().collection('uploads').findOne({ appUserId: uid }, { sort: { uploadTime: -1 } });
         const retryTargets = {};
         for (const u of batchDoc.report?.users || []) {
           if (u.errors?.length > 0) retryTargets[u.email] = u.errors.map(e => e.conversation);
