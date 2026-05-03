@@ -3,6 +3,7 @@
  * All route paths preserved exactly as they were in server.js.
  */
 
+import { randomUUID } from 'crypto';
 import express from 'express';
 import multer from 'multer';
 import fs from 'fs';
@@ -657,22 +658,18 @@ export function createG2CRouter(deps) {
     dbLog.info(`migrationWorkspaces.insert — batch ${batchId} status=running`);
 
     const jobIds = {};
-    for (const [sourceEmail, destEmail] of Object.entries(user_mappings)) {
-      const jobId = `job_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-      await db().collection('migrationJobs').insertOne({
-        jobId,
-        workspaceId: batchId,
-        appUserId,
-        migDir: 'gemini-copilot',
-        sourceEmail,
-        destEmail,
-        status: 'pending',
-        pages: 0,
-        errors: [],
-        startTime: null,
-        endTime: null,
-      });
-      jobIds[sourceEmail] = jobId;
+    if (!dry_run && Object.keys(user_mappings).length > 0) {
+      await Promise.all(Object.entries(user_mappings).map(async ([sourceEmail, destEmail]) => {
+        const jobId = randomUUID();
+        try {
+          await db().collection('migrationJobs').insertOne({
+            jobId, workspaceId: batchId, appUserId, migDir: 'gemini-copilot',
+            sourceEmail, destEmail, status: 'pending', pages: 0, errors: [],
+            startTime: null, endTime: null,
+          });
+          jobIds[sourceEmail] = jobId;
+        } catch (e) { dbLog.warn(`migrationJobs.insert failed for ${sourceEmail}: ${e.message}`); }
+      }));
     }
 
     await new Promise(r => setTimeout(r, 200));

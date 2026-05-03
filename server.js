@@ -297,6 +297,7 @@ app.put('/api/config', requireAuth, async (req, res) => {
 app.get('/api/workspaces', requireAuth, async (req, res) => {
   try {
     const { appUserId } = getWorkspaceContext(req);
+    if (!appUserId) return res.status(401).json({ error: 'Session missing user id' });
     const workspaces = await db().collection('migrationWorkspaces')
       .find({ appUserId })
       .sort({ startTime: -1 })
@@ -310,8 +311,10 @@ app.get('/api/workspaces', requireAuth, async (req, res) => {
 app.get('/api/jobs/:workspaceId', requireAuth, async (req, res) => {
   try {
     const { appUserId } = getWorkspaceContext(req);
+    if (!appUserId) return res.status(401).json({ error: 'Session missing user id' });
     const jobs = await db().collection('migrationJobs')
       .find({ workspaceId: req.params.workspaceId, appUserId })
+      .sort({ startTime: 1 })
       .toArray();
     res.json(jobs);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -321,6 +324,7 @@ app.get('/api/jobs/:workspaceId', requireAuth, async (req, res) => {
 app.post('/api/jobs/:jobId/retry', requireAuth, async (req, res) => {
   try {
     const { appUserId } = getWorkspaceContext(req);
+    if (!appUserId) return res.status(401).json({ error: 'Session missing user id' });
     const job = await db().collection('migrationJobs')
       .findOne({ jobId: req.params.jobId, appUserId });
     if (!job) return res.status(404).json({ error: 'Job not found' });
@@ -329,7 +333,7 @@ app.post('/api/jobs/:jobId/retry', requireAuth, async (req, res) => {
       { jobId: job.jobId },
       { $set: { status: 'retried', retriedAt: new Date() } }
     );
-    res.json({ ok: true, job });
+    res.json({ ok: true, jobId: job.jobId });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
