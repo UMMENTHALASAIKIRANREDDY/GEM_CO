@@ -8,7 +8,7 @@ const logger = getLogger('agent:executor');
 
 export async function executeTool(toolName, args, { streamEvent, session, migrationState, migrationLogs, db }) {
   const migDir = migrationState?.migDir;
-  const appUserId = session?.appUser?.id || session?.appUserId;
+  const appUserId = session?.appUser?._id || session?.appUserId;
 
   switch (toolName) {
 

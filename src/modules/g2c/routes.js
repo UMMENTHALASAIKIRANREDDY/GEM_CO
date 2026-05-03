@@ -85,183 +85,7 @@ export function generateSuggestedChips({ step=0, migDir, googleAuthed, msAuthed,
   return ['Check status'];
 }
 
-const AGENT_TOOLS = [
-  {
-    type: 'function',
-    function: {
-      name: 'show_reports',
-      description: 'Open the migration reports panel',
-      parameters: { type: 'object', properties: {}, required: [] }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'show_mapping',
-      description: 'Open the user mapping grid in the left panel so user can review/edit Google-to-M365 email mappings',
-      parameters: { type: 'object', properties: {}, required: [] }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'get_migration_status',
-      description: 'Get current migration progress, stats, and state details',
-      parameters: { type: 'object', properties: {}, required: [] }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'explain_log',
-      description: 'Explain what a migration log line means and suggest action',
-      parameters: {
-        type: 'object',
-        properties: { log_line: { type: 'string', description: 'The exact log message text' } },
-        required: ['log_line']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'show_status_card',
-      description: 'Display a visual status card with migration stats. Use when summarizing migration results or answering questions about counts.',
-      parameters: {
-        type: 'object',
-        properties: {
-          users:  { type: 'number', description: 'Users processed' },
-          files:  { type: 'number', description: 'Files/pages migrated' },
-          errors: { type: 'number', description: 'Error count' },
-          label:  { type: 'string', description: 'Card title, e.g. "Migration Results"' }
-        },
-        required: ['users', 'files', 'errors']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'show_post_migration_guide',
-      description: 'Show post-migration setup instructions. Call when user asks "what do I do next?", "how do I set up the Gem?", "where is my Copilot agent?", or clicks "What do I do next?"',
-      parameters: { type: 'object', properties: {}, required: [] }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'navigate_to_step',
-      description: 'Navigate the left panel to a specific step number. Use when user asks to go somewhere ("take me to mapping", "go back to upload").',
-      parameters: {
-        type: 'object',
-        properties: { step: { type: 'number', description: 'Step index: 0=Connect, 1=Direction, 2=Upload/Import, 3=Map Users, 4=Options, 5=Migration' } },
-        required: ['step']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'select_direction',
-      description: 'Set the migration direction and advance the left panel to step 2. Use when user says which direction they want.',
-      parameters: {
-        type: 'object',
-        properties: { migDir: { type: 'string', enum: ['gemini-copilot', 'copilot-gemini', 'claude-gemini'], description: 'Migration direction' } },
-        required: ['migDir']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'start_migration',
-      description: 'Start migration. Always call pre_flight_check first. Confirm with user before dryRun=false if no dry run has been done.',
-      parameters: {
-        type: 'object',
-        properties: { dryRun: { type: 'boolean', description: 'true = dry run (safe preview), false = live migration (writes data)' } },
-        required: ['dryRun']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'retry_failed',
-      description: 'Retry failed items from the last migration batch. Only call if migration is done and errors > 0.',
-      parameters: { type: 'object', properties: {}, required: [] }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'auto_map_users',
-      description: 'Automatically map source users to destination users by email match. Works for all directions.',
-      parameters: { type: 'object', properties: {}, required: [] }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'set_migration_config',
-      description: 'Set migration options. Call when user specifies folder name, date range, or dry/live preference.',
-      parameters: {
-        type: 'object',
-        properties: {
-          folderName: { type: 'string', description: 'Destination folder name in Google Drive or OneNote' },
-          fromDate: { type: 'string', description: 'Start date filter ISO string or empty string for no filter' },
-          toDate: { type: 'string', description: 'End date filter ISO string or empty string for no filter' },
-          dryRun: { type: 'boolean', description: 'Set dry run toggle' }
-        },
-        required: []
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'pre_flight_check',
-      description: 'Validate state before starting migration. Always call this before start_migration. Returns list of blockers and warnings.',
-      parameters: { type: 'object', properties: {}, required: [] }
-    }
-  }
-];
-
 const STEP_NAMES = ['Connect Clouds', 'Import Data', 'Map Users', 'Options', 'Migration in Progress', 'Migration Complete'];
-
-async function callAI(messages, tools) {
-  const azureEndpoint = process.env.AZURE_OPENAI_ENDPOINT;
-  const azureKey = process.env.AZURE_OPENAI_API_KEY;
-  const azureDeployment = process.env.AZURE_OPENAI_DEPLOYMENT || 'gpt-4o';
-  const openaiKey = process.env.OPENAI_API_KEY;
-
-  if (azureEndpoint && azureKey) {
-    const url = `${azureEndpoint.replace(/\/$/, '')}/openai/deployments/${azureDeployment}/chat/completions?api-version=2024-02-15-preview`;
-    const body = { messages, max_tokens: 900, temperature: 0.4 };
-    if (tools) body.tools = tools;
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'api-key': azureKey },
-      body: JSON.stringify(body)
-    });
-    if (!r.ok) { const errBody = await r.text(); console.error('[callAI] Azure error', r.status, errBody); throw new Error(`Azure OpenAI error ${r.status}: ${errBody}`); }
-    return await r.json();
-  }
-
-  if (openaiKey) {
-    console.log('[callAI] using OpenAI key, model=gpt-4o');
-    const body = { model: 'gpt-4o', messages, max_tokens: 700, temperature: 0.35 };
-    if (tools) body.tools = tools;
-    const r = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
-      body: JSON.stringify(body)
-    });
-    if (!r.ok) { const errBody = await r.text(); console.error('[callAI] OpenAI error', r.status, errBody); throw new Error(`OpenAI error ${r.status}: ${errBody}`); }
-    return await r.json();
-  }
-
-  throw new Error('No AI provider configured. Set AZURE_OPENAI_API_KEY or OPENAI_API_KEY in .env');
-}
 
 // ─── Router factory ───────────────────────────────────────────────────────────
 
@@ -1123,19 +947,47 @@ export function createG2CRouter(deps) {
     req.session._agentDeps = {
       startMigration: async ({ dryRun, batchId, migDir: dir, appUserId: uid }) => {
         if (dir === 'gemini-copilot') {
-          const { uploadData, options } = migrationState;
+          const msEmail = req.session.msEmail || null;
+          const uploadId = migrationState.uploadData?.id;
+          const uploadDoc = uploadId
+            ? await db().collection('uploads').findOne({ _id: uploadId })
+            : await db().collection('uploads').findOne({}, { sort: { uploadTime: -1 } });
+          const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid });
           return runMigration({
-            extract_path: uploadData?.extractPath,
-            batch_id: batchId,
+            extract_path: migrationState.uploadExtractPath || uploadDoc?.extractPath,
+            tenant_id: migrationState.tenantId || null,
+            customer_name: migrationState.customerName || 'Gemini',
+            user_mappings: mappingDoc?.mappings || {},
             dry_run: dryRun,
+            batch_id: batchId,
             appUserId: uid,
             googleEmail: req.session.appUser?.email,
+            msEmail,
           });
         }
         return Promise.resolve({ started: true, note: `${dir} migration queued` });
       },
-      retryMigration: async ({ batchId, appUserId: uid }) => {
-        return runRetry({ batchId, appUserId: uid });
+      retryMigration: async ({ batchId: retryFromBatchId, appUserId: uid }) => {
+        const batchDoc = await db().collection('reportsWorkspace').findOne({ _id: retryFromBatchId });
+        if (!batchDoc) return { error: 'Batch not found' };
+        const mappingDoc = await db().collection('userMappings').findOne({ batchId: retryFromBatchId });
+        const uploadDoc = await db().collection('uploads').findOne({}, { sort: { uploadTime: -1 } });
+        const retryTargets = {};
+        for (const u of batchDoc.report?.users || []) {
+          if (u.errors?.length > 0) retryTargets[u.email] = u.errors.map(e => e.conversation);
+        }
+        if (Object.keys(retryTargets).length === 0) return { started: false, message: 'No failed items to retry' };
+        const retryBatchId = `${retryFromBatchId}_retry_${Date.now()}`;
+        return runRetry({
+          batchId: retryFromBatchId,
+          retryBatchId,
+          extractPath: uploadDoc?.extractPath,
+          tenantId: batchDoc.tenantId,
+          customerName: batchDoc.customerName || 'Gemini',
+          userMappings: mappingDoc?.mappings || {},
+          retryTargets,
+          appUserId: uid,
+        });
       },
     };
 

@@ -8,9 +8,10 @@ export async function loadHistory(db, appUserId) {
   try {
     const docs = await db.collection('chatHistory')
       .find({ appUserId })
-      .sort({ timestamp: 1 })
+      .sort({ timestamp: -1 })
       .limit(LOAD_LIMIT)
       .toArray();
+    docs.reverse();
     return docs.map(d => ({ role: d.role, content: d.content }));
   } catch (e) {
     logger.warn(`loadHistory failed for ${appUserId}: ${e.message}`);

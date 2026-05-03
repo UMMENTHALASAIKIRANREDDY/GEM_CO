@@ -2977,9 +2977,10 @@ function App(){
     else if(evt.event==='select_direction'&&evt.direction){setMigDir(evt.direction);if(typeof evt.step==='number')setStep(evt.step);}
     else if(evt.event==='refresh_mapping'){setLeftMode&&typeof setLeftMode==='function'&&setLeftMode('mapping');}
     else if(evt.event==='refresh_reports'){setShowReports&&setShowReports(true);}
+    else if(evt.event==='refresh_status'){setReportRefreshKey&&setReportRefreshKey(k=>k+1);}
     else if(evt.event==='show_widget'&&evt.widget){/* widget stored inline — handled when text event arrives */}
     else if(evt.event==='set_config'&&evt.config){applyAgentConfig&&applyAgentConfig(evt.config);}
-  },[setStep,setMigDir,setLeftMode,setShowReports,applyAgentConfig]);
+  },[setStep,setMigDir,setLeftMode,setShowReports,setReportRefreshKey,applyAgentConfig]);
 
   const sendToAgent=useCallback(async(overrideMsg,isSystem=false)=>{
     const userMsg=overrideMsg||agentInput.trim();
@@ -3007,6 +3008,9 @@ function App(){
       })();
       const migrationState={step,migDir,live,migDone,stats,lastRunWasDry,currentBatchId,agentMode,
         uploadData:uploadData?{id:uploadData.id,total_users:uploadData.total_users,total_conversations:uploadData.total_conversations}:null,
+        uploadExtractPath:uploadData?.extract_path||null,
+        tenantId:config.tenantId||null,
+        customerName:config.filePath||'Gemini',
         googleAuthed,msAuthed,
         mappings_count:Object.keys(mappings).length,
         selected_users_count:selectedUsers.size,
@@ -3026,7 +3030,8 @@ function App(){
       let finalText='';
       let finalQuickReplies=[];
       let finalWidget=null;
-      while(true){
+      let sseEnded=false;
+      while(!sseEnded){
         const{done,value}=await reader.read();
         if(done)break;
         buffer+=decoder.decode(value,{stream:true});
@@ -3044,7 +3049,7 @@ function App(){
               if(evt.event==='quick_replies'&&Array.isArray(evt.replies))finalQuickReplies=evt.replies;
               if(evt.event==='show_widget'&&evt.widget)finalWidget=evt.widget;
             }
-            else if(evt.type==='done'){break;}
+            else if(evt.type==='done'){sseEnded=true;break;}
           }catch(_){}
         }
       }

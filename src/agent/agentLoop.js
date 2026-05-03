@@ -25,7 +25,7 @@ export async function runAgentLoop(req, res, { message, migrationState, migratio
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  const appUserId = req.session?.appUser?.id || req.session?.appUser?.email || req.session?.appUserId;
+  const appUserId = req.session?.appUser?._id || req.session?.appUser?.email || req.session?.appUserId;
 
   const streamText = (content) => res.write(`data: ${JSON.stringify({ type: 'text', content })}\n\n`);
   const streamEvent = (event, payload = {}) => res.write(`data: ${JSON.stringify({ type: 'ui_event', event, ...payload })}\n\n`);
@@ -90,6 +90,7 @@ export async function runAgentLoop(req, res, { message, migrationState, migratio
       // Text-only response — loop ends
       if (aiMsg.content && (!aiMsg.tool_calls || aiMsg.tool_calls.length === 0)) {
         finalReply = aiMsg.content;
+        req.session.pendingConfirmed = false;
         break;
       }
 
@@ -139,8 +140,10 @@ export async function runAgentLoop(req, res, { message, migrationState, migratio
     streamText(finalReply);
     streamQuickReplies(defaultChips(migrationState));
 
-    await saveHistory(db, appUserId, 'user', message, migrationState?.migDir);
-    await saveHistory(db, appUserId, 'assistant', finalReply, migrationState?.migDir);
+    if (!isSystemTrigger) {
+      await saveHistory(db, appUserId, 'user', message, migrationState?.migDir);
+      await saveHistory(db, appUserId, 'assistant', finalReply, migrationState?.migDir);
+    }
 
   } catch (err) {
     logger.error(`[agentLoop] error: ${err.message}`);

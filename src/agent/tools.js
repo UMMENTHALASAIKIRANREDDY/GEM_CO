@@ -170,6 +170,14 @@ export const AGENT_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'get_conversation_history',
+      description: 'Retrieve the conversation history for the current user session.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'set_schedule',
       description: 'Schedule a migration to run at a specific time. Use when user asks to run migration at a later time.',
       parameters: {
