@@ -901,7 +901,7 @@ export function createG2CRouter(deps) {
     const { appUserId } = getWorkspaceContext(req);
     if (!isAuthenticated(appUserId)) return res.status(401).json({ error: 'Not signed in. Click "Sign in with Microsoft" first.' });
 
-    const batchDoc = await db().collection('migrationWorkspaces').findOne({ _id: batchId });
+    const batchDoc = await db().collection('migrationWorkspaces').findOne({ _id: batchId, appUserId });
     if (!batchDoc) return res.status(404).json({ error: 'Batch not found' });
 
     const mappingDoc = await db().collection('userMappings').findOne({ appUserId, migDir: 'gemini-copilot', batchId });
