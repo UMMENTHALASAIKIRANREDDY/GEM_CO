@@ -52,13 +52,13 @@ async function ensureCollections() {
   // 3. uploads
   if (!existing.has('uploads')) await _db.createCollection('uploads');
 
-  // 4. userMappings — one mapping doc per direction+user
+  // 4. userMappings — one mapping doc per migDir+user
   if (!existing.has('userMappings')) await _db.createCollection('userMappings');
-  try { await _db.collection('userMappings').dropIndex('batchId_1'); } catch {}
-  try { await _db.collection('userMappings').dropIndex('direction_1_appUserId_1'); } catch {}
+  try { await _db.collection('userMappings').dropIndex('batchId_1'); } catch (_) {}
+  try { await _db.collection('userMappings').dropIndex('direction_1_appUserId_1'); } catch (_) {}
   await _db.collection('userMappings').createIndex(
-    { direction: 1, appUserId: 1 },
-    { unique: true, sparse: true }  // sparse: excludes docs where direction/appUserId are null
+    { appUserId: 1, migDir: 1 },
+    { unique: true, background: true }
   );
 
   // 5. reportsWorkspace

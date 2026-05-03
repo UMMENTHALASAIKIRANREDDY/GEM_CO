@@ -265,20 +265,30 @@ app.put('/api/workspace', async (req, res) => {
 
 // User config — tenantId, customerName (permanent per user, updatable)
 app.get('/api/config', requireAuth, async (req, res) => {
-  const { appUserId } = getWorkspaceContext(req);
-  const cfg = await db().collection('userConfig').findOne({ appUserId });
-  res.json(cfg || { tenantId: null, customerName: 'Gemini' });
+  try {
+    const { appUserId } = getWorkspaceContext(req);
+    const cfg = await db().collection('userConfig').findOne({ appUserId });
+    res.json(cfg || { tenantId: null, customerName: 'Gemini' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/config', requireAuth, async (req, res) => {
-  const { appUserId } = getWorkspaceContext(req);
-  const { tenantId, customerName } = req.body;
-  await db().collection('userConfig').updateOne(
-    { appUserId },
-    { $set: { tenantId, customerName, updatedAt: new Date() } },
-    { upsert: true }
-  );
-  res.json({ ok: true });
+  try {
+    const { appUserId } = getWorkspaceContext(req);
+    const { tenantId, customerName } = req.body;
+    if (tenantId !== undefined && typeof tenantId !== 'string') {
+      return res.status(400).json({ error: 'tenantId must be a string' });
+    }
+    if (customerName !== undefined && typeof customerName !== 'string') {
+      return res.status(400).json({ error: 'customerName must be a string' });
+    }
+    await db().collection('userConfig').updateOne(
+      { appUserId },
+      { $set: { tenantId, customerName, updatedAt: new Date() } },
+      { upsert: true }
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Admin: manage app users
