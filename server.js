@@ -291,6 +291,48 @@ app.put('/api/config', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── Migration workspace + job endpoints ─────────────────────────────────────
+
+// All migration runs for current user (all directions)
+app.get('/api/workspaces', requireAuth, async (req, res) => {
+  try {
+    const { appUserId } = getWorkspaceContext(req);
+    const workspaces = await db().collection('migrationWorkspaces')
+      .find({ appUserId })
+      .sort({ startTime: -1 })
+      .limit(50)
+      .toArray();
+    res.json(workspaces);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Jobs for a specific workspace
+app.get('/api/jobs/:workspaceId', requireAuth, async (req, res) => {
+  try {
+    const { appUserId } = getWorkspaceContext(req);
+    const jobs = await db().collection('migrationJobs')
+      .find({ workspaceId: req.params.workspaceId, appUserId })
+      .toArray();
+    res.json(jobs);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Retry a single failed job (marks it retried; actual re-run done by agent)
+app.post('/api/jobs/:jobId/retry', requireAuth, async (req, res) => {
+  try {
+    const { appUserId } = getWorkspaceContext(req);
+    const job = await db().collection('migrationJobs')
+      .findOne({ jobId: req.params.jobId, appUserId });
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    if (job.status !== 'failed') return res.status(400).json({ error: 'Job is not failed' });
+    await db().collection('migrationJobs').updateOne(
+      { jobId: job.jobId },
+      { $set: { status: 'retried', retriedAt: new Date() } }
+    );
+    res.json({ ok: true, job });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Admin: manage app users
 app.get('/api/users', requireAuth, async (req, res) => {
   if (req.session.appUser.role !== 'admin') return res.status(403).json({ error: 'Admin only' });

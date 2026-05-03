@@ -102,12 +102,12 @@ export function createC2GRouter(deps) {
 
         // Create report doc in DB
         try {
-          await db().collection('reportsWorkspace').updateOne(
+          await db().collection('migrationWorkspaces').updateOne(
             { _id: batchId },
-            { $set: { customerName: c2gFolderName, tenantId: process.env.SOURCE_AZURE_TENANT_ID || process.env.C2G_AZURE_TENANT_ID || '', startTime, status: 'running', dryRun: isDryRun, direction: 'c2g', appUserId, googleEmail, msEmail } },
+            { $set: { migDir: 'copilot-gemini', customerName: c2gFolderName, tenantId: process.env.SOURCE_AZURE_TENANT_ID || process.env.C2G_AZURE_TENANT_ID || '', startTime, status: 'running', dryRun: isDryRun, direction: 'c2g', appUserId, googleEmail, msEmail } },
             { upsert: true }
           );
-          dbLog.info(`reportsWorkspace.insert — C2G batch ${batchId} status=running (dryRun=${isDryRun})`);
+          dbLog.info(`migrationWorkspaces.insert — C2G batch ${batchId} status=running (dryRun=${isDryRun})`);
         } catch (dbErr) { console.error('[C2G] DB insert error:', dbErr.message); }
 
         try {
@@ -118,7 +118,7 @@ export function createC2GRouter(deps) {
           } catch (importErr) {
             console.error('[C2G] Import error:', importErr);
             c2gLog('error', `Failed to load C2G module: ${importErr.message}`);
-            await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: { status: 'failed', endTime: new Date(), error: importErr.message } }).catch(() => {});
+            await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'copilot-gemini', status: 'failed', endTime: new Date(), error: importErr.message } }).catch(() => {});
             c2gLog('done', JSON.stringify({ files: 0, errors: 1, users: 0, batchId }));
             return;
           }
@@ -149,7 +149,7 @@ export function createC2GRouter(deps) {
               }
             } else {
               c2gLog('error', `Cannot fetch MS users: ${appTokenErr.message}. Connect Microsoft account first.`);
-              await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: { status: 'failed', endTime: new Date(), error: appTokenErr.message } }).catch(() => {});
+              await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'copilot-gemini', status: 'failed', endTime: new Date(), error: appTokenErr.message } }).catch(() => {});
               c2gLog('done', JSON.stringify({ files: 0, errors: 1, users: 0, batchId }));
               return;
             }
@@ -167,12 +167,12 @@ export function createC2GRouter(deps) {
 
           if (!migPairs.length) {
             c2gLog('error', 'No valid user pairs found. Check that the M365 emails exist in the tenant.');
-            await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: { status: 'failed', endTime: new Date(), error: 'No valid user pairs', totalUsers: 0 } }).catch(() => {});
+            await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'copilot-gemini', status: 'failed', endTime: new Date(), error: 'No valid user pairs', totalUsers: 0 } }).catch(() => {});
             c2gLog('done', JSON.stringify({ files: 0, errors: 1, users: 0, batchId }));
             return;
           }
 
-          await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: { totalUsers: migPairs.length } }).catch(() => {});
+          await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'copilot-gemini', totalUsers: migPairs.length } }).catch(() => {});
 
           c2gLog('info', `Starting C2G ${isDryRun ? 'dry run' : 'migration'} for ${migPairs.length} user pair(s)...`);
 
@@ -194,8 +194,8 @@ export function createC2GRouter(deps) {
                 errors++;
               }
             }
-            await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: {
-              status: 'completed', endTime: new Date(), dryRun: true, totalUsers: migPairs.length,
+            await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: {
+              migDir: 'copilot-gemini', status: 'completed', endTime: new Date(), dryRun: true, totalUsers: migPairs.length,
               migratedConversations: files, migratedUsers: reportUsers.filter(u => u.status === 'success').length,
               failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors,
               report: { summary: { total_users: migPairs.length, total_pages_created: files, total_errors: errors }, users: reportUsers }
@@ -266,13 +266,13 @@ export function createC2GRouter(deps) {
               users: reportUsers,
             },
           };
-          await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: reportUpdate }).catch(() => {});
-          dbLog.info(`reportsWorkspace.update — C2G batch ${batchId} status=${reportUpdate.status} (${files} files, ${migPairs.length} users)`);
+          await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'copilot-gemini', ...reportUpdate } }).catch(() => {});
+          dbLog.info(`migrationWorkspaces.update — C2G batch ${batchId} status=${reportUpdate.status} (${files} files, ${migPairs.length} users)`);
           c2gLog('done', JSON.stringify({ files, errors, users: migPairs.length, batchId }));
         } catch (e) {
           console.error('[C2G] Unhandled error:', e);
           c2gLog('error', e.message || String(e));
-          await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: { status: 'failed', endTime: new Date(), error: e.message } }).catch(() => {});
+          await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'copilot-gemini', status: 'failed', endTime: new Date(), error: e.message } }).catch(() => {});
           c2gLog('done', JSON.stringify({ files, errors, users: 0, batchId }));
         }
       });

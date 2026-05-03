@@ -494,7 +494,7 @@ export function createG2CRouter(deps) {
     if (googleEmail && msEmail) orClauses.push({ appUserId, googleEmail, msEmail });
     if (googleEmail)            orClauses.push({ appUserId, googleEmail, msEmail: { $exists: false } });
     orClauses.push({ appUserId, googleEmail: { $exists: false } });
-    const reports = await db().collection('reportsWorkspace')
+    const reports = await db().collection('migrationWorkspaces')
       .find({ $or: orClauses }, { projection: { report: 0 } })
       .sort({ startTime: -1 }).toArray();
     res.json(reports);
@@ -511,7 +511,7 @@ export function createG2CRouter(deps) {
       { $match: { status: 'completed', $or: orClauses } },
       { $group: { _id: null, totalBatches: { $sum: 1 }, totalUsers: { $sum: '$totalUsers' }, totalPages: { $sum: '$migratedConversations' }, totalErrors: { $sum: { $ifNull: ['$report.summary.total_errors', 0] } }, liveBatches: { $sum: { $cond: [{ $ne: ['$dryRun', true] }, 1, 0] } }, dryRunBatches: { $sum: { $cond: [{ $eq: ['$dryRun', true] }, 1, 0] } } } }
     ];
-    const [agg] = await db().collection('reportsWorkspace').aggregate(pipeline).toArray();
+    const [agg] = await db().collection('migrationWorkspaces').aggregate(pipeline).toArray();
     const result = agg || { totalBatches: 0, totalUsers: 0, totalPages: 0, totalErrors: 0, liveBatches: 0, dryRunBatches: 0 };
     delete result._id;
     res.json(result);
@@ -520,16 +520,17 @@ export function createG2CRouter(deps) {
   router.get('/batches/migrated-users', async (req, res) => {
     const { uploadId } = req.query;
     if (!uploadId) return res.status(400).json({ error: 'uploadId required' });
-    const appUserId = req.session.appUser?._id || null;
-    const batches = await db().collection('reportsWorkspace')
-      .find({ uploadId, appUserId, status: 'completed', dryRun: { $ne: true } }, { projection: { 'report.users.email': 1 } }).toArray();
+    const appUserId = req.session.appUser?._id?.toString() || null;
+    const batches = await db().collection('migrationWorkspaces')
+      .find({ uploadId, appUserId, migDir: 'gemini-copilot', status: 'completed', dryRun: { $ne: true } }, { projection: { 'report.users.email': 1 } }).toArray();
     const migrated = new Set();
     batches.forEach(b => (b.report?.users || []).forEach(u => migrated.add(u.email)));
     res.json({ migrated_users: [...migrated] });
   });
 
   router.get('/reports/:id/csv', async (req, res) => {
-    const doc = await db().collection('reportsWorkspace').findOne({ _id: req.params.id });
+    const { appUserId } = getWorkspaceContext(req);
+    const doc = await db().collection('migrationWorkspaces').findOne({ _id: req.params.id, appUserId });
     if (!doc) return res.status(404).json({ error: 'Batch not found' });
     const users = doc.report?.users || [];
     const isC2G = doc.direction === 'c2g';
@@ -551,7 +552,8 @@ export function createG2CRouter(deps) {
   });
 
   router.get('/reports/:id/errors', async (req, res) => {
-    const doc = await db().collection('reportsWorkspace').findOne({ _id: req.params.id });
+    const { appUserId } = getWorkspaceContext(req);
+    const doc = await db().collection('migrationWorkspaces').findOne({ _id: req.params.id, appUserId });
     if (!doc) return res.status(404).json({ error: 'Batch not found' });
     const errors = [];
     for (const u of doc.report?.users || []) {
@@ -564,13 +566,14 @@ export function createG2CRouter(deps) {
 
   router.get('/reports/:id', async (req, res) => {
     const { id } = req.params;
+    const { appUserId } = getWorkspaceContext(req);
     if (id === 'migration') {
-      const latest = await db().collection('reportsWorkspace').findOne({}, { sort: { startTime: -1 } });
+      const latest = await db().collection('migrationWorkspaces').findOne({ appUserId }, { sort: { startTime: -1 } });
       if (!latest) return res.status(404).json({ error: 'No report yet' });
       const payload = latest.report || {};
       return res.json({ ...payload, customerName: latest.customerName, tenantId: latest.tenantId, batchId: latest._id });
     }
-    const doc = await db().collection('reportsWorkspace').findOne({ _id: id });
+    const doc = await db().collection('migrationWorkspaces').findOne({ _id: id, appUserId });
     if (!doc) return res.status(404).json({ error: 'Batch report not found' });
     if (req.query.download === 'true') res.setHeader('Content-Disposition', `attachment; filename="migration_report_${id}.json"`);
     res.setHeader('Content-Type', 'application/json');
@@ -646,12 +649,31 @@ export function createG2CRouter(deps) {
     );
     dbLog.info(`userMappings.upsert — G2C batch ${batchId} (${Object.keys(user_mappings).length} mappings)`);
 
-    await db().collection('reportsWorkspace').updateOne(
+    await db().collection('migrationWorkspaces').updateOne(
       { _id: batchId },
-      { $set: { customerName: customer_name, tenantId: tenant_id, startTime, status: 'running', dryRun: dry_run, uploadId: upload_id, appUserId, googleEmail, msEmail } },
+      { $set: { migDir: 'gemini-copilot', customerName: customer_name, tenantId: tenant_id, startTime, status: 'running', dryRun: dry_run, uploadId: upload_id, appUserId, googleEmail, msEmail } },
       { upsert: true }
     );
-    dbLog.info(`reportsWorkspace.insert — batch ${batchId} status=running`);
+    dbLog.info(`migrationWorkspaces.insert — batch ${batchId} status=running`);
+
+    const jobIds = {};
+    for (const [sourceEmail, destEmail] of Object.entries(user_mappings)) {
+      const jobId = `job_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      await db().collection('migrationJobs').insertOne({
+        jobId,
+        workspaceId: batchId,
+        appUserId,
+        migDir: 'gemini-copilot',
+        sourceEmail,
+        destEmail,
+        status: 'pending',
+        pages: 0,
+        errors: [],
+        startTime: null,
+        endTime: null,
+      });
+      jobIds[sourceEmail] = jobId;
+    }
 
     await new Promise(r => setTimeout(r, 200));
     emit('info', '━━━ Migration started ━━━');
@@ -672,9 +694,9 @@ export function createG2CRouter(deps) {
           emit('user', `${u.email} → ${m365Email} (${u.conversationCount} conversations)`);
         }
         const total = users.reduce((s, u) => s + u.conversationCount, 0);
-        await db().collection('reportsWorkspace').updateOne(
+        await db().collection('migrationWorkspaces').updateOne(
           { _id: batchId },
-          { $set: { status: 'completed', endTime: new Date(), dryRun: true, totalUsers: users.length, totalConversations: total, migratedUsers: 0, migratedConversations: 0, failedUsers: 0, report: { summary: { total_users: users.length, total_conversations: total, total_pages_created: 0, total_errors: 0 } } } }
+          { $set: { migDir: 'gemini-copilot', status: 'completed', endTime: new Date(), dryRun: true, totalUsers: users.length, totalConversations: total, migratedUsers: 0, migratedConversations: 0, failedUsers: 0, report: { summary: { total_users: users.length, total_conversations: total, total_pages_created: 0, total_errors: 0 } } } }
         );
         emit('done', `DRY RUN complete — ${users.length} users, ${total} conversations. No API calls made.`, { batch_id: batchId });
         currentBatchId = null;
@@ -704,6 +726,12 @@ export function createG2CRouter(deps) {
         const m365Email = user_mappings[gEmail] || gEmail;
 
         emit('info', `Processing: ${gEmail} → ${m365Email}`);
+        if (jobIds[gEmail]) {
+          await db().collection('migrationJobs').updateOne(
+            { jobId: jobIds[gEmail] },
+            { $set: { status: 'running', startTime: new Date() } }
+          ).catch(() => {});
+        }
         let conversations = null;
         const errors = [];
         let pagesCreated = 0;
@@ -796,10 +824,21 @@ export function createG2CRouter(deps) {
           progressUsers++;
           progressPages += pagesCreated;
           conversations = null;
-          db().collection('reportsWorkspace').updateOne(
+          db().collection('migrationWorkspaces').updateOne(
             { _id: batchId },
             { $set: { progressUsers, progressPages, progressErrors, totalUsers: users.length } }
           ).catch(() => {});
+          if (jobIds[gEmail]) {
+            await db().collection('migrationJobs').updateOne(
+              { jobId: jobIds[gEmail] },
+              { $set: {
+                status: errors.length > 0 ? 'failed' : 'done',
+                pages: pagesCreated,
+                errors: errors.map(e => ({ page: e.conversation || '', message: e.error || '' })),
+                endTime: new Date(),
+              } }
+            ).catch(() => {});
+          }
         }
       });
 
@@ -841,15 +880,15 @@ export function createG2CRouter(deps) {
         }
       }
 
-      await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: reportUpdate });
-      dbLog.info(`reportsWorkspace.update — batch ${batchId} status=completed (${reportUpdate.migratedConversations} pages, ${reportUpdate.totalUsers} users)`);
+      await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'gemini-copilot', ...reportUpdate } });
+      dbLog.info(`migrationWorkspaces.update — batch ${batchId} status=completed (${reportUpdate.migratedConversations} pages, ${reportUpdate.totalUsers} users)`);
       emit('done', `━━━ Migration complete! Reports saved. ━━━`, { batch_id: batchId });
       currentBatchId = null;
       _currentAppUserId = null;
     } catch (err) {
       emit('error', `Migration failed: ${err.message}`);
-      await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: { status: 'failed', endTime: new Date(), error: err.message } }).catch(() => {});
-      dbLog.info(`reportsWorkspace.update — batch ${batchId} status=failed`);
+      await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'gemini-copilot', status: 'failed', endTime: new Date(), error: err.message } }).catch(() => {});
+      dbLog.info(`migrationWorkspaces.update — batch ${batchId} status=failed`);
       currentBatchId = null;
       _currentAppUserId = null;
     }
@@ -862,7 +901,7 @@ export function createG2CRouter(deps) {
     const { appUserId } = getWorkspaceContext(req);
     if (!isAuthenticated(appUserId)) return res.status(401).json({ error: 'Not signed in. Click "Sign in with Microsoft" first.' });
 
-    const batchDoc = await db().collection('reportsWorkspace').findOne({ _id: batchId });
+    const batchDoc = await db().collection('migrationWorkspaces').findOne({ _id: batchId });
     if (!batchDoc) return res.status(404).json({ error: 'Batch not found' });
 
     const mappingDoc = await db().collection('userMappings').findOne({ appUserId, migDir: 'gemini-copilot', batchId });
@@ -878,6 +917,14 @@ export function createG2CRouter(deps) {
     const effectiveCustomerName = customer_name || batchDoc.customerName;
     const retryBatchId = `${batchId}_retry_${Date.now()}`;
     res.json({ started: true, batch_id: retryBatchId, targets: retryTargets });
+
+    const failedEmails = Object.keys(retryTargets);
+    if (failedEmails.length > 0) {
+      await db().collection('migrationJobs').updateMany(
+        { workspaceId: batchId, sourceEmail: { $in: failedEmails } },
+        { $set: { status: 'retried', retriedAt: new Date() } }
+      ).catch(() => {});
+    }
 
     runRetry({ batchId, retryBatchId, extractPath: uploadDoc?.extractPath, tenantId: batchDoc.tenantId, customerName: effectiveCustomerName, userMappings: mappingDoc?.mappings || {}, retryTargets, appUserId });
   });
@@ -927,7 +974,7 @@ export function createG2CRouter(deps) {
     }
 
     const retryReport = report.getReport();
-    await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: { 'report.retry': retryReport, retryAt: new Date() } }).catch(() => {});
+    await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { 'report.retry': retryReport, retryAt: new Date() } }).catch(() => {});
 
     const retried = retryReport.summary.total_pages_created;
     const stillFailing = retryReport.summary.total_errors;
@@ -969,7 +1016,7 @@ export function createG2CRouter(deps) {
         return Promise.resolve({ started: true, note: `${dir} migration queued` });
       },
       retryMigration: async ({ batchId: retryFromBatchId, appUserId: uid }) => {
-        const batchDoc = await db().collection('reportsWorkspace').findOne({ _id: retryFromBatchId });
+        const batchDoc = await db().collection('migrationWorkspaces').findOne({ _id: retryFromBatchId, appUserId: uid });
         if (!batchDoc) return { error: 'Batch not found' };
         const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: 'gemini-copilot', batchId: retryFromBatchId });
         const uploadDoc = await db().collection('uploads').findOne({ appUserId: uid }, { sort: { uploadTime: -1 } });
