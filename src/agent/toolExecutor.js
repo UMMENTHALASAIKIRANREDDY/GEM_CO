@@ -84,7 +84,7 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
       if (currentBatchId) {
         try {
           dbStatus = await db.collection('reportsWorkspace').findOne({ batchId: currentBatchId });
-        } catch (_) {}
+        } catch (e) { logger.warn(`get_migration_status DB query failed: ${e.message}`); }
       }
       return {
         step, direction: dir ?? 'none', running: isRunning, done: isDone,
