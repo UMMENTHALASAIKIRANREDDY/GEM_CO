@@ -115,5 +115,10 @@ async function ensureCollections() {
   if (!existing.has('chatHistory')) await _db.createCollection('chatHistory');
   await _db.collection('chatHistory').createIndex({ appUserId: 1 }, { unique: true });
 
-  logger.info('All 15 collections verified with indexes (multi-tenant scoped)');
+  // 14. agentAuditLog — structured per-session agent trace for the monitor UI
+  if (!existing.has('agentAuditLog')) await _db.createCollection('agentAuditLog');
+  await _db.collection('agentAuditLog').createIndex({ sessionId: 1, ts: 1 });
+  await _db.collection('agentAuditLog').createIndex({ ts: -1 });
+
+  logger.info('All 16 collections verified with indexes (multi-tenant scoped)');
 }
