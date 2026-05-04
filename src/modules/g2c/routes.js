@@ -27,6 +27,7 @@ import { CheckpointManager } from '../../utils/checkpoint.js';
 import { AgentDeployer } from '../../agent/agentDeployer.js';
 import { getLogger } from '../../utils/logger.js';
 import { runAgentLoop } from '../../agent/agentLoop.js';
+import { auditEmitter } from '../../agent/auditLogger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Root of the project (3 levels up from src/modules/g2c/)
@@ -1004,6 +1005,7 @@ export function createG2CRouter(deps) {
     next();
   }, async (req, res) => {
     const { message, migrationState = {}, migrationLogs = [], isSystemTrigger = false } = req.body;
+    const appUserName = req.session.appUser?.name || req.session.appUser?.email?.split('@')[0] || 'there';
     if (!message) return res.status(400).json({ error: 'message required' });
 
     // Attach migration executors to session so toolExecutor can fire them
@@ -1057,10 +1059,68 @@ export function createG2CRouter(deps) {
 
     await runAgentLoop(req, res, {
       message,
-      migrationState,
+      migrationState: { ...migrationState, appUserName },
       migrationLogs,
       isSystemTrigger: isSystemTrigger || message === '__step_context__',
       db: db(),
+    });
+  });
+
+  // ─── Audit routes ─────────────────────────────────────────────────────────────
+
+  // GET /audit/sessions — 50 most recent sessions with summary fields
+  router.get('/audit/sessions', async (req, res) => {
+    try {
+      const sessions = await db().collection('agentAuditLog').aggregate([
+        { $sort: { ts: -1 } },
+        { $group: {
+          _id: '$sessionId',
+          firstTs: { $last: '$ts' },
+          lastTs: { $first: '$ts' },
+          appUserId: { $first: '$appUserId' },
+          step: { $first: '$step' },
+          migDir: { $first: '$migDir' },
+          messageSnippet: { $last: '$message' },
+          eventCount: { $sum: 1 },
+        }},
+        { $sort: { lastTs: -1 } },
+        { $limit: 50 },
+        { $project: { sessionId: '$_id', _id: 0, firstTs: 1, lastTs: 1, appUserId: 1, step: 1, migDir: 1, messageSnippet: 1, eventCount: 1 } },
+      ]).toArray();
+      res.json(sessions);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // GET /audit/session/:id — all events for a session, sorted ascending
+  router.get('/audit/session/:id', async (req, res) => {
+    try {
+      const events = await db().collection('agentAuditLog')
+        .find({ sessionId: req.params.id })
+        .sort({ ts: 1 })
+        .toArray();
+      res.json(events);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // GET /audit/stream — SSE fan-out of live audit events
+  router.get('/audit/stream', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.flushHeaders();
+
+    const onEvent = (event) => {
+      res.write(`data: ${JSON.stringify(event)}\n\n`);
+    };
+    auditEmitter.on('event', onEvent);
+
+    req.on('close', () => {
+      auditEmitter.off('event', onEvent);
     });
   });
 
