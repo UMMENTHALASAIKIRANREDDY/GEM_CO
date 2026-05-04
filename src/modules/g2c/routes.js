@@ -631,14 +631,14 @@ export function createG2CRouter(deps) {
       return res.status(401).json({ error: 'Admin not signed in. Click "Sign in with Microsoft" first.' });
     }
 
-    const batch_id = Date.now().toString();
+    const batch_id = randomUUID();
     res.json({ started: true, batch_id });
     runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id, upload_id, appUserId, googleEmail, msEmail });
   });
 
   async function runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id, upload_id, appUserId, googleEmail, msEmail }) {
     logBuffers.set(appUserId, []);
-    const batchId = batch_id || Date.now().toString();
+    const batchId = batch_id || randomUUID();
     currentBatchId = batchId;
     _currentAppUserId = appUserId;
     const startTime = new Date();
@@ -912,7 +912,7 @@ export function createG2CRouter(deps) {
     if (Object.keys(retryTargets).length === 0) return res.json({ started: false, message: 'No failed conversations to retry' });
 
     const effectiveCustomerName = customer_name || batchDoc.customerName;
-    const retryBatchId = `${batchId}_retry_${Date.now()}`;
+    const retryBatchId = `${batchId}_retry_${randomUUID()}`;
     res.json({ started: true, batch_id: retryBatchId, targets: retryTargets });
 
     const failedEmails = Object.keys(retryTargets);
@@ -1022,7 +1022,7 @@ export function createG2CRouter(deps) {
           if (u.errors?.length > 0) retryTargets[u.email] = u.errors.map(e => e.conversation);
         }
         if (Object.keys(retryTargets).length === 0) return { started: false, message: 'No failed items to retry' };
-        const retryBatchId = `${retryFromBatchId}_retry_${Date.now()}`;
+        const retryBatchId = `${retryFromBatchId}_retry_${randomUUID()}`;
         return runRetry({
           batchId: retryFromBatchId,
           retryBatchId,
