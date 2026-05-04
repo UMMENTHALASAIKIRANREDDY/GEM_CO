@@ -1112,10 +1112,16 @@ export function createG2CRouter(deps) {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
 
     const onEvent = (event) => {
-      res.write(`data: ${JSON.stringify(event)}\n\n`);
+      if (!res.writableEnded) {
+        try {
+          res.write(`data: ${JSON.stringify(event)}\n\n`);
+          res.flush?.();
+        } catch (_) {}
+      }
     };
     auditEmitter.on('event', onEvent);
 
