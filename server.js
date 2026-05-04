@@ -6,7 +6,7 @@ import session from 'express-session';
 import bcrypt from 'bcryptjs';
 
 import { getAuthUrl, acquireTokenByCode, isAuthenticated, getValidToken, clearMsToken, restoreMsSessions } from './src/core/auth/microsoft.js';
-import { getGoogleAuthUrl, acquireGoogleTokenByCode, isGoogleAuthenticated, getGoogleOAuth2Client, clearGoogleToken, restoreGoogleSessions } from './src/core/auth/googleOAuth.js';
+import { getGoogleAuthUrl, acquireGoogleTokenByCode, isGoogleAuthenticated, getGoogleOAuth2Client, clearGoogleToken, clearGoogleAccount, getGoogleAccounts, restoreGoogleSessions } from './src/core/auth/googleOAuth.js';
 import { connectMongo, getDb } from './src/db/mongo.js';
 import { getLogger } from './src/utils/logger.js';
 import { createG2CRouter } from './src/modules/g2c/routes.js';
@@ -186,7 +186,8 @@ app.get('/auth/status', (req, res) => {
 app.get('/auth/google/login', (req, res) => {
   try {
     const appUserId = req.session.appUser?._id?.toString();
-    res.redirect(getGoogleAuthUrl(appUserId));
+    const { url } = getGoogleAuthUrl(appUserId);
+    res.redirect(url);
   } catch (err) { res.status(500).send(`Google auth error: ${err.message}`); }
 });
 
@@ -216,8 +217,16 @@ app.get('/auth/google/status', (req, res) => {
 
 app.post('/auth/google/logout', (req, res) => {
   const { appUserId } = getWorkspaceContext(req);
-  clearGoogleToken(appUserId);
-  delete req.session.googleEmail;
+  const accountId = req.query.accountId || req.body?.accountId || null;
+  if (accountId) {
+    clearGoogleAccount(appUserId, accountId);
+    const remaining = getGoogleAccounts(appUserId);
+    if (!remaining.length) delete req.session.googleEmail;
+    else req.session.googleEmail = remaining[0].email || req.session.googleEmail;
+  } else {
+    clearGoogleToken(appUserId);
+    delete req.session.googleEmail;
+  }
   res.json({ ok: true });
 });
 
@@ -230,10 +239,23 @@ app.post('/auth/logout', (req, res) => {
 
 // ─── Auth disconnect ──────────────────────────────────────────────────────────
 
+app.get('/api/auth/google/accounts', requireAuth, (req, res) => {
+  const { appUserId } = getWorkspaceContext(req);
+  res.json({ accounts: getGoogleAccounts(appUserId) });
+});
+
 app.post('/api/auth/google/disconnect', requireAuth, (req, res) => {
   const { appUserId } = getWorkspaceContext(req);
-  clearGoogleToken(appUserId);
-  delete req.session.googleEmail;
+  const { accountId } = req.body || {};
+  if (accountId) {
+    clearGoogleAccount(appUserId, accountId);
+    const remaining = getGoogleAccounts(appUserId);
+    if (!remaining.length) delete req.session.googleEmail;
+    else req.session.googleEmail = remaining[0].email || req.session.googleEmail;
+  } else {
+    clearGoogleToken(appUserId);
+    delete req.session.googleEmail;
+  }
   res.json({ success: true });
 });
 

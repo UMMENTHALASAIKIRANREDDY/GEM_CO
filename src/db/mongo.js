@@ -40,9 +40,13 @@ async function ensureCollections() {
   const _db = getDb();
   const existing = new Set(await _db.listCollections().toArray().then(cs => cs.map(c => c.name)));
 
-  // 1. authSessions — OAuth tokens per user+provider
+  // 1. authSessions — OAuth tokens per user+provider+accountId (multi-account)
   if (!existing.has('authSessions')) await _db.createCollection('authSessions');
-  await _db.collection('authSessions').createIndex({ appUserId: 1, provider: 1 }, { unique: true });
+  try { await _db.collection('authSessions').dropIndex('appUserId_1_provider_1'); } catch {}
+  await _db.collection('authSessions').createIndex(
+    { appUserId: 1, provider: 1, accountId: 1 },
+    { unique: true, partialFilterExpression: { accountId: { $type: 'string' } } }
+  );
 
   // 2. cloudMembers
   if (!existing.has('cloudMembers')) await _db.createCollection('cloudMembers');
