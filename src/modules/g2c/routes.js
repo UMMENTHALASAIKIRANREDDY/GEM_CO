@@ -488,7 +488,7 @@ export function createG2CRouter(deps) {
 
   // Reports
   router.get('/reports', async (req, res) => {
-    const { appUserId } = getWorkspaceContext(req);
+    const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
     if (!appUserId) return res.json([]);
     // Build an OR that matches G2C/C2G (full workspace) + CL2G (google-only, no msEmail) + legacy (no googleEmail)
     const orClauses = [];
@@ -530,7 +530,7 @@ export function createG2CRouter(deps) {
     const doc = await db().collection('migrationWorkspaces').findOne({ _id: req.params.id, appUserId });
     if (!doc) return res.status(404).json({ error: 'Batch not found' });
     const users = doc.report?.users || [];
-    const isC2G = doc.direction === 'c2g';
+    const isC2G = doc.migDir === 'copilot-gemini';
     const customerName = doc.customerName || 'Gemini';
     const destFor = (email, destEmail) => isC2G ? (destEmail || '') : `${email}/OneDrive/Notebooks/${customerName}/${customerName} Conversations`;
     const header = isC2G ? 'Source Email,Destination Email,Status,Files Uploaded,Conversations,Errors,Error Message' : 'Email,Destination Path,Status,Pages Created,Conversations,Errors,Error Message';
