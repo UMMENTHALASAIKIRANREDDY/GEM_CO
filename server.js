@@ -1,5 +1,13 @@
 import 'dotenv/config';
 import express from 'express';
+
+// Prevent unhandled rejections from crashing the server
+process.on('unhandledRejection', (reason) => {
+  console.error('[server] Unhandled promise rejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[server] Uncaught exception:', err.message, err.stack);
+});
 import path from 'path';
 import { fileURLToPath } from 'url';
 import session from 'express-session';

@@ -633,7 +633,9 @@ export function createG2CRouter(deps) {
 
     const batch_id = randomUUID();
     res.json({ started: true, batch_id });
-    runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id, upload_id, appUserId, googleEmail, msEmail });
+    runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id, upload_id, appUserId, googleEmail, msEmail }).catch(e => {
+      console.error('[G2C] runMigration unhandled error:', e.message);
+    });
   });
 
   async function runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id, upload_id, appUserId, googleEmail, msEmail }) {
@@ -643,6 +645,7 @@ export function createG2CRouter(deps) {
     _currentAppUserId = appUserId;
     const startTime = new Date();
 
+    try {
     await db().collection('userMappings').updateOne(
       { appUserId, migDir: 'gemini-copilot', batchId },
       { $set: { customerName: customer_name, mappings: user_mappings, migDir: 'gemini-copilot', createdAt: startTime, appUserId, googleEmail, msEmail } },
@@ -889,6 +892,12 @@ export function createG2CRouter(deps) {
       currentBatchId = null;
       _currentAppUserId = null;
     }
+    } catch (outerErr) {
+      emit('error', `Migration setup failed: ${outerErr.message}`);
+      await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'gemini-copilot', status: 'failed', endTime: new Date(), error: outerErr.message } }).catch(() => {});
+      currentBatchId = null;
+      _currentAppUserId = null;
+    }
   }
 
   // Retry failed conversations
@@ -923,14 +932,16 @@ export function createG2CRouter(deps) {
       ).catch(() => {});
     }
 
-    runRetry({ batchId, retryBatchId, extractPath: uploadDoc?.extractPath, tenantId: batchDoc.tenantId, customerName: effectiveCustomerName, userMappings: mappingDoc?.mappings || {}, retryTargets, appUserId });
+    runRetry({ batchId, retryBatchId, extractPath: uploadDoc?.extractPath, tenantId: batchDoc.tenantId, customerName: effectiveCustomerName, userMappings: mappingDoc?.mappings || {}, retryTargets, appUserId }).catch(e => {
+      console.error('[G2C] runRetry unhandled error:', e.message);
+    });
   });
 
   async function runRetry({ batchId, retryBatchId, extractPath, tenantId, customerName, userMappings, retryTargets, appUserId }) {
     logBuffers.set(appUserId, []);
     currentBatchId = retryBatchId;
     _currentAppUserId = appUserId;
-
+    try {
     const totalFailed = Object.values(retryTargets).flat().length;
     emit('info', `━━━ Retrying ${totalFailed} failed conversation(s) ━━━`);
 
@@ -978,6 +989,11 @@ export function createG2CRouter(deps) {
     emit('done', `━━━ Retry complete — ${retried} recovered, ${stillFailing} still failing ━━━`, { batch_id: retryBatchId });
     currentBatchId = null;
     _currentAppUserId = null;
+    } catch (retryErr) {
+      emit('error', `Retry failed: ${retryErr.message}`);
+      currentBatchId = null;
+      _currentAppUserId = null;
+    }
   }
 
   // Agent Chat
@@ -1009,6 +1025,44 @@ export function createG2CRouter(deps) {
             googleEmail: req.session.appUser?.email,
             msEmail,
           });
+        }
+        if (dir === 'copilot-gemini') {
+          const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: 'copilot-gemini' });
+          const pairs = Object.entries(mappingDoc?.mappings || {}).map(([src, dst]) => ({ sourceEmail: src, destEmail: dst }));
+          if (!pairs.length) return { error: 'No user mappings found for Copilot→Gemini. Map users first.' };
+          const body = { pairs, folderName: migrationState.customerName || 'CopilotChats', dryRun };
+          const resp = await fetch(`http://localhost:${process.env.PORT || 4000}/api/c2g/migrate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Cookie: req.headers.cookie || '' },
+            body: JSON.stringify(body),
+          });
+          return resp.ok ? resp.json() : { error: `C2G migration start failed: ${resp.status}` };
+        }
+        if (dir === 'claude-gemini') {
+          const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: 'claude-gemini' });
+          const uploadDoc = await db().collection('cl2gUploads').findOne({ appUserId: uid }, { sort: { uploadTime: -1 } });
+          if (!uploadDoc) return { error: 'No ZIP uploaded for Claude→Gemini. Upload your Claude export first.' };
+          const mappings = mappingDoc?.mappings || {};
+          const uploadUsers = uploadDoc.users || [];
+          const pairs = Object.entries(mappings)
+            .filter(([, dst]) => dst)
+            .map(([src, dst]) => {
+              const u = uploadUsers.find(u => u.email_address === src || u.uuid === src);
+              return {
+                sourceUuid: u?.uuid || src,
+                sourceDisplayName: u?.full_name || u?.email_address || src,
+                sourceEmail: u?.email_address || src,
+                destEmail: dst,
+              };
+            });
+          if (!pairs.length) return { error: 'No user mappings found for Claude→Gemini. Map users first.' };
+          const body = { uploadId: uploadDoc._id, pairs, folderName: migrationState.customerName || 'ClaudeChats', dryRun };
+          const resp = await fetch(`http://localhost:${process.env.PORT || 4000}/api/cl2g/migrate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Cookie: req.headers.cookie || '' },
+            body: JSON.stringify(body),
+          });
+          return resp.ok ? resp.json() : { error: `CL2G migration start failed: ${resp.status}` };
         }
         return Promise.resolve({ started: true, note: `${dir} migration queued` });
       },
