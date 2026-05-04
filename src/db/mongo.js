@@ -69,18 +69,23 @@ async function ensureCollections() {
   // 3. uploads
   if (!existing.has('uploads')) await _db.createCollection('uploads');
 
-  // 4. userMappings — one mapping doc per direction+user
+  // 4. userMappings — one mapping doc per migDir+user
   if (!existing.has('userMappings')) await _db.createCollection('userMappings');
-  try { await _db.collection('userMappings').dropIndex('batchId_1'); } catch {}
-  try { await _db.collection('userMappings').dropIndex('direction_1_appUserId_1'); } catch {}
+  try { await _db.collection('userMappings').dropIndex('batchId_1'); } catch (_) {}
+  try { await _db.collection('userMappings').dropIndex('direction_1_appUserId_1'); } catch (_) {}
   await _db.collection('userMappings').createIndex(
-    { direction: 1, appUserId: 1 },
-    { unique: true, partialFilterExpression: { direction: { $type: 'string' }, appUserId: { $type: 'string' } } }
+    { appUserId: 1, migDir: 1 },
+    { unique: true, background: true }
   );
 
-  // 5. reportsWorkspace
-  if (!existing.has('reportsWorkspace')) await _db.createCollection('reportsWorkspace');
-  await _db.collection('reportsWorkspace').createIndex({ startTime: -1 });
+  // 5. migrationWorkspaces — one doc per migration run (all directions)
+  if (!existing.has('migrationWorkspaces')) await _db.createCollection('migrationWorkspaces');
+  await _db.collection('migrationWorkspaces').createIndex({ appUserId: 1, startTime: -1 });
+
+  // 5b. migrationJobs — one doc per user per run (live runs only)
+  if (!existing.has('migrationJobs')) await _db.createCollection('migrationJobs');
+  await _db.collection('migrationJobs').createIndex({ workspaceId: 1, appUserId: 1 });
+  await _db.collection('migrationJobs').createIndex({ jobId: 1 }, { unique: true });
 
   // 6. checkpoints
   if (!existing.has('checkpoints')) await _db.createCollection('checkpoints');
@@ -127,5 +132,9 @@ async function ensureCollections() {
   if (!existing.has('cl2cUploads')) await _db.createCollection('cl2cUploads');
   await _db.collection('cl2cUploads').createIndex({ appUserId: 1, uploadTime: -1 });
 
-  logger.info('All 13 collections verified with indexes (multi-tenant scoped)');
+  // 14. chatHistory — persists agent chat messages per user for cross-device restore
+  if (!existing.has('chatHistory')) await _db.createCollection('chatHistory');
+  await _db.collection('chatHistory').createIndex({ appUserId: 1 }, { unique: true });
+
+  logger.info('All 14 collections verified with indexes (multi-tenant scoped)');
 }

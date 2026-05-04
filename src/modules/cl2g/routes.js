@@ -174,7 +174,7 @@ export function createCL2GRouter({ db }) {
   router.get('/user-mappings', requireAuth, async (req, res) => {
     try {
       const { appUserId } = getCtx(req);
-      const doc = await db().collection('userMappings').findOne({ direction: 'claude-gemini', appUserId });
+      const doc = await db().collection('userMappings').findOne({ appUserId, migDir: 'claude-gemini' });
       res.json(doc || null);
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
@@ -185,8 +185,8 @@ export function createCL2GRouter({ db }) {
       const { appUserId, googleEmail } = getCtx(req);
       const { mappings, csvEmails } = req.body;
       await db().collection('userMappings').updateOne(
-        { direction: 'claude-gemini', appUserId },
-        { $set: { direction: 'claude-gemini', appUserId, googleEmail, mappings, csvEmails, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+        { appUserId, migDir: 'claude-gemini' },
+        { $set: { migDir: 'claude-gemini', appUserId, googleEmail, mappings, csvEmails, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
         { upsert: true }
       );
       dbLog.info(`userMappings.upsert — CL2G ${Object.keys(mappings || {}).length} mappings`);
@@ -198,7 +198,7 @@ export function createCL2GRouter({ db }) {
   router.delete('/user-mappings', requireAuth, async (req, res) => {
     try {
       const { appUserId } = getCtx(req);
-      await db().collection('userMappings').deleteOne({ direction: 'claude-gemini', appUserId });
+      await db().collection('userMappings').deleteOne({ appUserId, migDir: 'claude-gemini' });
       res.json({ ok: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
@@ -226,9 +226,9 @@ export function createCL2GRouter({ db }) {
         let files = 0, errors = 0;
 
         try {
-          await db().collection('reportsWorkspace').updateOne(
+          await db().collection('migrationWorkspaces').updateOne(
             { _id: batchId },
-            { $set: { direction: 'claude-gemini', customerName: cl2gFolder, startTime, status: 'running', dryRun: isDryRun, appUserId, googleEmail, totalUsers: pairs.length } },
+            { $set: { migDir: 'claude-gemini', direction: 'claude-gemini', customerName: cl2gFolder, startTime, status: 'running', dryRun: isDryRun, appUserId, googleEmail, totalUsers: pairs.length } },
             { upsert: true }
           );
 
@@ -237,7 +237,7 @@ export function createCL2GRouter({ db }) {
             const msg = `Upload files not found on disk (${uploadDoc.extractPath}). The server may have restarted and lost the uploaded ZIP. Please re-upload the ZIP file and try again.`;
             dbLog.error(`[CL2G] ${msg}`);
             cl2gLog('error', msg);
-            await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: { status: 'failed', endTime: new Date(), error: msg } }).catch(() => {});
+            await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'claude-gemini', status: 'failed', endTime: new Date(), error: msg } }).catch(() => {});
             cl2gLog('done', JSON.stringify({ files: 0, errors: 1, users: 0, batchId }));
             return;
           }
@@ -288,15 +288,15 @@ export function createCL2GRouter({ db }) {
           const finalStatus = errors > 0 && files === 0 ? 'failed' : 'completed';
           // Isolate the final DB write — a failure here must not hide the real file count
           try {
-            await db().collection('reportsWorkspace').updateOne(
+            await db().collection('migrationWorkspaces').updateOne(
               { _id: batchId },
-              { $set: { status: finalStatus, endTime: new Date(), migratedConversations: files, migratedUsers: reportUsers.filter(u => u.status !== 'failed').length, failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors, report: { summary: { total_users: pairs.length, total_pages_created: files, total_errors: errors }, users: reportUsers } } }
+              { $set: { migDir: 'claude-gemini', status: finalStatus, endTime: new Date(), migratedConversations: files, migratedUsers: reportUsers.filter(u => u.status !== 'failed').length, failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors, report: { summary: { total_users: pairs.length, total_pages_created: files, total_errors: errors }, users: reportUsers } } }
             );
           } catch (dbErr) {
             dbLog.error(`[CL2G] Final report DB write failed: ${dbErr.message}. Retrying...`);
-            await db().collection('reportsWorkspace').updateOne(
+            await db().collection('migrationWorkspaces').updateOne(
               { _id: batchId },
-              { $set: { status: finalStatus, endTime: new Date(), migratedConversations: files, migratedUsers: reportUsers.filter(u => u.status !== 'failed').length, failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors, report: { summary: { total_users: pairs.length, total_pages_created: files, total_errors: errors }, users: reportUsers } } }
+              { $set: { migDir: 'claude-gemini', status: finalStatus, endTime: new Date(), migratedConversations: files, migratedUsers: reportUsers.filter(u => u.status !== 'failed').length, failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors, report: { summary: { total_users: pairs.length, total_pages_created: files, total_errors: errors }, users: reportUsers } } }
             ).catch(e2 => dbLog.error(`[CL2G] Retry also failed: ${e2.message}`));
           }
           cl2gLog('done', JSON.stringify({ files, errors, users: pairs.length, batchId }));
@@ -306,9 +306,9 @@ export function createCL2GRouter({ db }) {
           dbLog.error(`[CL2G] Unhandled error after ${files} file(s) uploaded: ${e.message}`);
           cl2gLog('error', e.message || String(e));
           // Use actual files/errors counts so UI shows correct numbers even on error
-          await db().collection('reportsWorkspace').updateOne(
+          await db().collection('migrationWorkspaces').updateOne(
             { _id: batchId },
-            { $set: { status: files > 0 ? 'completed' : 'failed', endTime: new Date(), migratedConversations: files, totalErrors: errors + 1, error: e.message } }
+            { $set: { migDir: 'claude-gemini', status: files > 0 ? 'completed' : 'failed', endTime: new Date(), migratedConversations: files, totalErrors: errors + 1, error: e.message } }
           ).catch(() => {});
           cl2gLog('done', JSON.stringify({ files, errors: errors + 1, users: pairs.length, batchId }));
         }

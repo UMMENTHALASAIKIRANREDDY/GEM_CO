@@ -1,5 +1,13 @@
 import 'dotenv/config';
 import express from 'express';
+
+// Prevent unhandled rejections from crashing the server
+process.on('unhandledRejection', (reason) => {
+  console.error('[server] Unhandled promise rejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[server] Uncaught exception:', err.message, err.stack);
+});
 import path from 'path';
 import { fileURLToPath } from 'url';
 import session from 'express-session';
@@ -282,22 +290,109 @@ app.post('/api/auth/ms/disconnect', requireAuth, (req, res) => {
 
 // ─── Shared API routes ────────────────────────────────────────────────────────
 
-// Workspace state
-app.get('/api/workspace', async (req, res) => {
-  const { appUserId: userId, googleEmail, msEmail } = getWorkspaceContext(req);
-  const doc = await db().collection('userWorkspace').findOne({ userId, googleEmail, msEmail });
-  res.json(doc || null);
+// User config — tenantId, customerName (permanent per user, updatable)
+app.get('/api/config', requireAuth, async (req, res) => {
+  try {
+    const { appUserId } = getWorkspaceContext(req);
+    const cfg = await db().collection('userConfig').findOne({ appUserId });
+    res.json(cfg || { tenantId: null, customerName: 'Gemini' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.put('/api/workspace', async (req, res) => {
-  const { appUserId: userId, googleEmail, msEmail } = getWorkspaceContext(req);
-  const { step, uploadData, config, mappings, selectedUsers, options, migDone, stats, currentBatchId, lastRunWasDry } = req.body;
-  await db().collection('userWorkspace').updateOne(
-    { userId, googleEmail, msEmail },
-    { $set: { userId, googleEmail, msEmail, step, uploadData, config, mappings, selectedUsers, options, migDone, stats, currentBatchId, lastRunWasDry, updatedAt: new Date() } },
-    { upsert: true }
-  );
-  res.json({ ok: true });
+app.put('/api/config', requireAuth, async (req, res) => {
+  try {
+    const { appUserId } = getWorkspaceContext(req);
+    const { tenantId, customerName } = req.body;
+    if (tenantId !== undefined && typeof tenantId !== 'string') {
+      return res.status(400).json({ error: 'tenantId must be a string' });
+    }
+    if (customerName !== undefined && typeof customerName !== 'string') {
+      return res.status(400).json({ error: 'customerName must be a string' });
+    }
+    await db().collection('userConfig').updateOne(
+      { appUserId },
+      { $set: { tenantId, customerName, updatedAt: new Date() } },
+      { upsert: true }
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Migration workspace + job endpoints ─────────────────────────────────────
+
+// One-call state load on login — returns config, mappings, recent workspaces, recent uploads
+app.get('/api/init', requireAuth, async (req, res) => {
+  try {
+    const { appUserId } = getWorkspaceContext(req);
+    if (!appUserId) return res.status(401).json({ error: 'Session missing user id' });
+    const [config, mappings, recentWorkspaces, recentUploads, chatDoc] = await Promise.all([
+      db().collection('userConfig').findOne({ appUserId }),
+      db().collection('userMappings').find({ appUserId }).toArray(),
+      db().collection('migrationWorkspaces').find({ appUserId }).sort({ startTime: -1 }).limit(10).toArray(),
+      db().collection('uploads').find({ appUserId }).sort({ uploadTime: -1 }).limit(5).toArray(),
+      db().collection('chatHistory').findOne({ appUserId }),
+    ]);
+    res.json({ config, mappings, recentWorkspaces, recentUploads, chatMessages: chatDoc?.messages || [], uiState: chatDoc?.uiState || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Save chat messages + UI position for cross-device persistence
+app.post('/api/chat-history', requireAuth, async (req, res) => {
+  try {
+    const { appUserId } = getWorkspaceContext(req);
+    if (!appUserId) return res.status(401).json({ error: 'Not authenticated' });
+    const { messages, uiState } = req.body;
+    if (!Array.isArray(messages)) return res.status(400).json({ error: 'messages must be array' });
+    const update = { messages: messages.slice(-30), updatedAt: new Date() };
+    // uiState carries step, migDir, options — enough to restore left-panel position on any device
+    if (uiState && typeof uiState === 'object') update.uiState = uiState;
+    await db().collection('chatHistory').updateOne({ appUserId }, { $set: update }, { upsert: true });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// All migration runs for current user (all directions)
+app.get('/api/workspaces', requireAuth, async (req, res) => {
+  try {
+    const { appUserId } = getWorkspaceContext(req);
+    if (!appUserId) return res.status(401).json({ error: 'Session missing user id' });
+    const workspaces = await db().collection('migrationWorkspaces')
+      .find({ appUserId })
+      .sort({ startTime: -1 })
+      .limit(50)
+      .toArray();
+    res.json(workspaces);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Jobs for a specific workspace
+app.get('/api/jobs/:workspaceId', requireAuth, async (req, res) => {
+  try {
+    const { appUserId } = getWorkspaceContext(req);
+    if (!appUserId) return res.status(401).json({ error: 'Session missing user id' });
+    const jobs = await db().collection('migrationJobs')
+      .find({ workspaceId: req.params.workspaceId, appUserId })
+      .sort({ startTime: 1 })
+      .toArray();
+    res.json(jobs);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Retry a single failed job (marks it retried; actual re-run done by agent)
+app.post('/api/jobs/:jobId/retry', requireAuth, async (req, res) => {
+  try {
+    const { appUserId } = getWorkspaceContext(req);
+    if (!appUserId) return res.status(401).json({ error: 'Session missing user id' });
+    const job = await db().collection('migrationJobs')
+      .findOne({ jobId: req.params.jobId, appUserId });
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    if (job.status !== 'failed') return res.status(400).json({ error: 'Job is not failed' });
+    await db().collection('migrationJobs').updateOne(
+      { jobId: job.jobId },
+      { $set: { status: 'retried', retriedAt: new Date() } }
+    );
+    res.json({ ok: true, jobId: job.jobId });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Admin: manage app users
@@ -350,6 +445,23 @@ app.use('/api/cl2g', cl2gRouter);
 const cl2cRouter = createCL2CRouter({ db, isAuthenticated, getValidToken, getCurrentTenantId: () => currentTenantId });
 app.use('/api/cl2c', cl2cRouter);
 
+// ─── Index bootstrap ──────────────────────────────────────────────────────────
+
+async function ensureIndexes(database) {
+  const idx = (col, spec, opts = {}) =>
+    database.collection(col).createIndex(spec, { ...opts, background: true });
+
+  await Promise.all([
+    idx('migrationWorkspaces', { appUserId: 1, startTime: -1 }),
+    idx('migrationJobs',       { workspaceId: 1, appUserId: 1 }),
+    idx('migrationJobs',       { jobId: 1 }, { unique: true }),
+    idx('userMappings',        { appUserId: 1, migDir: 1 }, { unique: true }),
+    idx('uploads',             { appUserId: 1, uploadTime: -1 }),
+    idx('userConfig',          { appUserId: 1 }, { unique: true }),
+    idx('cachedUsers',         { appUserId: 1, role: 1, migDir: 1 }),
+  ]);
+}
+
 // ─── Startup ──────────────────────────────────────────────────────────────────
 
 connectMongo().then(async () => {
@@ -359,6 +471,12 @@ connectMongo().then(async () => {
     await connectDB();
   } catch (e) {
     console.warn('[cogem] Copilot DB connect failed (non-fatal):', e.message);
+  }
+
+  try {
+    await ensureIndexes(db());
+  } catch (e) {
+    console.warn('[startup] Index creation failed:', e.message);
   }
 
   await restoreGoogleSessions();

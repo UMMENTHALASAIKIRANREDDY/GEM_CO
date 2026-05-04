@@ -3,6 +3,7 @@
  * All route paths preserved exactly as they were in server.js.
  */
 
+import { randomUUID } from 'crypto';
 import express from 'express';
 import multer from 'multer';
 import fs from 'fs';
@@ -25,6 +26,7 @@ import { ReportWriter } from './reportWriter.js';
 import { CheckpointManager } from '../../utils/checkpoint.js';
 import { AgentDeployer } from '../../agent/agentDeployer.js';
 import { getLogger } from '../../utils/logger.js';
+import { runAgentLoop } from '../../agent/agentLoop.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Root of the project (3 levels up from src/modules/g2c/)
@@ -34,105 +36,57 @@ const dbLog = getLogger('db:ops');
 
 // ─── Agent Chat constants ─────────────────────────────────────────────────────
 
-const AGENT_TOOLS = [
-  {
-    type: 'function',
-    function: {
-      name: 'show_reports',
-      description: 'Open the migration reports panel',
-      parameters: { type: 'object', properties: {}, required: [] }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'show_mapping',
-      description: 'Open the user mapping grid in the left panel so user can review/edit Google-to-M365 email mappings',
-      parameters: { type: 'object', properties: {}, required: [] }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'get_migration_status',
-      description: 'Get current migration progress, stats, and state details',
-      parameters: { type: 'object', properties: {}, required: [] }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'explain_log',
-      description: 'Explain what a migration log line means and suggest action',
-      parameters: {
-        type: 'object',
-        properties: { log_line: { type: 'string', description: 'The exact log message text' } },
-        required: ['log_line']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'show_status_card',
-      description: 'Display a visual status card with migration stats. Use when summarizing migration results or answering questions about counts.',
-      parameters: {
-        type: 'object',
-        properties: {
-          users:  { type: 'number', description: 'Users processed' },
-          files:  { type: 'number', description: 'Files/pages migrated' },
-          errors: { type: 'number', description: 'Error count' },
-          label:  { type: 'string', description: 'Card title, e.g. "Migration Results"' }
-        },
-        required: ['users', 'files', 'errors']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'show_post_migration_guide',
-      description: 'Show post-migration setup instructions. Call when user asks "what do I do next?", "how do I set up the Gem?", "where is my Copilot agent?", or clicks "What do I do next?"',
-      parameters: { type: 'object', properties: {}, required: [] }
-    }
+export function generateSuggestedChips({ step=0, migDir, googleAuthed, msAuthed, live, migDone,
+  lastRunWasDry, uploadData, mappings_count, c2g_mappings_count, cl2g_mappings_count,
+  c2g_done, cl2g_done, c2g_live, cl2g_live }) {
+  const isRunning = live || c2g_live || cl2g_live;
+  const isDone = migDone || c2g_done || cl2g_done;
+  const effectiveMappings = migDir === 'copilot-gemini' ? c2g_mappings_count
+    : migDir === 'claude-gemini' ? cl2g_mappings_count : mappings_count;
+
+  // Step 0: Connect Clouds
+  if (step === 0 || !migDir) {
+    if (!googleAuthed && !msAuthed) return ['Connect Google', 'Connect Microsoft 365', 'What do I need?'];
+    if (!googleAuthed) return ['Connect Google Workspace', 'What do I need?'];
+    if (!msAuthed) return ['Connect Microsoft 365', 'Skip — do Claude→Gemini'];
+    return ['Choose direction', "What's the difference?"];
   }
-];
+  // Step 1: Direction
+  if (step === 1) {
+    const opts = ['Claude → Gemini'];
+    if (googleAuthed && msAuthed) opts.unshift('Gemini → Copilot', 'Copilot → Gemini');
+    opts.push("What's the difference?");
+    return opts;
+  }
+  // Step 2: Upload / Map (depends on direction)
+  if (step === 2) {
+    if (migDir === 'gemini-copilot') return ['How do I export from Google?', "What's in the ZIP?", 'Select users instead'];
+    if (migDir === 'claude-gemini') return ['How do I export from Claude?', "What's in the ZIP?"];
+    if (migDir === 'copilot-gemini') return effectiveMappings > 0
+      ? ['Auto-map users', 'What is auto-map?', 'How mapping works']
+      : ['Auto-map users', 'What is auto-map?'];
+  }
+  // Step 3: Map Users (G2C / CL2G)
+  if (step === 3 && migDir !== 'copilot-gemini') {
+    if (effectiveMappings === 0) return ['Auto-map users', 'What is auto-map?', 'Skip unmapped users'];
+    return ['Auto-map users', 'All looks good', 'How many are mapped?'];
+  }
+  // Step 3 C2G / Step 4 G2C+CL2G: Options
+  if ((step === 3 && migDir === 'copilot-gemini') || step === 4) {
+    if (isRunning) return ['Check status', 'How long will this take?'];
+    return ['Start Dry Run', 'What is a dry run?', 'Go straight to live', 'Change folder name'];
+  }
+  // Running
+  if (isRunning) return ['Check status', 'How long will this take?', 'Any errors so far?'];
+  // Done
+  if (isDone && lastRunWasDry) return ['Go Live now', 'Show me the report', 'What changed?'];
+  if (isDone) return ['What do I do next?', 'Download report', 'Start Another'];
+  // Step 5+ means migration panel even if migDone not set (e.g. errors stopped it)
+  if (step >= 5) return ['Check status', 'Retry failed', 'Show me the report'];
+  return ['Check status'];
+}
 
 const STEP_NAMES = ['Connect Clouds', 'Import Data', 'Map Users', 'Options', 'Migration in Progress', 'Migration Complete'];
-
-async function callAI(messages, tools) {
-  const azureEndpoint = process.env.AZURE_OPENAI_ENDPOINT;
-  const azureKey = process.env.AZURE_OPENAI_API_KEY;
-  const azureDeployment = process.env.AZURE_OPENAI_DEPLOYMENT || 'gpt-4o';
-  const openaiKey = process.env.OPENAI_API_KEY;
-
-  if (azureEndpoint && azureKey) {
-    const url = `${azureEndpoint.replace(/\/$/, '')}/openai/deployments/${azureDeployment}/chat/completions?api-version=2024-02-15-preview`;
-    const body = { messages, max_tokens: 900, temperature: 0.4 };
-    if (tools) body.tools = tools;
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'api-key': azureKey },
-      body: JSON.stringify(body)
-    });
-    if (!r.ok) throw new Error(`Azure OpenAI error ${r.status}: ${await r.text()}`);
-    return await r.json();
-  }
-
-  if (openaiKey) {
-    const body = { model: 'gpt-4o', messages, max_tokens: 700, temperature: 0.35 };
-    if (tools) body.tools = tools;
-    const r = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
-      body: JSON.stringify(body)
-    });
-    if (!r.ok) throw new Error(`OpenAI error ${r.status}`);
-    return await r.json();
-  }
-
-  throw new Error('No AI provider configured. Set AZURE_OPENAI_API_KEY or OPENAI_API_KEY in .env');
-}
 
 // ─── Router factory ───────────────────────────────────────────────────────────
 
@@ -523,10 +477,11 @@ export function createG2CRouter(deps) {
 
   router.delete('/uploads/:id', async (req, res) => {
     const { id } = req.params;
-    const entry = await db().collection('uploads').findOne({ _id: id });
+    const { appUserId } = getWorkspaceContext(req);
+    const entry = await db().collection('uploads').findOne({ _id: id, appUserId });
     if (!entry) return res.status(404).json({ error: 'Upload not found' });
     try { fs.rmSync(entry.extractPath, { recursive: true, force: true }); } catch {}
-    await db().collection('uploads').deleteOne({ _id: id });
+    await db().collection('uploads').deleteOne({ _id: id, appUserId });
     dbLog.info(`uploads.delete — ${id}`);
     res.json({ ok: true });
   });
@@ -535,8 +490,13 @@ export function createG2CRouter(deps) {
   router.get('/reports', async (req, res) => {
     const { appUserId } = getWorkspaceContext(req);
     if (!appUserId) return res.json([]);
-    const reports = await db().collection('reportsWorkspace')
-      .find({ appUserId }, { projection: { report: 0 } })
+    // Build an OR that matches G2C/C2G (full workspace) + CL2G (google-only, no msEmail) + legacy (no googleEmail)
+    const orClauses = [];
+    if (googleEmail && msEmail) orClauses.push({ appUserId, googleEmail, msEmail });
+    if (googleEmail)            orClauses.push({ appUserId, googleEmail, msEmail: { $exists: false } });
+    orClauses.push({ appUserId, googleEmail: { $exists: false } });
+    const reports = await db().collection('migrationWorkspaces')
+      .find({ $or: orClauses }, { projection: { report: 0 } })
       .sort({ startTime: -1 }).toArray();
     res.json(reports);
   });
@@ -548,7 +508,7 @@ export function createG2CRouter(deps) {
       { $match: { status: 'completed', appUserId } },
       { $group: { _id: null, totalBatches: { $sum: 1 }, totalUsers: { $sum: '$totalUsers' }, totalPages: { $sum: '$migratedConversations' }, totalErrors: { $sum: { $ifNull: ['$report.summary.total_errors', 0] } }, liveBatches: { $sum: { $cond: [{ $ne: ['$dryRun', true] }, 1, 0] } }, dryRunBatches: { $sum: { $cond: [{ $eq: ['$dryRun', true] }, 1, 0] } } } }
     ];
-    const [agg] = await db().collection('reportsWorkspace').aggregate(pipeline).toArray();
+    const [agg] = await db().collection('migrationWorkspaces').aggregate(pipeline).toArray();
     const result = agg || { totalBatches: 0, totalUsers: 0, totalPages: 0, totalErrors: 0, liveBatches: 0, dryRunBatches: 0 };
     delete result._id;
     res.json(result);
@@ -557,16 +517,17 @@ export function createG2CRouter(deps) {
   router.get('/batches/migrated-users', async (req, res) => {
     const { uploadId } = req.query;
     if (!uploadId) return res.status(400).json({ error: 'uploadId required' });
-    const appUserId = req.session.appUser?._id || null;
-    const batches = await db().collection('reportsWorkspace')
-      .find({ uploadId, appUserId, status: 'completed', dryRun: { $ne: true } }, { projection: { 'report.users.email': 1 } }).toArray();
+    const appUserId = req.session.appUser?._id?.toString() || null;
+    const batches = await db().collection('migrationWorkspaces')
+      .find({ uploadId, appUserId, migDir: 'gemini-copilot', status: 'completed', dryRun: { $ne: true } }, { projection: { 'report.users.email': 1 } }).toArray();
     const migrated = new Set();
     batches.forEach(b => (b.report?.users || []).forEach(u => migrated.add(u.email)));
     res.json({ migrated_users: [...migrated] });
   });
 
   router.get('/reports/:id/csv', async (req, res) => {
-    const doc = await db().collection('reportsWorkspace').findOne({ _id: req.params.id });
+    const { appUserId } = getWorkspaceContext(req);
+    const doc = await db().collection('migrationWorkspaces').findOne({ _id: req.params.id, appUserId });
     if (!doc) return res.status(404).json({ error: 'Batch not found' });
     const users = doc.report?.users || [];
     const isC2G = doc.direction === 'c2g';
@@ -588,7 +549,8 @@ export function createG2CRouter(deps) {
   });
 
   router.get('/reports/:id/errors', async (req, res) => {
-    const doc = await db().collection('reportsWorkspace').findOne({ _id: req.params.id });
+    const { appUserId } = getWorkspaceContext(req);
+    const doc = await db().collection('migrationWorkspaces').findOne({ _id: req.params.id, appUserId });
     if (!doc) return res.status(404).json({ error: 'Batch not found' });
     const errors = [];
     for (const u of doc.report?.users || []) {
@@ -601,13 +563,14 @@ export function createG2CRouter(deps) {
 
   router.get('/reports/:id', async (req, res) => {
     const { id } = req.params;
+    const { appUserId } = getWorkspaceContext(req);
     if (id === 'migration') {
-      const latest = await db().collection('reportsWorkspace').findOne({}, { sort: { startTime: -1 } });
+      const latest = await db().collection('migrationWorkspaces').findOne({ appUserId }, { sort: { startTime: -1 } });
       if (!latest) return res.status(404).json({ error: 'No report yet' });
       const payload = latest.report || {};
       return res.json({ ...payload, customerName: latest.customerName, tenantId: latest.tenantId, batchId: latest._id });
     }
-    const doc = await db().collection('reportsWorkspace').findOne({ _id: id });
+    const doc = await db().collection('migrationWorkspaces').findOne({ _id: id, appUserId });
     if (!doc) return res.status(404).json({ error: 'Batch report not found' });
     if (req.query.download === 'true') res.setHeader('Content-Disposition', `attachment; filename="migration_report_${id}.json"`);
     res.setHeader('Content-Type', 'application/json');
@@ -623,19 +586,19 @@ export function createG2CRouter(deps) {
   router.get('/user-mappings/latest', async (req, res) => {
     const wsFilter = getWorkspaceFilter(req);
     if (!wsFilter) return res.json(null);
-    const doc = await db().collection('userMappings').findOne({ batchId: 'latest', ...wsFilter });
+    const doc = await db().collection('userMappings').findOne({ migDir: 'gemini-copilot', batchId: 'latest', ...wsFilter });
     res.json(doc || null);
   });
 
   router.post('/user-mappings', async (req, res) => {
     const { customerName, mappings, selectedUsers, csvEmails } = req.body;
-    const { googleEmail, msEmail } = getWorkspaceContext(req);
+    const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
     await db().collection('userMappings').updateOne(
-      { batchId: 'latest', googleEmail, msEmail },
-      { $set: { customerName, mappings, selectedUsers, csvEmails: csvEmails ?? null, googleEmail, msEmail, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+      { appUserId, migDir: 'gemini-copilot', batchId: 'latest' },
+      { $set: { customerName, mappings, selectedUsers, csvEmails: csvEmails ?? null, appUserId, migDir: 'gemini-copilot', googleEmail, msEmail, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
       { upsert: true }
     );
-    dbLog.info(`userMappings.upsert — ${Object.keys(mappings || {}).length} mappings, ${(selectedUsers || []).length} selected`);
+    dbLog.info(`userMappings.upsert — G2C ${Object.keys(mappings || {}).length} mappings, ${(selectedUsers || []).length} selected`);
     res.json({ ok: true });
   });
 
@@ -664,31 +627,49 @@ export function createG2CRouter(deps) {
       return res.status(401).json({ error: 'Admin not signed in. Click "Sign in with Microsoft" first.' });
     }
 
-    const batch_id = Date.now().toString();
+    const batch_id = randomUUID();
     res.json({ started: true, batch_id });
-    runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id, upload_id, appUserId, googleEmail, msEmail });
+    runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id, upload_id, appUserId, googleEmail, msEmail }).catch(e => {
+      console.error('[G2C] runMigration unhandled error:', e.message);
+    });
   });
 
   async function runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id, upload_id, appUserId, googleEmail, msEmail }) {
     logBuffers.set(appUserId, []);
-    const batchId = batch_id || Date.now().toString();
+    const batchId = batch_id || randomUUID();
     currentBatchId = batchId;
     _currentAppUserId = appUserId;
     const startTime = new Date();
 
+    try {
     await db().collection('userMappings').updateOne(
-      { batchId },
-      { $set: { customerName: customer_name, mappings: user_mappings, createdAt: startTime, appUserId, googleEmail, msEmail } },
+      { appUserId, migDir: 'gemini-copilot' },
+      { $set: { customerName: customer_name, mappings: user_mappings, migDir: 'gemini-copilot', batchId, updatedAt: startTime, appUserId, googleEmail, msEmail }, $setOnInsert: { createdAt: startTime } },
       { upsert: true }
     );
-    dbLog.info(`userMappings.upsert — batch ${batchId} (${Object.keys(user_mappings).length} mappings)`);
+    dbLog.info(`userMappings.upsert — G2C batch ${batchId} (${Object.keys(user_mappings).length} mappings)`);
 
-    await db().collection('reportsWorkspace').updateOne(
+    await db().collection('migrationWorkspaces').updateOne(
       { _id: batchId },
-      { $set: { customerName: customer_name, tenantId: tenant_id, startTime, status: 'running', dryRun: dry_run, uploadId: upload_id, appUserId, googleEmail, msEmail } },
+      { $set: { migDir: 'gemini-copilot', customerName: customer_name, tenantId: tenant_id, startTime, status: 'running', dryRun: dry_run, uploadId: upload_id, appUserId, googleEmail, msEmail } },
       { upsert: true }
     );
-    dbLog.info(`reportsWorkspace.insert — batch ${batchId} status=running`);
+    dbLog.info(`migrationWorkspaces.insert — batch ${batchId} status=running`);
+
+    const jobIds = {};
+    if (!dry_run && Object.keys(user_mappings).length > 0) {
+      await Promise.all(Object.entries(user_mappings).map(async ([sourceEmail, destEmail]) => {
+        const jobId = randomUUID();
+        try {
+          await db().collection('migrationJobs').insertOne({
+            jobId, workspaceId: batchId, appUserId, migDir: 'gemini-copilot',
+            sourceEmail, destEmail, status: 'pending', pages: 0, errors: [],
+            startTime: null, endTime: null,
+          });
+          jobIds[sourceEmail] = jobId;
+        } catch (e) { dbLog.warn(`migrationJobs.insert failed for ${sourceEmail}: ${e.message}`); }
+      }));
+    }
 
     await new Promise(r => setTimeout(r, 200));
     emit('info', '━━━ Migration started ━━━');
@@ -709,9 +690,9 @@ export function createG2CRouter(deps) {
           emit('user', `${u.email} → ${m365Email} (${u.conversationCount} conversations)`);
         }
         const total = users.reduce((s, u) => s + u.conversationCount, 0);
-        await db().collection('reportsWorkspace').updateOne(
+        await db().collection('migrationWorkspaces').updateOne(
           { _id: batchId },
-          { $set: { status: 'completed', endTime: new Date(), dryRun: true, totalUsers: users.length, totalConversations: total, migratedUsers: 0, migratedConversations: 0, failedUsers: 0, report: { summary: { total_users: users.length, total_conversations: total, total_pages_created: 0, total_errors: 0 } } } }
+          { $set: { migDir: 'gemini-copilot', status: 'completed', endTime: new Date(), dryRun: true, totalUsers: users.length, totalConversations: total, migratedUsers: 0, migratedConversations: 0, failedUsers: 0, report: { summary: { total_users: users.length, total_conversations: total, total_pages_created: 0, total_errors: 0 } } } }
         );
         emit('done', `DRY RUN complete — ${users.length} users, ${total} conversations. No API calls made.`, { batch_id: batchId });
         currentBatchId = null;
@@ -741,6 +722,12 @@ export function createG2CRouter(deps) {
         const m365Email = user_mappings[gEmail] || gEmail;
 
         emit('info', `Processing: ${gEmail} → ${m365Email}`);
+        if (jobIds[gEmail]) {
+          await db().collection('migrationJobs').updateOne(
+            { jobId: jobIds[gEmail] },
+            { $set: { status: 'running', startTime: new Date() } }
+          ).catch(() => {});
+        }
         let conversations = null;
         const errors = [];
         let pagesCreated = 0;
@@ -843,10 +830,21 @@ export function createG2CRouter(deps) {
           progressUsers++;
           progressPages += pagesCreated;
           conversations = null;
-          db().collection('reportsWorkspace').updateOne(
+          db().collection('migrationWorkspaces').updateOne(
             { _id: batchId },
             { $set: { progressUsers, progressPages, progressErrors, totalUsers: users.length } }
           ).catch(() => {});
+          if (jobIds[gEmail]) {
+            await db().collection('migrationJobs').updateOne(
+              { jobId: jobIds[gEmail] },
+              { $set: {
+                status: errors.length > 0 ? 'failed' : 'done',
+                pages: pagesCreated,
+                errors: errors.map(e => ({ page: e.conversation || '', message: e.error || '' })),
+                endTime: new Date(),
+              } }
+            ).catch(() => {});
+          }
         }
       });
 
@@ -888,15 +886,23 @@ export function createG2CRouter(deps) {
         }
       }
 
-      await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: reportUpdate });
-      dbLog.info(`reportsWorkspace.update — batch ${batchId} status=completed (${reportUpdate.migratedConversations} pages, ${reportUpdate.totalUsers} users)`);
+      await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'gemini-copilot', ...reportUpdate } });
+      dbLog.info(`migrationWorkspaces.update — batch ${batchId} status=completed (${reportUpdate.migratedConversations} pages, ${reportUpdate.totalUsers} users)`);
       emit('done', `━━━ Migration complete! Reports saved. ━━━`, { batch_id: batchId });
       currentBatchId = null;
       _currentAppUserId = null;
     } catch (err) {
+      console.error('[G2C] Migration failed:', err.message, err.stack);
       emit('error', `Migration failed: ${err.message}`);
-      await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: { status: 'failed', endTime: new Date(), error: err.message } }).catch(() => {});
-      dbLog.info(`reportsWorkspace.update — batch ${batchId} status=failed`);
+      await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'gemini-copilot', status: 'failed', endTime: new Date(), error: err.message } }).catch(() => {});
+      dbLog.info(`migrationWorkspaces.update — batch ${batchId} status=failed`);
+      currentBatchId = null;
+      _currentAppUserId = null;
+    }
+    } catch (outerErr) {
+      console.error('[G2C] Migration setup failed:', outerErr.message, outerErr.stack);
+      emit('error', `Migration setup failed: ${outerErr.message}`);
+      await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'gemini-copilot', status: 'failed', endTime: new Date(), error: outerErr.message } }).catch(() => {});
       currentBatchId = null;
       _currentAppUserId = null;
     }
@@ -909,11 +915,11 @@ export function createG2CRouter(deps) {
     const { appUserId } = getWorkspaceContext(req);
     if (!isAuthenticated(appUserId)) return res.status(401).json({ error: 'Not signed in. Click "Sign in with Microsoft" first.' });
 
-    const batchDoc = await db().collection('reportsWorkspace').findOne({ _id: batchId });
+    const batchDoc = await db().collection('migrationWorkspaces').findOne({ _id: batchId, appUserId });
     if (!batchDoc) return res.status(404).json({ error: 'Batch not found' });
 
-    const mappingDoc = await db().collection('userMappings').findOne({ batchId });
-    const uploadDoc = await db().collection('uploads').findOne({}, { sort: { uploadTime: -1 } });
+    const mappingDoc = await db().collection('userMappings').findOne({ appUserId, migDir: 'gemini-copilot' });
+    const uploadDoc = await db().collection('uploads').findOne({ appUserId }, { sort: { uploadTime: -1 } });
 
     const retryTargets = {};
     for (const u of batchDoc.report?.users || []) {
@@ -923,17 +929,27 @@ export function createG2CRouter(deps) {
     if (Object.keys(retryTargets).length === 0) return res.json({ started: false, message: 'No failed conversations to retry' });
 
     const effectiveCustomerName = customer_name || batchDoc.customerName;
-    const retryBatchId = `${batchId}_retry_${Date.now()}`;
+    const retryBatchId = `${batchId}_retry_${randomUUID()}`;
     res.json({ started: true, batch_id: retryBatchId, targets: retryTargets });
 
-    runRetry({ batchId, retryBatchId, extractPath: uploadDoc?.extractPath, tenantId: batchDoc.tenantId, customerName: effectiveCustomerName, userMappings: mappingDoc?.mappings || {}, retryTargets, appUserId });
+    const failedEmails = Object.keys(retryTargets);
+    if (failedEmails.length > 0) {
+      await db().collection('migrationJobs').updateMany(
+        { workspaceId: batchId, sourceEmail: { $in: failedEmails } },
+        { $set: { status: 'retried', retriedAt: new Date() } }
+      ).catch(() => {});
+    }
+
+    runRetry({ batchId, retryBatchId, extractPath: uploadDoc?.extractPath, tenantId: batchDoc.tenantId, customerName: effectiveCustomerName, userMappings: mappingDoc?.mappings || {}, retryTargets, appUserId }).catch(e => {
+      console.error('[G2C] runRetry unhandled error:', e.message);
+    });
   });
 
   async function runRetry({ batchId, retryBatchId, extractPath, tenantId, customerName, userMappings, retryTargets, appUserId }) {
     logBuffers.set(appUserId, []);
     currentBatchId = retryBatchId;
     _currentAppUserId = appUserId;
-
+    try {
     const totalFailed = Object.values(retryTargets).flat().length;
     emit('info', `━━━ Retrying ${totalFailed} failed conversation(s) ━━━`);
 
@@ -974,144 +990,84 @@ export function createG2CRouter(deps) {
     }
 
     const retryReport = report.getReport();
-    await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: { 'report.retry': retryReport, retryAt: new Date() } }).catch(() => {});
+    await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { 'report.retry': retryReport, retryAt: new Date() } }).catch(() => {});
 
     const retried = retryReport.summary.total_pages_created;
     const stillFailing = retryReport.summary.total_errors;
     emit('done', `━━━ Retry complete — ${retried} recovered, ${stillFailing} still failing ━━━`, { batch_id: retryBatchId });
     currentBatchId = null;
     _currentAppUserId = null;
+    } catch (retryErr) {
+      emit('error', `Retry failed: ${retryErr.message}`);
+      currentBatchId = null;
+      _currentAppUserId = null;
+    }
   }
 
   // Agent Chat
-  router.post('/chat', (req, res, next) => { if (!req.session?.appUser) return res.status(401).json({ error: 'Not logged in' }); next(); }, async (req, res) => {
-    const { message, history = [], migrationState = {}, migrationLogs = [] } = req.body;
+  router.post('/chat', (req, res, next) => {
+    if (!req.session?.appUser) return res.status(401).json({ error: 'Not logged in' });
+    next();
+  }, async (req, res) => {
+    const { message, migrationState = {}, migrationLogs = [], isSystemTrigger = false } = req.body;
     if (!message) return res.status(400).json({ error: 'message required' });
 
-    const {
-      step = 0, migDir = null, live = false, migDone = false, stats = {}, lastRunWasDry = false,
-      agentMode = 'guide', uploadData = null, googleAuthed = false, msAuthed = false,
-      mappings_count = 0, selected_users_count = 0, options = {}
-    } = migrationState;
-
-    const logsSection = migrationLogs.length > 0
-      ? `\nRecent migration log (${migrationLogs.length} entries):\n${migrationLogs.join('\n')}\n`
-      : '';
-
-    const dirLabel = migDir === 'gemini-copilot' ? 'Google Gemini → Microsoft Copilot'
-      : migDir === 'copilot-gemini' ? 'Microsoft Copilot → Google Drive'
-      : migDir === 'claude-gemini' ? 'Claude → Google Gemini'
-      : 'not selected';
-
-    const modeContext = agentMode === 'running'
-      ? 'Migration is currently running. Answer questions about progress from the logs above. Do not suggest navigating anywhere or starting/stopping anything.'
-      : agentMode === 'done'
-      ? 'Migration is complete. If the user asks what to do next or how to set up Gemini Gems or find the Copilot agent, call show_post_migration_guide.'
-      : 'Guide the user through their current step. Answer questions clearly and concisely.';
-
-    const systemPrompt = `You are the CloudFuze Migration Agent — a helpful, knowledgeable guide for migrating conversations between Google Workspace and Microsoft 365.
-
-Current state:
-- Agent mode: ${agentMode} — ${modeContext}
-- Direction: ${dirLabel}
-- Step: ${step} — ${STEP_NAMES[step] || 'Unknown'}
-- Google Workspace connected: ${googleAuthed}
-- Microsoft 365 connected: ${msAuthed}
-- Vault data loaded: ${uploadData ? `yes (${uploadData.total_users} users, ${uploadData.total_conversations || '?'} conversations)` : 'no'}
-- User mappings configured: ${mappings_count} (${selected_users_count} selected)
-- Dry run mode: ${options.dryRun ? 'yes' : 'no'}
-- Migration running: ${live}
-- Migration done: ${migDone}
-- Last run: ${lastRunWasDry ? 'dry run' : 'live'}
-- Stats: ${stats.users || 0} users · ${stats.pages || 0} pages/files migrated · ${stats.errors || 0} errors
-${logsSection}
-Answer from the actual data above. Cite real numbers when relevant.
-
-Formatting: markdown — **bold** for key values, bullet lists for steps, ## headers only for long answers. Match length to need.
-
-Personality: direct, warm, expert. Like a senior engineer helping a colleague.
-
-You CAN take actions via tools: show_reports, show_mapping, show_status_card, show_post_migration_guide, get_migration_status, explain_log.
-Never suggest navigating to a step, starting a migration, or retrying — the user controls those buttons.`;
-
-    const messages = [
-      { role: 'system', content: systemPrompt },
-      ...history.slice(-12),
-      { role: 'user', content: message }
-    ];
-
-    try {
-      let response = await callAI(messages, AGENT_TOOLS);
-      let choice = response.choices?.[0];
-      let actionToExecute = null;
-      let statusCardData = null;
-      let postMigrationMigDir = null;
-
-      if (choice?.finish_reason === 'tool_calls' && choice.message?.tool_calls) {
-        const toolResults = [];
-        for (const tc of choice.message.tool_calls) {
-          let result = '';
-          try {
-            const args = JSON.parse(tc.function.arguments || '{}');
-            switch (tc.function.name) {
-              case 'show_reports': {
-                actionToExecute = 'show_reports';
-                result = JSON.stringify({ execute: 'show_reports' });
-                break;
-              }
-              case 'show_mapping': {
-                actionToExecute = 'show_mapping';
-                result = JSON.stringify({ execute: 'show_mapping' });
-                break;
-              }
-              case 'show_post_migration_guide': {
-                actionToExecute = 'show_post_migration_guide';
-                postMigrationMigDir = migDir;
-                result = JSON.stringify({ execute: 'show_post_migration_guide', migDir });
-                break;
-              }
-              case 'get_migration_status': {
-                const logSummary = migrationLogs.length > 0 ? ` Recent logs: ${migrationLogs.slice(-20).join(' | ')}` : '';
-                result = `Step ${step} (${STEP_NAMES[step]}). Direction: ${migDir||'none'}. Running: ${live}. Done: ${migDone}. Users: ${stats.users || 0}, Pages/Files: ${stats.pages || 0}, Errors: ${stats.errors || 0}.${logSummary}`;
-                break;
-              }
-              case 'explain_log': {
-                const line = args.log_line || '';
-                const isErr = /error|fail|exception/i.test(line);
-                const isWarn = /warn|skip|flag/i.test(line);
-                const isSuc = /success|created|complete/i.test(line);
-                result = isErr ? `This is an error: the migration engine encountered a problem. Retry failed items after migration completes.`
-                  : isWarn ? `This is a warning: something was skipped or needs attention but migration continued.`
-                  : isSuc ? `This is a success message: the item was migrated successfully.`
-                  : `This is an informational log from the migration engine showing normal progress.`;
-                break;
-              }
-              case 'show_status_card': {
-                statusCardData = { users: args.users || 0, files: args.files || 0, errors: args.errors || 0, label: args.label || 'Migration Results' };
-                result = `Status card shown: ${args.users||0} users, ${args.files||0} files, ${args.errors||0} errors.`;
-                break;
-              }
-              default: result = 'Unknown tool.';
-            }
-          } catch (e) { result = 'Tool execution error.'; }
-          toolResults.push({ tool_call_id: tc.id, role: 'tool', content: result });
+    // Attach migration executors to session so toolExecutor can fire them
+    req.session._agentDeps = {
+      startMigration: async ({ dryRun, batchId, migDir: dir, appUserId: uid }) => {
+        // Validate preconditions only — UI handles the actual migration trigger and SSE connection
+        if (dir === 'gemini-copilot') {
+          const uploadDoc = await db().collection('uploads').findOne({ appUserId: uid }, { sort: { uploadTime: -1 } });
+          const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: 'gemini-copilot' });
+          if (!uploadDoc) return { error: 'No Gemini export uploaded. Upload your takeout ZIP first.' };
+          if (!mappingDoc || !Object.keys(mappingDoc.mappings || {}).length) return { error: 'No user mappings for Gemini→Copilot. Map users first.' };
+          return { validated: true, batchId, note: 'UI will start migration and connect to log stream' };
         }
-        const followUpMessages = [...messages, choice.message, ...toolResults];
-        response = await callAI(followUpMessages);
-        choice = response.choices?.[0];
-      }
+        if (dir === 'copilot-gemini') {
+          const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: 'copilot-gemini' });
+          if (!mappingDoc || !Object.keys(mappingDoc.mappings || {}).length) return { error: 'No user mappings for Copilot→Gemini. Map users first.' };
+          return { validated: true, batchId, note: 'UI will start migration and connect to log stream' };
+        }
+        if (dir === 'claude-gemini') {
+          const uploadDoc = await db().collection('cl2gUploads').findOne({ appUserId: uid }, { sort: { uploadTime: -1 } });
+          const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: 'claude-gemini' });
+          if (!uploadDoc) return { error: 'No Claude export ZIP uploaded. Upload your export first.' };
+          if (!mappingDoc || !Object.keys(mappingDoc.mappings || {}).length) return { error: 'No user mappings for Claude→Gemini. Map users first.' };
+          return { validated: true, batchId, note: 'UI will start migration and connect to log stream' };
+        }
+        return Promise.resolve({ validated: true, note: `${dir} migration will be started by UI` });
+      },
+      retryMigration: async ({ batchId: retryFromBatchId, appUserId: uid }) => {
+        const batchDoc = await db().collection('migrationWorkspaces').findOne({ _id: retryFromBatchId, appUserId: uid });
+        if (!batchDoc) return { error: 'Batch not found' };
+        const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: 'gemini-copilot' });
+        const uploadDoc = await db().collection('uploads').findOne({ appUserId: uid }, { sort: { uploadTime: -1 } });
+        const retryTargets = {};
+        for (const u of batchDoc.report?.users || []) {
+          if (u.errors?.length > 0) retryTargets[u.email] = u.errors.map(e => e.conversation);
+        }
+        if (Object.keys(retryTargets).length === 0) return { started: false, message: 'No failed items to retry' };
+        const retryBatchId = `${retryFromBatchId}_retry_${randomUUID()}`;
+        return runRetry({
+          batchId: retryFromBatchId,
+          retryBatchId,
+          extractPath: uploadDoc?.extractPath,
+          tenantId: batchDoc.tenantId,
+          customerName: batchDoc.customerName || 'Gemini',
+          userMappings: mappingDoc?.mappings || {},
+          retryTargets,
+          appUserId: uid,
+        });
+      },
+    };
 
-      const reply = choice?.message?.content || "I couldn't generate a response. Please try again.";
-      const payload = { reply, quickReplies: [] };
-      if (actionToExecute) payload.action = actionToExecute;
-      if (postMigrationMigDir) payload.migDir = postMigrationMigDir;
-      if (statusCardData) payload.statusCard = statusCardData;
-
-      res.json(payload);
-    } catch (err) {
-      console.error('[/api/chat]', err.message);
-      res.status(500).json({ error: err.message, reply: `I'm having trouble connecting right now. Please try again in a moment.` });
-    }
+    await runAgentLoop(req, res, {
+      message,
+      migrationState,
+      migrationLogs,
+      isSystemTrigger: isSystemTrigger || message === '__step_context__',
+      db: db(),
+    });
   });
 
   return router;
