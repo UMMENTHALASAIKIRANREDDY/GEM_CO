@@ -279,6 +279,7 @@ export async function runAgentLoop(req, res, { message, migrationState: _migrati
     logger.info(`[agentLoop] user=${appUserId} msg="${message?.slice(0, 80)}" step=${migrationState?.step} migDir=${migrationState?.migDir}`);
 
     let iterations = 0;
+    let toolCallsMade = 0;
     let finalReply = null;
 
     while (iterations++ < MAX_ITERATIONS) {
@@ -304,6 +305,7 @@ export async function runAgentLoop(req, res, { message, migrationState: _migrati
         let toolArgs = {};
         try { toolArgs = JSON.parse(call.function.arguments || '{}'); } catch (_) {}
 
+        toolCallsMade++;
         logger.info(`[agentLoop] iteration=${iterations} tool_call=${toolName}`);
         await auditLog(sessionId, 'tool_call', {
           appUserId,
@@ -329,6 +331,7 @@ export async function runAgentLoop(req, res, { message, migrationState: _migrati
           streamQuickReplies(['Yes, proceed', 'Cancel']);
           await saveHistory(db, appUserId, 'user', message, migrationState?.migDir);
           await saveHistory(db, appUserId, 'assistant', confirmText, migrationState?.migDir);
+          await auditLog(sessionId, 'session_end', { appUserId, finalReplyLength: confirmText.length, toolCallCount: toolCallsMade });
           return streamDone();
         }
 
@@ -376,7 +379,7 @@ export async function runAgentLoop(req, res, { message, migrationState: _migrati
     await auditLog(sessionId, 'session_end', {
       appUserId,
       finalReplyLength: finalReply?.length ?? 0,
-      toolCallCount: iterations - 1,
+      toolCallCount: toolCallsMade,
     });
 
   } catch (err) {
