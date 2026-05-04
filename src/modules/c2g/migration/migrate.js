@@ -515,25 +515,25 @@ async function buildAllConversationsDocx(sessions, userName, downloadedImages, u
           }
         } else if (att.type === "file") {
           const label = att.name || "Attached file";
-          const driveLink = uploadedFileLinks?.get(att.url);
-          const linkUrl = driveLink || att.url;
-          const prefix = driveLink ? "Google Drive" : "Original";
-          if (linkUrl) {
+          const driveEntry = uploadedFileLinks?.get(att.url);
+          const driveLink = driveEntry?.webViewLink || null;
+          if (driveLink) {
             children.push(new Paragraph({
               spacing: { after: 60 },
               indent: { left: 360 },
               children: [
-                new TextRun({ text: `[${prefix}] `, size: 18, bold: true, color: driveLink ? "38761D" : "888888" }),
+                new TextRun({ text: "📎 ", size: 20 }),
                 new ExternalHyperlink({
-                  link: linkUrl,
-                  children: [new TextRun({ text: label, style: "Hyperlink", size: 20, color: "0B5394", underline: {} })],
+                  link: driveLink,
+                  children: [new TextRun({ text: label, style: "Hyperlink", size: 20, color: "1155CC", underline: {} })],
                 }),
+                new TextRun({ text: "  (Google Drive)", size: 17, color: "16a34a", italics: true }),
               ],
             }));
           } else {
             children.push(new Paragraph({
               indent: { left: 360 },
-              children: [new TextRun({ text: `[Attachment] ${label}`, size: 18, color: "888888", italics: true })],
+              children: [new TextRun({ text: `📎 ${label}  (not available)`, size: 18, color: "888888", italics: true })],
             }));
           }
         }
@@ -776,21 +776,36 @@ export async function migrateUserPair({
     }
     console.log(`[C2G] Total: ${allFilesToUpload.length} attachment(s), ${allDownloadedImages.size} image(s)`);
 
-    // ── Step 2: Upload all attachment files to Drive (flat in folder) ─
-    const uploadedFileLinks = new Map();
-    for (const asset of allFilesToUpload) {
+    // ── Step 2: Create Attachments/ subfolder and upload files there ──
+    const uploadedFileLinks = new Map(); // originalUrl → { webViewLink, fileName }
+    if (allFilesToUpload.length > 0) {
+      let attachmentsFolder;
       try {
-        const uploaded = await uploadFileToDrive(auth, asset.name, asset.mime, asset.buffer, mainFolder.id);
-        result.filesUploaded++;
-        result.files.push({
-          name: asset.name,
-          title: `${asset.type === "image" ? "Image" : "File"}: ${asset.name}`,
-          driveFileId: uploaded.id,
-          webViewLink: uploaded.webViewLink,
-        });
-        if (asset.originalUrl) uploadedFileLinks.set(asset.originalUrl, uploaded.webViewLink);
-      } catch (uploadErr) {
-        result.errors.push(`Asset ${asset.name}: ${uploadErr.message}`);
+        attachmentsFolder = await createDriveFolder(auth, "Attachments", mainFolder.id);
+        console.log(`[C2G] Created Attachments/ subfolder (id=${attachmentsFolder.id})`);
+      } catch (err) {
+        result.errors.push(`Could not create Attachments folder: ${err.message}`);
+      }
+
+      if (attachmentsFolder) {
+        for (const asset of allFilesToUpload) {
+          try {
+            const uploaded = await uploadFileToDrive(auth, asset.name, asset.mime, asset.buffer, attachmentsFolder.id);
+            result.filesUploaded++;
+            result.files.push({
+              name: asset.name,
+              title: `${asset.type === "image" ? "Image" : "File"}: ${asset.name}`,
+              driveFileId: uploaded.id,
+              webViewLink: uploaded.webViewLink,
+            });
+            if (asset.originalUrl) {
+              uploadedFileLinks.set(asset.originalUrl, { webViewLink: uploaded.webViewLink, fileName: asset.name });
+            }
+            console.log(`[C2G] Uploaded attachment: ${asset.name} → Attachments/ (${uploaded.webViewLink})`);
+          } catch (uploadErr) {
+            result.errors.push(`Asset ${asset.name}: ${uploadErr.message}`);
+          }
+        }
       }
     }
 

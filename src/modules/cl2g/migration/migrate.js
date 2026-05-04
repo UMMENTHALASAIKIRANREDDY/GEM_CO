@@ -149,7 +149,8 @@ async function buildAllConversationsDocx(conversations, userName) {
     for (const msg of messages) {
       const isUser = msg.sender === 'human';
       const text = extractMessageText(msg);
-      if (!text) continue;
+      const hasAttachments = (msg.attachments || []).some(a => a.file_name);
+      if (!text && !hasAttachments) continue;
 
       const roleLabel = isUser ? 'Human' : 'Claude';
       const roleColor = isUser ? '0B5394' : 'C65C1A';
@@ -166,20 +167,44 @@ async function buildAllConversationsDocx(conversations, userName) {
       }));
 
       // Message body with left border
-      children.push(new Paragraph({
-        spacing: { after: 60 },
-        indent: { left: 320 },
-        border: { left: { style: BorderStyle.SINGLE, size: 4, color: roleColor, space: 8 } },
-        children: textRuns(text, { size: 21, font: 'Calibri', color: '2D2D2D' }),
-      }));
+      if (text) {
+        children.push(new Paragraph({
+          spacing: { after: 60 },
+          indent: { left: 320 },
+          border: { left: { style: BorderStyle.SINGLE, size: 4, color: roleColor, space: 8 } },
+          children: textRuns(text, { size: 21, font: 'Calibri', color: '2D2D2D' }),
+        }));
+      }
 
-      // Attachments
+      // Attachments — show filename + extracted text content (binary not available in Claude export)
       for (const att of msg.attachments || []) {
-        if (att.file_name) {
+        if (!att.file_name) continue;
+
+        // Filename header
+        children.push(new Paragraph({
+          indent: { left: 320 },
+          spacing: { before: 60, after: 20 },
+          children: [new TextRun({ text: `📎 ${att.file_name}`, size: 19, bold: true, color: '444444' })],
+        }));
+
+        // Extracted text content (if available)
+        if (att.extracted_content?.trim()) {
+          const preview = att.extracted_content.trim();
           children.push(new Paragraph({
-            indent: { left: 320 },
-            spacing: { after: 40 },
-            children: [new TextRun({ text: `Attachment: ${att.file_name}`, size: 18, color: '888888', italics: true })],
+            indent: { left: 360 },
+            spacing: { after: 60 },
+            border: {
+              left: { style: BorderStyle.SINGLE, size: 3, color: 'D1D5DB', space: 6 },
+              top: { style: BorderStyle.SINGLE, size: 1, color: 'E5E7EB', space: 2 },
+              bottom: { style: BorderStyle.SINGLE, size: 1, color: 'E5E7EB', space: 2 },
+            },
+            children: textRuns(preview, { size: 18, font: 'Calibri', color: '555555', italics: true }),
+          }));
+        } else {
+          children.push(new Paragraph({
+            indent: { left: 360 },
+            spacing: { after: 60 },
+            children: [new TextRun({ text: '(file content not available in export)', size: 17, color: 'AAAAAA', italics: true })],
           }));
         }
       }
