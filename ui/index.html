@@ -2422,20 +2422,20 @@ function App(){
   // Read stored userId synchronously so state initializers use the right scoped keys
   const [step,setStep]=useState(()=>lsGet(LS_PREFS,{}).step||0);
   const [uploadData,setUploadData]=useState(()=>{const c=lsGet(LS_UPLOAD,null);return c?.uploadId?c:null});
-  const [config,setConfig]=useState({filePath:'GeminiChats',tenantId:'807d6772-847c-40e2-9bec-e2c930b3a42e'});
+  const [config,setConfig]=useState(()=>({filePath:'GeminiChats',tenantId:'807d6772-847c-40e2-9bec-e2c930b3a42e',...(lsGet(LS_PREFS,{}).config||{})}));
   const [mappings,setMappings]=useState(()=>lsGet(LS_MAPPING,{}).g2c||{});
   const [selectedUsers,setSelectedUsers]=useState(()=>new Set());
-  const [options,setOptions]=useState({dryRun:true,skipFollowups:false,skipAiResponse:false,fromDate:'',toDate:''});
+  const [options,setOptions]=useState(()=>({dryRun:true,skipFollowups:false,skipAiResponse:false,fromDate:'',toDate:'',...(lsGet(LS_PREFS,{}).options||{})}));
   const [googleAuthed,setGoogleAuthed]=useState(false);
   const [msAuthed,setMsAuthed]=useState(false);
   const [googleUsers,setGoogleUsers]=useState([]);
   const [msUsers,setMsUsers]=useState([]);
   const [logs,setLogs]=useState([]);
   const [live,setLive]=useState(false);
-  const [migDone,setMigDone]=useState(false);
-  const [stats,setStats]=useState({users:0,pages:0,errors:0,flagged:0});
-  const [lastRunWasDry,setLastRunWasDry]=useState(false);
-  const [currentBatchId,setCurrentBatchId]=useState(null);
+  const [migDone,setMigDone]=useState(()=>lsGet(LS_PREFS,{}).migDone||false);
+  const [stats,setStats]=useState(()=>lsGet(LS_PREFS,{}).stats||{users:0,pages:0,errors:0,flagged:0});
+  const [lastRunWasDry,setLastRunWasDry]=useState(()=>lsGet(LS_PREFS,{}).lastRunWasDry||false);
+  const [currentBatchId,setCurrentBatchId]=useState(()=>lsGet(LS_PREFS,{}).currentBatchId||null);
   const [retrying,setRetrying]=useState(false);
   const [retryMode,setRetryMode]=useState(false);
   const [toast,setToast]=useState(null); // {message, type}
@@ -2458,24 +2458,24 @@ function App(){
   const [migDir,setMigDir]=useState(()=>lsGet(LS_PREFS,{}).migDir||null); // 'gemini-copilot' | 'copilot-gemini' | 'claude-gemini' | null
   const [c2gMappings,setC2gMappings]=useState(()=>lsGet(LS_MAPPING,{}).c2g||{});
   const [c2gSelectedUsers,setC2gSelectedUsers]=useState(()=>new Set());
-  const [c2gStats,setC2gStats]=useState({users:0,files:0,errors:0});
+  const [c2gStats,setC2gStats]=useState(()=>lsGet(LS_PREFS,{}).c2gStats||{users:0,files:0,errors:0});
   const [c2gTotal,setC2gTotal]=useState(0);
-  const [c2gDone,setC2gDone]=useState(false);
+  const [c2gDone,setC2gDone]=useState(()=>lsGet(LS_PREFS,{}).c2gDone||false);
   const [c2gLive,setC2gLive]=useState(false);
-  const [c2gOptions,setC2gOptions]=useState({dryRun:true,fromDate:'',toDate:''});
-  const [c2gConfig,setC2gConfig]=useState({folderName:'CopilotChats'});
-  const [c2gLastDry,setC2gLastDry]=useState(false);
+  const [c2gOptions,setC2gOptions]=useState(()=>({dryRun:true,fromDate:'',toDate:'',...(lsGet(LS_PREFS,{}).c2gOptions||{})}));
+  const [c2gConfig,setC2gConfig]=useState(()=>({folderName:'CopilotChats',...(lsGet(LS_PREFS,{}).c2gConfig||{})}));
+  const [c2gLastDry,setC2gLastDry]=useState(()=>lsGet(LS_PREFS,{}).c2gLastDry||false);
   // CL2G (Claude → Gemini) state
-  const [cl2gUploadData,setCl2gUploadData]=useState(null);
-  const [cl2gMappings,setCl2gMappings]=useState({});
+  const [cl2gUploadData,setCl2gUploadData]=useState(()=>lsGet(LS_UPLOAD,{}).cl2g||null);
+  const [cl2gMappings,setCl2gMappings]=useState(()=>lsGet(LS_MAPPING,{}).cl2g||{});
   const [cl2gSelectedUuids,setCl2gSelectedUuids]=useState(new Set());
-  const [cl2gOptions,setCl2gOptions]=useState({dryRun:true,fromDate:'',toDate:'',includeMemory:true,includeProjects:true});
-  const [cl2gConfig,setCl2gConfig]=useState({folderName:'ClaudeChats'});
-  const [cl2gStats,setCl2gStats]=useState({users:0,files:0,errors:0});
+  const [cl2gOptions,setCl2gOptions]=useState(()=>({dryRun:true,fromDate:'',toDate:'',includeMemory:true,includeProjects:true,...(lsGet(LS_PREFS,{}).cl2gOptions||{})}));
+  const [cl2gConfig,setCl2gConfig]=useState(()=>({folderName:'ClaudeChats',...(lsGet(LS_PREFS,{}).cl2gConfig||{})}));
+  const [cl2gStats,setCl2gStats]=useState(()=>lsGet(LS_PREFS,{}).cl2gStats||{users:0,files:0,errors:0});
   const [cl2gTotal,setCl2gTotal]=useState(0);
-  const [cl2gDone,setCl2gDone]=useState(false);
+  const [cl2gDone,setCl2gDone]=useState(()=>lsGet(LS_PREFS,{}).cl2gDone||false);
   const [cl2gLive,setCl2gLive]=useState(false);
-  const [cl2gLastDry,setCl2gLastDry]=useState(false);
+  const [cl2gLastDry,setCl2gLastDry]=useState(()=>lsGet(LS_PREFS,{}).cl2gLastDry||false);
   const [chatGLoading,setChatGLoading]=useState(false);
   const [chatMLoading,setChatMLoading]=useState(false);
   const [chatUploading,setChatUploading]=useState(false);
@@ -2521,8 +2521,10 @@ function App(){
       }
       localStorage.setItem('gem_last_user',uid);
       setAppUser(u);
+      // localStorage already restored all state — mark ready immediately
+      setWsLoaded(true);
 
-      // Hydrate state from DB — authoritative source for all migration state
+      // Background: validate auth + sync mappings from DB (non-blocking)
       Promise.all([
         fetch('/auth/status').then(r=>r.json()).catch(()=>({})),
         fetch('/api/init').then(r=>r.ok?r.json():null).catch(()=>null),
@@ -2531,66 +2533,40 @@ function App(){
         if(authStatus.msConnected!==undefined) setMsAuthed(!!authStatus.msConnected);
 
         if(initData){
-          // Restore mappings from DB (overrides stale localStorage)
+          // DB mappings override localStorage (DB is authoritative for mappings)
           const g2cMap=initData.mappings?.find(m=>m.migDir==='gemini-copilot');
           const c2gMap=initData.mappings?.find(m=>m.migDir==='copilot-gemini');
           const cl2gMap=initData.mappings?.find(m=>m.migDir==='claude-gemini');
-          if(g2cMap?.mappings) setMappings(g2cMap.mappings);
-          if(c2gMap?.mappings) setC2gMappings(c2gMap.mappings);
-          if(cl2gMap?.mappings) setCl2gMappings(cl2gMap.mappings);
-
-          // Restore recent migration status
-          const recent=initData.recentWorkspaces?.[0];
-          if(recent){
-            const dir=recent.migDir;
-            const isDone=recent.status==='completed'||recent.status==='failed';
-            // Only override step/migDir from DB if localStorage has none saved
-            const savedPrefs=lsGet(LS_PREFS,{});
-            if(!savedPrefs.migDir&&dir){
-              setMigDir(dir);
-              if(isDone) setStep(dir==='gemini-copilot'?6:dir==='copilot-gemini'?5:6);
-            }
-            // Restore stats from last completed workspace
-            if(isDone&&recent.report?.summary){
-              const s=recent.report.summary;
-              if(dir==='gemini-copilot') setStats({users:s.total_users||0,pages:s.total_pages_created||0,errors:s.total_errors||0,flagged:0});
-              else if(dir==='copilot-gemini') setC2gStats({users:s.total_users||0,files:s.total_pages_created||0,errors:s.total_errors||0});
-              else if(dir==='claude-gemini') setCl2gStats({users:s.total_users||0,files:s.total_pages_created||0,errors:s.total_errors||0});
-            }
-          }
-
-          // Restore G2C upload from recentUploads
-          const g2cUpload=initData.recentUploads?.find(u=>u.migDir==='gemini-copilot'||!u.migDir);
-          if(g2cUpload&&!uploadData) setUploadData({uploadId:g2cUpload._id,fileName:g2cUpload.fileName,total_users:g2cUpload.totalUsers,users:[]});
-
-          // Restore CL2G upload
-          fetch('/api/cl2g/uploads').then(r=>r.ok?r.json():[]).then(uploads=>{
-            if(uploads.length>0&&!cl2gUploadData){
-              const u=uploads[0];
-              setCl2gUploadData({uploadId:u._id,fileName:u.fileName,users:u.users||[]});
-            }
-          }).catch(()=>{});
+          if(g2cMap?.mappings&&Object.keys(g2cMap.mappings).length) setMappings(g2cMap.mappings);
+          if(c2gMap?.mappings&&Object.keys(c2gMap.mappings).length) setC2gMappings(c2gMap.mappings);
+          if(cl2gMap?.mappings&&Object.keys(cl2gMap.mappings).length) setCl2gMappings(cl2gMap.mappings);
         }
-        setWsLoaded(true);
       });
     }).catch(()=>{window.location.href='/login.html'});
   },[]);
 
-  // Persist mapping cache to localStorage (non-authoritative snapshot)
+  // Persist mapping cache to localStorage
   useEffect(()=>{lsSet(LS_MAPPING,{...lsGet(LS_MAPPING,{}),g2c:mappings})},[mappings]);
   useEffect(()=>{lsSet(LS_MAPPING,{...lsGet(LS_MAPPING,{}),c2g:c2gMappings})},[c2gMappings]);
+  useEffect(()=>{lsSet(LS_MAPPING,{...lsGet(LS_MAPPING,{}),cl2g:cl2gMappings})},[cl2gMappings]);
 
-  // Persist upload metadata cache (lightweight — just id/name/size)
+  // Persist upload metadata cache
   useEffect(()=>{
-    if(uploadData){lsSet(LS_UPLOAD,{uploadId:uploadData.uploadId,fileName:uploadData.fileName,size:uploadData.size})}
+    if(uploadData) lsSet(LS_UPLOAD,{...lsGet(LS_UPLOAD,{}),uploadId:uploadData.uploadId,fileName:uploadData.fileName,size:uploadData.size});
   },[uploadData]);
+  useEffect(()=>{
+    lsSet(LS_UPLOAD,{...lsGet(LS_UPLOAD,{}),cl2g:cl2gUploadData?{uploadId:cl2gUploadData.uploadId,fileName:cl2gUploadData.fileName,users:cl2gUploadData.users}:null});
+  },[cl2gUploadData]);
 
-  // Persist cosmetic UI prefs
+  // Persist all migration state to LS_PREFS for instant restore on refresh
   useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),splitPct})},[splitPct]);
   useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),panelSwapped})},[panelSwapped]);
   useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),leftMode})},[leftMode]);
   useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),step})},[step]);
   useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),migDir})},[migDir]);
+  useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),migDone,lastRunWasDry,currentBatchId,stats})},[migDone,lastRunWasDry,currentBatchId,stats]);
+  useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),c2gDone,c2gStats,c2gLastDry,c2gOptions,c2gConfig})},[c2gDone,c2gStats,c2gLastDry,c2gOptions,c2gConfig]);
+  useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),cl2gDone,cl2gStats,cl2gLastDry,cl2gOptions,cl2gConfig})},[cl2gDone,cl2gStats,cl2gLastDry,cl2gOptions,cl2gConfig]);
 
   // Load users at App level as soon as auth is confirmed — not dependent on Step0 being visible
   useEffect(()=>{
