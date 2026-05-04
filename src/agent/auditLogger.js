@@ -17,7 +17,7 @@ auditEmitter.setMaxListeners(50);
  * @param {object} payload    - event-specific data
  */
 export async function auditLog(sessionId, type, payload = {}) {
-  const event = { sessionId, type, ts: new Date(), ...payload };
+  const event = { ...payload, sessionId, type, ts: new Date() };
   try {
     const db = getDb();
     await db.collection('agentAuditLog').insertOne(event);
