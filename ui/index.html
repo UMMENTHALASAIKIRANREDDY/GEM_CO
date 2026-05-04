@@ -1747,7 +1747,7 @@ const StepC2GOptions=({c2gOptions,setC2gOptions,c2gConfig,setC2gConfig,googleAut
   );
 };
 
-const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c2gLive,onChangeDirection,lastRunWasDry,onStartLive,c2gTotal})=>{
+const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c2gLive,onChangeDirection,lastRunWasDry,onStartLive,c2gTotal,folderName='CopilotChats'})=>{
   const ring=c2gDone?100:c2gTotal>0?Math.min(Math.round((c2gStats.users/c2gTotal)*100),99):c2gLive?5:0;
   return(
     <div className="fade-up">
@@ -1800,6 +1800,7 @@ const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c
               </div>
             ))}
           </div>
+          {!lastRunWasDry&&<C2GGemSetupInstructions folderName={folderName}/>}
           <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
             {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{flex:'1 1 140px',justifyContent:'center'}}><IcoRocket s={14}/> Start Live Migration</Btn>}
             <Btn variant="ghost" onClick={onBack} style={{flex:'1 1 100px',justifyContent:'center'}}>← Options</Btn>
@@ -2224,6 +2225,20 @@ How to answer my questions:
 
 Document structure: Each conversation starts with "Conversation N: Title" followed by [Human] and [Claude] labeled messages in chronological order.`;
 
+const C2G_GEM_INSTRUCTIONS=`You are my personal Copilot conversation assistant. The uploaded document contains my complete Microsoft Copilot chat history, with each conversation clearly labeled by number and title.
+
+How to answer my questions:
+1. ALWAYS search the uploaded document thoroughly before responding.
+2. When I ask about a topic — find all conversations related to it in the document and summarize what was discussed.
+3. When I ask "what did I ask about X?" or "find my conversation about X" — locate it in the document and return the exact You and Copilot message exchanges.
+4. When I ask to continue or follow up on a past conversation — find that conversation in the document, read the full message thread, then continue responding as Copilot would, staying consistent with the context and conclusions already reached.
+5. Answer from the document content directly. Do not rephrase from your own training memory when the topic is in the documents.
+6. If a topic is not found anywhere in the documents, say: "This topic was not in your migrated Copilot history." Then answer from general knowledge if helpful.
+7. Never fabricate conversation content that is not in the documents.
+8. If a message references an attached file, look for its Google Drive link in the document — you can mention that the file is available in Google Drive.
+
+Document structure: Each conversation starts with "Conversation N: Title" followed by [You] and [Copilot] labeled messages in chronological order.`;
+
 const GemSetupInstructions=({folderName='ClaudeChats'})=>{
   const [copied,setCopied]=useState(false);
   const [open,setOpen]=useState(true);
@@ -2272,6 +2287,61 @@ const GemSetupInstructions=({folderName='ClaudeChats'})=>{
           </div>
           <div style={{marginTop:10,padding:'8px 12px',background:'#FEF9C3',border:'1px solid #FDE68A',borderRadius:8,fontSize:11,color:'#713F12'}}>
             <strong>Tip:</strong> The migrated folder contains max 3 files per user (All Conversations, Memory, Projects). Add them all to the Gem knowledge for best results.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ═══  C2G GEM SETUP INSTRUCTIONS PANEL    ═══ */
+/* ═══════════════════════════════════════════ */
+const C2GGemSetupInstructions=({folderName='CopilotChats'})=>{
+  const [copied,setCopied]=useState(false);
+  const [open,setOpen]=useState(true);
+  const copy=()=>{navigator.clipboard.writeText(C2G_GEM_INSTRUCTIONS).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500)}).catch(()=>{})};
+  const steps=[
+    {n:1,icon:'🌐',title:'Open Gemini Gems',desc:'Go to gemini.google.com → click Gems in the left sidebar → New Gem'},
+    {n:2,icon:'📁',title:'Add the Conversations DOCX',desc:`Under Knowledge → "Add from Google Drive" → navigate to ${folderName}/ → select the All_Conversations.docx file → Insert`},
+    {n:3,icon:'📋',title:'Paste the Gem Instructions',desc:'Copy the instructions below and paste them into the Instructions box of the Gem'},
+    {n:4,icon:'💾',title:'Name & Save the Gem',desc:'Give the Gem a name (e.g. "My Copilot History") → click Save — done!'},
+  ];
+  return(
+    <div style={{border:`1px solid #BFDBFE`,borderRadius:12,background:'#EFF6FF',marginBottom:16,overflow:'hidden'}}>
+      <div onClick={()=>setOpen(o=>!o)} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 16px',cursor:'pointer',userSelect:'none'}}>
+        <div style={{display:'flex',alignItems:'center',gap:10}}>
+          <span style={{fontSize:18}}>💎</span>
+          <div>
+            <div style={{fontSize:13,fontWeight:700,color:'#1E3A5F'}}>Set Up Your Gemini Gem</div>
+            <div style={{fontSize:11,color:'#3B82F6'}}>Follow these steps to create a Gem from your migrated Copilot history</div>
+          </div>
+        </div>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{transition:'transform .2s',transform:open?'rotate(180deg)':'none'}}><polyline points="6 9 12 15 18 9"/></svg>
+      </div>
+      {open&&(
+        <div style={{padding:'0 16px 16px'}}>
+          <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:16}}>
+            {steps.map(s=>(
+              <div key={s.n} style={{display:'flex',gap:12,alignItems:'flex-start',background:'white',borderRadius:10,padding:'10px 14px',border:'1px solid #DBEAFE'}}>
+                <div style={{minWidth:28,height:28,borderRadius:'50%',background:'#1D4ED8',color:'white',display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,flexShrink:0}}>{s.n}</div>
+                <div>
+                  <div style={{fontSize:12,fontWeight:700,color:'#1E3A5F',marginBottom:2}}>{s.icon} {s.title}</div>
+                  <div style={{fontSize:11,color:'#4B5563',lineHeight:1.5}}>{s.desc}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{background:'white',border:'1px solid #BFDBFE',borderRadius:10,overflow:'hidden'}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 12px',background:'#DBEAFE',borderBottom:'1px solid #BFDBFE'}}>
+              <span style={{fontSize:11,fontWeight:700,color:'#1E40AF',textTransform:'uppercase',letterSpacing:.5}}>📋 Gem Instructions — copy & paste into Gemini</span>
+              <button onClick={copy} style={{display:'inline-flex',alignItems:'center',gap:5,fontSize:11,fontWeight:600,color:copied?'#16a34a':'#1D4ED8',background:copied?'#DCFCE7':'#EFF6FF',border:`1px solid ${copied?'#86EFAC':'#93C5FD'}`,borderRadius:6,padding:'4px 10px',cursor:'pointer',fontFamily:'inherit',transition:'all .2s'}}>
+                {copied?<><IcoDone s={11}/>Copied!</>:<><IcoUpload s={11}/>Copy</>}
+              </button>
+            </div>
+            <pre style={{margin:0,padding:'12px 14px',fontSize:11,lineHeight:1.6,color:'#1E293B',whiteSpace:'pre-wrap',wordBreak:'break-word',fontFamily:'Consolas,monospace',maxHeight:220,overflowY:'auto'}}>{C2G_GEM_INSTRUCTIONS}</pre>
+          </div>
+          <div style={{marginTop:10,padding:'8px 12px',background:'#FEF9C3',border:'1px solid #FDE68A',borderRadius:8,fontSize:11,color:'#713F12'}}>
+            <strong>Note:</strong> Only upload the <strong>All_Conversations.docx</strong> file to the Gem — 1 file per user. The <strong>Attachments/</strong> subfolder stays in Google Drive for downloading files, not for the Gem.
           </div>
         </div>
       )}
@@ -3915,7 +3985,7 @@ function App(){
                   {/* Copilot → Gemini steps */}
                   {step===2&&migDir==='copilot-gemini'&&<StepC2GMap msUsers={msUsers} googleUsers={googleUsers} c2gMappings={c2gMappings} setC2gMappings={setC2gMappings} c2gSelectedUsers={c2gSelectedUsers} setC2gSelectedUsers={setC2gSelectedUsers} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast}/>}
                   {step===3&&migDir==='copilot-gemini'&&<StepC2GOptions c2gOptions={c2gOptions} setC2gOptions={setC2gOptions} c2gConfig={c2gConfig} setC2gConfig={setC2gConfig} googleAuthed={googleAuthed} msAuthed={msAuthed} onRun={runC2GMigration} onBack={()=>setStep(2)}/>}
-                  {(step===4||step===5)&&migDir==='copilot-gemini'&&<StepC2GMigrate c2gStats={c2gStats} c2gDone={c2gDone} c2gBatchId={null} onRunAnother={()=>{setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(3)} onStart={runC2GMigration} c2gLive={c2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={c2gLastDry} onStartLive={()=>runC2GMigration(true)} c2gTotal={c2gTotal}/>}
+                  {(step===4||step===5)&&migDir==='copilot-gemini'&&<StepC2GMigrate c2gStats={c2gStats} c2gDone={c2gDone} c2gBatchId={null} onRunAnother={()=>{setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(3)} onStart={runC2GMigration} c2gLive={c2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={c2gLastDry} onStartLive={()=>runC2GMigration(true)} c2gTotal={c2gTotal} folderName={c2gConfig?.folderName||'CopilotChats'}/>}
                   {/* Claude → Gemini steps */}
                   {step===2&&migDir==='claude-gemini'&&<StepCL2GUpload cl2gUploadData={cl2gUploadData} setCl2gUploadData={setCl2gUploadData} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast}/>}
                   {step===3&&migDir==='claude-gemini'&&<StepCL2GMap cl2gUploadData={cl2gUploadData} googleUsers={googleUsers} cl2gMappings={cl2gMappings} setCl2gMappings={setCl2gMappings} cl2gSelectedUuids={cl2gSelectedUuids} setCl2gSelectedUuids={setCl2gSelectedUuids} onNext={()=>setStep(4)} onBack={()=>setStep(2)} showToast={showToast}/>}
