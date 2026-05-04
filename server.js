@@ -384,7 +384,7 @@ app.use('/api/cl2g', cl2gRouter);
 
 async function ensureIndexes(database) {
   const idx = (col, spec, opts = {}) =>
-    database.collection(col).createIndex(spec, { background: true, ...opts });
+    database.collection(col).createIndex(spec, { ...opts, background: true });
 
   await Promise.all([
     idx('migrationWorkspaces', { appUserId: 1, startTime: -1 }),
@@ -408,7 +408,11 @@ connectMongo().then(async () => {
     console.warn('[cogem] Copilot DB connect failed (non-fatal):', e.message);
   }
 
-  ensureIndexes(db()).catch(e => console.warn('[startup] Index creation failed:', e.message));
+  try {
+    await ensureIndexes(db());
+  } catch (e) {
+    console.warn('[startup] Index creation failed:', e.message);
+  }
 
   await restoreGoogleSessions();
   await restoreMsSessions();
