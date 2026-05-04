@@ -245,24 +245,6 @@ app.post('/api/auth/ms/disconnect', requireAuth, (req, res) => {
 
 // ─── Shared API routes ────────────────────────────────────────────────────────
 
-// Workspace state
-app.get('/api/workspace', async (req, res) => {
-  const { appUserId: userId, googleEmail, msEmail } = getWorkspaceContext(req);
-  const doc = await db().collection('userWorkspace').findOne({ userId, googleEmail, msEmail });
-  res.json(doc || null);
-});
-
-app.put('/api/workspace', async (req, res) => {
-  const { appUserId: userId, googleEmail, msEmail } = getWorkspaceContext(req);
-  const { step, uploadData, config, mappings, selectedUsers, options, migDone, stats, currentBatchId, lastRunWasDry } = req.body;
-  await db().collection('userWorkspace').updateOne(
-    { userId, googleEmail, msEmail },
-    { $set: { userId, googleEmail, msEmail, step, uploadData, config, mappings, selectedUsers, options, migDone, stats, currentBatchId, lastRunWasDry, updatedAt: new Date() } },
-    { upsert: true }
-  );
-  res.json({ ok: true });
-});
-
 // User config — tenantId, customerName (permanent per user, updatable)
 app.get('/api/config', requireAuth, async (req, res) => {
   try {

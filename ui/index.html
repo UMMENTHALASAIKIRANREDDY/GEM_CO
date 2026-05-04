@@ -55,20 +55,15 @@ const C={primary:'#0129AC',primaryH:'#0C18D4',primaryL:'#809EFC',tint:'#E1ECFF',
   bg:'#F6F6F6',white:'#FFFFFF',dark:'#2e2e2e',muted:'#707070',
   border:'#EBEBEB',success:'#0129AC',error:'#FF1F1F',warn:'#809EFC'};
 
-/* ── localStorage — user-scoped keys ── */
-// Keys are prefixed with the userId so different users don't share state.
-// LS_KEYS: base key names; LS(uid): returns prefixed key map for that user.
-const LS_KEYS={step:'step',uploadData:'upload_data',config:'config',
-  mappings:'mappings',logs:'logs',authG:'auth_google',authMs:'auth_ms',
-  batches:'batches',selUsers:'selected_users',
-  migDone:'mig_done',stats:'stats',batchId:'current_batch',lastDry:'last_dry',
-  agentMsgs:'agent_msgs',migDir:'mig_dir',
-  c2gMappings:'c2g_mappings',c2gSelUsers:'c2g_sel_users'};
-const LS=(uid)=>{const p=uid?`gem_${uid}_`:'gem_';return Object.fromEntries(Object.entries(LS_KEYS).map(([k,v])=>[k,p+v]))};
+/* ── localStorage — 3 allowed cache keys ── */
+// Only these 3 keys are permitted. All other state lives in React or MongoDB.
+const LS_UPLOAD  = 'gem_upload_cache';   // lightweight upload metadata {uploadId,fileName,size}
+const LS_MAPPING = 'gem_mapping_cache';  // mapping UI snapshot {g2c,c2g} (MongoDB is authoritative)
+const LS_PREFS   = 'gem_ui_prefs';       // cosmetic UI prefs {splitPct,panelSwapped,leftMode}
 const lsGet=(k,fb)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb}catch{return fb}};
 const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}};
-// Clear only this user's keys
-const lsClear=(uid)=>{Object.values(LS(uid)).forEach(k=>localStorage.removeItem(k))};
+// Clear all 3 allowed cache keys
+const lsClear=()=>{[LS_UPLOAD,LS_MAPPING,LS_PREFS].forEach(k=>localStorage.removeItem(k))};
 // Clear ALL gem_ keys (used when switching users)
 const lsClearAll=()=>{Object.keys(localStorage).filter(k=>k.startsWith('gem_')).forEach(k=>localStorage.removeItem(k))};
 
@@ -2425,25 +2420,22 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
 /* ══════════════════════════════════════ */
 function App(){
   // Read stored userId synchronously so state initializers use the right scoped keys
-  const storedUid=(()=>{try{return localStorage.getItem('gem_active_user')||''}catch{return ''}})();
-  const K=LS(storedUid); // scoped key map for current user
-
-  const [step,setStep]=useState(()=>lsGet(K.step,0));
-  const [uploadData,setUploadData]=useState(()=>lsGet(K.uploadData,null));
-  const [config,setConfig]=useState(()=>{const s=lsGet(K.config,{});return{filePath:'GeminiChats',tenantId:s.tenantId||'807d6772-847c-40e2-9bec-e2c930b3a42e'}});
-  const [mappings,setMappings]=useState(()=>lsGet(K.mappings,{}));
-  const [selectedUsers,setSelectedUsers]=useState(()=>{const s=lsGet(K.selUsers,null);return s?new Set(s):new Set()});
+  const [step,setStep]=useState(0);
+  const [uploadData,setUploadData]=useState(()=>{const c=lsGet(LS_UPLOAD,null);return c?.uploadId?c:null});
+  const [config,setConfig]=useState({filePath:'GeminiChats',tenantId:'807d6772-847c-40e2-9bec-e2c930b3a42e'});
+  const [mappings,setMappings]=useState(()=>lsGet(LS_MAPPING,{}).g2c||{});
+  const [selectedUsers,setSelectedUsers]=useState(()=>new Set());
   const [options,setOptions]=useState({dryRun:true,skipFollowups:false,skipAiResponse:false,fromDate:'',toDate:''});
-  const [googleAuthed,setGoogleAuthed]=useState(()=>lsGet(K.authG,{signedIn:false}).signedIn||false);
-  const [msAuthed,setMsAuthed]=useState(()=>lsGet(K.authMs,{signedIn:false}).signedIn||false);
+  const [googleAuthed,setGoogleAuthed]=useState(false);
+  const [msAuthed,setMsAuthed]=useState(false);
   const [googleUsers,setGoogleUsers]=useState([]);
   const [msUsers,setMsUsers]=useState([]);
-  const [logs,setLogs]=useState(()=>lsGet(K.logs,[]));
+  const [logs,setLogs]=useState([]);
   const [live,setLive]=useState(false);
-  const [migDone,setMigDone]=useState(()=>lsGet(K.migDone,false));
-  const [stats,setStats]=useState(()=>lsGet(K.stats,{users:0,pages:0,errors:0,flagged:0}));
-  const [lastRunWasDry,setLastRunWasDry]=useState(()=>lsGet(K.lastDry,false));
-  const [currentBatchId,setCurrentBatchId]=useState(()=>lsGet(K.batchId,null));
+  const [migDone,setMigDone]=useState(false);
+  const [stats,setStats]=useState({users:0,pages:0,errors:0,flagged:0});
+  const [lastRunWasDry,setLastRunWasDry]=useState(false);
+  const [currentBatchId,setCurrentBatchId]=useState(null);
   const [retrying,setRetrying]=useState(false);
   const [retryMode,setRetryMode]=useState(false);
   const [toast,setToast]=useState(null); // {message, type}
@@ -2452,22 +2444,20 @@ function App(){
   const [showReset,setShowReset]=useState(false);
   const [reportRefreshKey,setReportRefreshKey]=useState(0); // increments to force reports re-fetch
   const [wsLoaded,setWsLoaded]=useState(false); // true after DB workspace hydration
-  const KRef=useRef(K); // mutable ref so persist effects always use current scoped keys
-  KRef.current=K;
   const wsSaveTimer=useRef(null); // debounce timer for workspace saves
   const sseRef=useRef(null);
   const silenceTimer=useRef(null);
   const cl2gLiveRef=useRef(false);
-  const [splitPct,setSplitPct]=useState(50);
-  const [panelSwapped,setPanelSwapped]=useState(false);
-  const [agentMsgs,setAgentMsgs]=useState(()=>lsGet(K.agentMsgs,[]));
+  const [splitPct,setSplitPct]=useState(()=>lsGet(LS_PREFS,{}).splitPct||50);
+  const [panelSwapped,setPanelSwapped]=useState(()=>lsGet(LS_PREFS,{}).panelSwapped||false);
+  const [agentMsgs,setAgentMsgs]=useState([]);
   const [agentTyping,setAgentTyping]=useState(false);
   const [agentInput,setAgentInput]=useState('');
-  const [agentMode,setAgentMode]=useState(()=>lsGet(K.migDone,false)?'done':'guide');
-  const [leftMode,setLeftMode]=useState('viz'); // 'viz' | 'mapping'
-  const [migDir,setMigDir]=useState(()=>lsGet(K.migDir,null)); // 'gemini-copilot' | 'copilot-gemini' | null
-  const [c2gMappings,setC2gMappings]=useState(()=>lsGet(K.c2gMappings,{}));
-  const [c2gSelectedUsers,setC2gSelectedUsers]=useState(()=>{const s=lsGet(K.c2gSelUsers,null);return s?new Set(s):new Set()});
+  const [agentMode,setAgentMode]=useState('guide');
+  const [leftMode,setLeftMode]=useState(()=>lsGet(LS_PREFS,{}).leftMode||'viz'); // 'viz' | 'mapping'
+  const [migDir,setMigDir]=useState(null); // 'gemini-copilot' | 'copilot-gemini' | null
+  const [c2gMappings,setC2gMappings]=useState(()=>lsGet(LS_MAPPING,{}).c2g||{});
+  const [c2gSelectedUsers,setC2gSelectedUsers]=useState(()=>new Set());
   const [c2gStats,setC2gStats]=useState({users:0,files:0,errors:0});
   const [c2gTotal,setC2gTotal]=useState(0);
   const [c2gDone,setC2gDone]=useState(false);
@@ -2523,52 +2513,29 @@ function App(){
     }).then(u=>{
       if(!u)return;
       setAppUser(u);
-      // Handle user switching — clear old localStorage AND React state if different user
-      const prevUid=localStorage.getItem('gem_active_user')||'';
-      if(prevUid && prevUid!==u._id){
-        lsClearAll();
-        setAgentMsgs([]);
-        greetedRef.current=false;
-      }
-      localStorage.setItem('gem_active_user',u._id);
+      setWsLoaded(true);
 
-      // Hydrate from MongoDB — DB is authoritative for cross-device state
-      fetch('/api/workspace').then(r=>r.ok?r.json():null).then(ws=>{
-        if(ws){
-          // Override localStorage-initialized state with DB values
-          if(ws.step!=null){setStep(ws.step);lsSet(KRef.current.step,ws.step)}
-          if(ws.uploadData!==undefined){setUploadData(ws.uploadData);lsSet(KRef.current.uploadData,ws.uploadData)}
-          if(ws.config){setConfig(p=>({...p,tenantId:ws.config.tenantId||p.tenantId}));lsSet(KRef.current.config,{tenantId:ws.config.tenantId})}
-          if(ws.mappings){setMappings(ws.mappings);lsSet(KRef.current.mappings,ws.mappings)}
-          if(ws.selectedUsers){const s=new Set(ws.selectedUsers);setSelectedUsers(s);lsSet(KRef.current.selUsers,ws.selectedUsers)}
-          if(ws.options){setOptions(ws.options)}
-          if(ws.migDone!=null){setMigDone(ws.migDone);lsSet(KRef.current.migDone,ws.migDone)}
-          if(ws.stats){setStats(ws.stats);lsSet(KRef.current.stats,ws.stats)}
-          if(ws.currentBatchId!==undefined){setCurrentBatchId(ws.currentBatchId);lsSet(KRef.current.batchId,ws.currentBatchId)}
-          if(ws.lastRunWasDry!=null){setLastRunWasDry(ws.lastRunWasDry);lsSet(KRef.current.lastDry,ws.lastRunWasDry)}
-          if(ws.agentMsgs?.length){setAgentMsgs(ws.agentMsgs);lsSet(KRef.current.agentMsgs,ws.agentMsgs)}
-        }
-        setWsLoaded(true);
-
-        // Validate cloud auth status from server
-        fetch('/auth/status').then(r=>r.json()).then(d=>{
-          // Server is authoritative — sync UI state to match
-          if(d.googleConnected!==undefined){setGoogleAuthed(!!d.googleConnected);}
-          if(d.msConnected!==undefined){setMsAuthed(!!d.msConnected);}
-        }).catch(()=>{});
-      }).catch(()=>setWsLoaded(true));
+      // Validate cloud auth status from server — server is authoritative
+      fetch('/auth/status').then(r=>r.json()).then(d=>{
+        if(d.googleConnected!==undefined){setGoogleAuthed(!!d.googleConnected);}
+        if(d.msConnected!==undefined){setMsAuthed(!!d.msConnected);}
+      }).catch(()=>{});
     }).catch(()=>{window.location.href='/login.html'});
   },[]);
 
+  // Persist mapping cache to localStorage (non-authoritative snapshot)
+  useEffect(()=>{lsSet(LS_MAPPING,{...lsGet(LS_MAPPING,{}),g2c:mappings})},[mappings]);
+  useEffect(()=>{lsSet(LS_MAPPING,{...lsGet(LS_MAPPING,{}),c2g:c2gMappings})},[c2gMappings]);
 
-  // Persist state (always use KRef.current so keys stay scoped to the right user)
-  useEffect(()=>{lsSet(KRef.current.step,step)},[step]);
-  useEffect(()=>{lsSet(KRef.current.uploadData,uploadData)},[uploadData]);
-  useEffect(()=>{lsSet(KRef.current.config,{tenantId:config.tenantId})},[config]);
-  useEffect(()=>{lsSet(KRef.current.mappings,mappings)},[mappings]);
-  useEffect(()=>{lsSet(KRef.current.logs,logs.slice(-500))},[logs]);
-  useEffect(()=>{lsSet(KRef.current.authG,{signedIn:googleAuthed})},[googleAuthed]);
-  useEffect(()=>{lsSet(KRef.current.authMs,{signedIn:msAuthed})},[msAuthed]);
+  // Persist upload metadata cache (lightweight — just id/name/size)
+  useEffect(()=>{
+    if(uploadData){lsSet(LS_UPLOAD,{uploadId:uploadData.uploadId,fileName:uploadData.fileName,size:uploadData.size})}
+  },[uploadData]);
+
+  // Persist cosmetic UI prefs
+  useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),splitPct})},[splitPct]);
+  useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),panelSwapped})},[panelSwapped]);
+  useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),leftMode})},[leftMode]);
 
   // Load users at App level as soon as auth is confirmed — not dependent on Step0 being visible
   useEffect(()=>{
@@ -2579,35 +2546,12 @@ function App(){
     if(!msAuthed||msUsers.length>0)return;
     fetch('/api/ms/users').then(r=>r.ok?r.json():null).then(d=>{if(d?.users)setMsUsers(d.users)}).catch(()=>{});
   },[msAuthed]);
-  useEffect(()=>{lsSet(KRef.current.selUsers,[...selectedUsers])},[selectedUsers]);
-  useEffect(()=>{lsSet(KRef.current.migDone,migDone)},[migDone]);
-  useEffect(()=>{lsSet(KRef.current.stats,stats)},[stats]);
-  useEffect(()=>{lsSet(KRef.current.batchId,currentBatchId)},[currentBatchId]);
-  useEffect(()=>{lsSet(KRef.current.lastDry,lastRunWasDry)},[lastRunWasDry]);
-  useEffect(()=>{lsSet(KRef.current.agentMsgs,agentMsgs.slice(-100))},[agentMsgs]);
-  useEffect(()=>{lsSet(KRef.current.migDir,migDir)},[migDir]);
-  useEffect(()=>{lsSet(KRef.current.c2gMappings,c2gMappings)},[c2gMappings]);
-  useEffect(()=>{lsSet(KRef.current.c2gSelUsers,[...c2gSelectedUsers])},[c2gSelectedUsers]);
-
-  // Cross-device workspace save (debounced 800ms) — only after initial DB hydration
-  const saveWorkspace=useCallback(()=>{
-    if(!wsLoaded)return;
-    clearTimeout(wsSaveTimer.current);
-    wsSaveTimer.current=setTimeout(()=>{
-      fetch('/api/workspace',{method:'PUT',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({step,uploadData,config,mappings,selectedUsers:[...selectedUsers],
-          options,migDone,stats,currentBatchId,lastRunWasDry,agentMsgs:agentMsgs.filter(m=>!m.shellBlock).slice(-50)})
-      }).catch(()=>{});
-    },800);
-  },[wsLoaded,step,uploadData,config,mappings,selectedUsers,options,migDone,stats,currentBatchId,lastRunWasDry]);
-  useEffect(()=>{saveWorkspace()},[saveWorkspace]);
-
 
   // Recover migration state after page refresh / laptop shutdown
   useEffect(()=>{
-    const savedBatchId=lsGet(K.batchId,null);
-    const savedDone=lsGet(K.migDone,false);
-    const savedStep=lsGet(K.step,0);
+    const savedBatchId=currentBatchId;
+    const savedDone=migDone;
+    const savedStep=step;
     if(savedBatchId&&!savedDone&&savedStep>=4){
       // Migration was in-progress when browser closed — check MongoDB for actual status
       fetch(`/api/reports/${savedBatchId}?summary=true`)
@@ -2791,7 +2735,7 @@ function App(){
   // Reset: clear all migration state for current user and reload
   const handleReset=useCallback(()=>{
     if(!window.confirm('Reset all migration data? This clears mappings, logs, upload data, and migration state.'))return;
-    lsClear(appUser?._id);window.location.reload();
+    lsClear();window.location.reload();
   },[appUser]);
 
   /* Copilot→Gemini migration */
