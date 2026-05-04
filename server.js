@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import session from 'express-session';
 import bcrypt from 'bcryptjs';
 
-import { getAuthUrl, acquireTokenByCode, isAuthenticated, getValidToken, clearMsToken, restoreMsSessions } from './src/core/auth/microsoft.js';
+import { getAuthUrl, acquireTokenByCode, isAuthenticated, getValidToken, clearMsToken, clearMsAccount, getMsAccounts, restoreMsSessions } from './src/core/auth/microsoft.js';
 import { getGoogleAuthUrl, acquireGoogleTokenByCode, isGoogleAuthenticated, getGoogleOAuth2Client, clearGoogleToken, clearGoogleAccount, getGoogleAccounts, restoreGoogleSessions } from './src/core/auth/googleOAuth.js';
 import { connectMongo, getDb } from './src/db/mongo.js';
 import { getLogger } from './src/utils/logger.js';
@@ -259,10 +259,23 @@ app.post('/api/auth/google/disconnect', requireAuth, (req, res) => {
   res.json({ success: true });
 });
 
+app.get('/api/auth/ms/accounts', requireAuth, (req, res) => {
+  const { appUserId } = getWorkspaceContext(req);
+  res.json({ accounts: getMsAccounts(appUserId) });
+});
+
 app.post('/api/auth/ms/disconnect', requireAuth, (req, res) => {
   const { appUserId } = getWorkspaceContext(req);
-  clearMsToken(appUserId);
-  delete req.session.msEmail;
+  const { accountId } = req.body || {};
+  if (accountId) {
+    clearMsAccount(appUserId, accountId);
+    const remaining = getMsAccounts(appUserId);
+    if (!remaining.length) delete req.session.msEmail;
+    else req.session.msEmail = remaining[0].email || req.session.msEmail;
+  } else {
+    clearMsToken(appUserId);
+    delete req.session.msEmail;
+  }
   res.json({ success: true });
 });
 

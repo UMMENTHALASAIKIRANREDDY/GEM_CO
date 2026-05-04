@@ -166,27 +166,26 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
   const [lgG,setLgG]=useState(false),[lgM,setLgM]=useState(false);
   const [errG,setErrG]=useState(''),[errM,setErrM]=useState('');
   const [googleAccounts,setGoogleAccounts]=useState([]); // [{accountId,email,displayName}]
-  const [msEmail,setMsEmail]=useState(null);
+  const [msAccounts,setMsAccounts]=useState([]);          // [{accountId,email,displayName,tenantId}]
 
   const loadGoogleUsers=async()=>{setLgG(true);setErrG('');try{const r=await fetch('/api/google/users');if(r.status===401){setGoogleAuthed(false);setLgG(false);return}const d=await r.json();if(d.users)setGoogleUsers(d.users);else setErrG(d.error||'Failed to load users')}catch(e){setErrG(e.message)}setLgG(false)};
   const loadMsUsers=async()=>{setLgM(true);setErrM('');try{const r=await fetch('/api/ms/users');if(r.status===401){setMsAuthed(false);setLgM(false);return}const d=await r.json();if(d.users)setMsUsers(d.users);else setErrM(d.error||'Failed to load users')}catch(e){setErrM(e.message)}setLgM(false)};
   const loadGoogleAccounts=async()=>{try{const r=await fetch('/api/auth/google/accounts');if(r.ok){const d=await r.json();setGoogleAccounts(d.accounts||[]);}}catch{}};
-  const loadMsStatus=async()=>{try{const r=await fetch('/auth/status');if(r.ok){const d=await r.json();setMsEmail(d.msEmail||null);}}catch{}};
+  const loadMsAccounts=async()=>{try{const r=await fetch('/api/auth/ms/accounts');if(r.ok){const d=await r.json();setMsAccounts(d.accounts||[]);}}catch{}};
 
   useEffect(()=>{if(googleAuthed&&googleUsers.length===0)loadGoogleUsers();if(googleAuthed)loadGoogleAccounts();},[googleAuthed]);
-  useEffect(()=>{if(msAuthed&&msUsers.length===0)loadMsUsers();if(msAuthed)loadMsStatus();},[msAuthed]);
-  useEffect(()=>{if(tab==='manage'){if(googleAuthed)loadGoogleAccounts();if(msAuthed)loadMsStatus();}},[tab]);
+  useEffect(()=>{if(msAuthed&&msUsers.length===0)loadMsUsers();if(msAuthed)loadMsAccounts();},[msAuthed]);
+  useEffect(()=>{if(tab==='manage'){if(googleAuthed)loadGoogleAccounts();if(msAuthed)loadMsAccounts();}},[tab]);
 
   const signInGoogle=()=>{window.open('/auth/google/login','googleauth','width=500,height=700,left=300,top=100');window.addEventListener('message',function h(e){if(e.data?.type==='google-auth-success'){window.removeEventListener('message',h);
     setTimeout(()=>{fetch('/auth/google/status').then(r=>r.json()).then(d=>{if(d.authenticated){setGoogleAuthed(true);loadGoogleUsers();loadGoogleAccounts();setTab('manage');}}).catch(()=>{setGoogleAuthed(true);loadGoogleUsers();loadGoogleAccounts();setTab('manage');})},500);
   }})};
   const signInMs=()=>{const url=`/auth/login${tenantId?`?tenant_id=${tenantId}`:''}`;window.open(url,'msauth','width=500,height=700,left=300,top=100');window.addEventListener('message',function h(e){if(e.data?.type==='auth-success'){window.removeEventListener('message',h);
-    setTimeout(()=>{fetch('/auth/status').then(r=>r.json()).then(d=>{setMsAuthed(true);loadMsUsers();loadMsStatus();setTab('manage');}).catch(()=>{setMsAuthed(true);loadMsUsers();setTab('manage');})},500);
+    setTimeout(()=>{fetch('/auth/status').then(r=>r.json()).then(d=>{setMsAuthed(true);loadMsUsers();loadMsAccounts();setTab('manage');}).catch(()=>{setMsAuthed(true);loadMsUsers();setTab('manage');})},500);
   }})};
 
   const disconnectGoogleAccount=async(accountId)=>{await fetch('/api/auth/google/disconnect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId})});await loadGoogleAccounts();const r=await fetch('/auth/google/status');const d=await r.json();if(!d.authenticated){setGoogleAuthed(false);setGoogleUsers([]);}};
-  const disconnectAllGoogle=async()=>{await fetch('/api/auth/google/disconnect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});setGoogleAuthed(false);setGoogleUsers([]);setGoogleAccounts([]);};
-  const disconnectMs=async()=>{await fetch('/api/auth/ms/disconnect',{method:'POST'});setMsAuthed(false);setMsUsers([]);setMsEmail(null);};
+  const disconnectMsAccount=async(accountId)=>{await fetch('/api/auth/ms/disconnect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId})});await loadMsAccounts();const r=await fetch('/auth/status');const d=await r.json();if(!d.msConnected){setMsAuthed(false);setMsUsers([]);}setMsAccounts(a=>a.filter(x=>x.accountId!==accountId));};
 
   const tabStyle=(active)=>({padding:'8px 20px',fontSize:13,fontWeight:active?600:500,color:active?C.primary:C.muted,background:active?'#fff':'transparent',border:'none',borderBottom:active?`2px solid ${C.primary}`:'2px solid transparent',cursor:'pointer',fontFamily:'inherit',transition:'all .15s',marginBottom:-1});
 
@@ -232,7 +231,7 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
         <button style={tabStyle(tab==='all')} onClick={()=>setTab('all')}>All Clouds</button>
         <button style={tabStyle(tab==='manage')} onClick={()=>setTab('manage')}>
           Manage Clouds
-          {hasAny&&<span style={{marginLeft:6,fontSize:10,fontWeight:700,background:C.primary,color:'#fff',borderRadius:10,padding:'1px 6px'}}>{(googleAccounts.length||0)+(msAuthed?1:0)||''}</span>}
+          {hasAny&&<span style={{marginLeft:6,fontSize:10,fontWeight:700,background:C.primary,color:'#fff',borderRadius:10,padding:'1px 6px'}}>{(googleAccounts.length||0)+(msAccounts.length||0)||''}</span>}
         </button>
       </div>
 
@@ -254,7 +253,7 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
           </div>
           {errG&&<div style={{fontSize:12,color:C.error,marginBottom:8}}>{errG}</div>}
           {errM&&<div style={{fontSize:12,color:C.error,marginBottom:8}}>{errM}</div>}
-          {hasAny&&<div style={{fontSize:12,color:'#16a34a',display:'flex',alignItems:'center',gap:6,marginBottom:16}}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>{[googleAccounts.length>0&&`${googleAccounts.length} Google account${googleAccounts.length>1?'s':''} connected`,msAuthed&&'Microsoft 365 connected'].filter(Boolean).join(' · ')}</div>}
+          {hasAny&&<div style={{fontSize:12,color:'#16a34a',display:'flex',alignItems:'center',gap:6,marginBottom:16}}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>{[googleAccounts.length>0&&`${googleAccounts.length} Google account${googleAccounts.length>1?'s':''} connected`,msAccounts.length>0&&`${msAccounts.length} Microsoft account${msAccounts.length>1?'s':''} connected`].filter(Boolean).join(' · ')}</div>}
           {!hasAny&&<div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:8,fontSize:13,color:'#991B1B',marginBottom:16}}><IcoWarn s={14}/>Connect at least one cloud account to proceed.</div>}
         </div>
       )}
@@ -292,21 +291,19 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
               </button>
             </div>
           )}
-          {msAuthed&&msEmail&&(
-            <div style={{marginBottom:20}}>
-              <div style={{fontSize:12,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.5,marginBottom:10}}>Microsoft 365</div>
-              <ConnectedAccountRow icon={<MsIcon s={120}/>} email={msEmail} displayName={null} onDisconnect={disconnectMs}/>
-            </div>
-          )}
-          {!msAuthed&&(
-            <div style={{marginBottom:20}}>
-              <div style={{fontSize:12,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.5,marginBottom:10}}>Microsoft 365</div>
-              <button onClick={signInMs} disabled={lgM} style={{fontSize:13,color:C.primary,background:C.tint,border:`1px solid ${C.primary}`,borderRadius:10,cursor:'pointer',fontFamily:'inherit',padding:'14px 20px',display:'flex',alignItems:'center',gap:8,width:'100%',justifyContent:'center',opacity:lgM?.6:1}}>
-                {lgM?<Spinner s={14}/>:<MsIcon s={100}/>}
-                Connect Microsoft 365
-              </button>
-            </div>
-          )}
+          <div style={{marginBottom:20}}>
+            <div style={{fontSize:12,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.5,marginBottom:10}}>Microsoft 365</div>
+            {msAccounts.map(acc=>(
+              <ConnectedAccountRow key={acc.accountId}
+                icon={<MsIcon s={120}/>}
+                email={acc.email} displayName={acc.displayName||(acc.tenantId?`Tenant: ${acc.tenantId}`:null)}
+                onDisconnect={()=>disconnectMsAccount(acc.accountId)}/>
+            ))}
+            <button onClick={signInMs} disabled={lgM} style={{fontSize:12,color:C.primary,background:'none',border:`1px dashed ${C.primary}`,borderRadius:8,cursor:'pointer',fontFamily:'inherit',padding:'8px 14px',display:'flex',alignItems:'center',gap:6,width:'100%',justifyContent:'center',marginTop:msAccounts.length?4:0,opacity:lgM?.6:1}}>
+              {lgM?<Spinner s={12}/>:<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>}
+              {msAccounts.length?'Add Another Microsoft Account':'Connect Microsoft 365'}
+            </button>
+          </div>
         </div>
       )}
 
