@@ -171,7 +171,7 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
   router.get('/user-mappings', requireAuth, async (req, res) => {
     try {
       const { appUserId } = getCtx(req);
-      const doc = await db().collection('userMappings').findOne({ direction: 'claude-copilot', appUserId });
+      const doc = await db().collection('userMappings').findOne({ migDir: 'claude-copilot', appUserId });
       res.json(doc || null);
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
@@ -182,8 +182,8 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
       const { appUserId, msEmail } = getCtx(req);
       const { mappings, csvEmails } = req.body;
       await db().collection('userMappings').updateOne(
-        { direction: 'claude-copilot', appUserId },
-        { $set: { direction: 'claude-copilot', appUserId, msEmail, mappings, csvEmails, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+        { migDir: 'claude-copilot', appUserId },
+        { $set: { migDir: 'claude-copilot', appUserId, msEmail, mappings, csvEmails, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
         { upsert: true }
       );
       dbLog.info(`userMappings.upsert — CL2C ${Object.keys(mappings || {}).length} mappings`);
@@ -195,7 +195,7 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
   router.delete('/user-mappings', requireAuth, async (req, res) => {
     try {
       const { appUserId } = getCtx(req);
-      await db().collection('userMappings').deleteOne({ direction: 'claude-copilot', appUserId });
+      await db().collection('userMappings').deleteOne({ migDir: 'claude-copilot', appUserId });
       res.json({ ok: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
@@ -223,9 +223,9 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
         let files = 0, errors = 0;
 
         try {
-          await db().collection('reportsWorkspace').updateOne(
+          await db().collection('migrationWorkspaces').updateOne(
             { _id: batchId },
-            { $set: { direction: 'claude-copilot', customerName: cl2cFolder, startTime, status: 'running', dryRun: isDryRun, appUserId, msEmail, totalUsers: pairs.length } },
+            { $set: { migDir: 'claude-copilot', customerName: cl2cFolder, startTime, status: 'running', dryRun: isDryRun, appUserId, msEmail, totalUsers: pairs.length } },
             { upsert: true }
           );
 
@@ -233,7 +233,7 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
             const msg = `Upload files not found on disk (${uploadDoc.extractPath}). The server may have restarted and lost the uploaded ZIP. Please re-upload the ZIP file and try again.`;
             dbLog.error(`[CL2C] ${msg}`);
             cl2cLog('error', msg);
-            await db().collection('reportsWorkspace').updateOne({ _id: batchId }, { $set: { status: 'failed', endTime: new Date(), error: msg } }).catch(() => {});
+            await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { status: 'failed', endTime: new Date(), error: msg } }).catch(() => {});
             cl2cLog('done', JSON.stringify({ files: 0, errors: 1, users: 0, batchId }));
             return;
           }
@@ -296,15 +296,15 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
 
           // Isolated final DB write
           try {
-            await db().collection('reportsWorkspace').updateOne(
+            await db().collection('migrationWorkspaces').updateOne(
               { _id: batchId },
-              { $set: { status: finalStatus, endTime: new Date(), migratedConversations: files, migratedUsers: reportUsers.filter(u => u.status !== 'failed').length, failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors, report: { summary: { total_users: pairs.length, total_pages_created: files, total_errors: errors }, users: reportUsers } } }
+              { $set: { migDir: 'claude-copilot', status: finalStatus, endTime: new Date(), migratedConversations: files, migratedUsers: reportUsers.filter(u => u.status !== 'failed').length, failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors, report: { summary: { total_users: pairs.length, total_pages_created: files, total_errors: errors }, users: reportUsers } } }
             );
           } catch (dbErr) {
             dbLog.error(`[CL2C] Final report DB write failed: ${dbErr.message}. Retrying...`);
-            await db().collection('reportsWorkspace').updateOne(
+            await db().collection('migrationWorkspaces').updateOne(
               { _id: batchId },
-              { $set: { status: finalStatus, endTime: new Date(), migratedConversations: files, migratedUsers: reportUsers.filter(u => u.status !== 'failed').length, failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors, report: { summary: { total_users: pairs.length, total_pages_created: files, total_errors: errors }, users: reportUsers } } }
+              { $set: { migDir: 'claude-copilot', status: finalStatus, endTime: new Date(), migratedConversations: files, migratedUsers: reportUsers.filter(u => u.status !== 'failed').length, failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors, report: { summary: { total_users: pairs.length, total_pages_created: files, total_errors: errors }, users: reportUsers } } }
             ).catch(e2 => dbLog.error(`[CL2C] Retry also failed: ${e2.message}`));
           }
 
@@ -351,9 +351,9 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
           console.error('[CL2C] Unhandled error:', e);
           dbLog.error(`[CL2C] Unhandled error after ${files} page(s) created: ${e.message}`);
           cl2cLog('error', e.message || String(e));
-          await db().collection('reportsWorkspace').updateOne(
+          await db().collection('migrationWorkspaces').updateOne(
             { _id: batchId },
-            { $set: { status: files > 0 ? 'completed' : 'failed', endTime: new Date(), migratedConversations: files, totalErrors: errors + 1, error: e.message } }
+            { $set: { migDir: 'claude-copilot', status: files > 0 ? 'completed' : 'failed', endTime: new Date(), migratedConversations: files, totalErrors: errors + 1, error: e.message } }
           ).catch(() => {});
           cl2cLog('done', JSON.stringify({ files, errors: errors + 1, users: pairs.length, batchId }));
         }
