@@ -61,9 +61,14 @@ async function ensureCollections() {
     { unique: true, background: true }
   );
 
-  // 5. reportsWorkspace
-  if (!existing.has('reportsWorkspace')) await _db.createCollection('reportsWorkspace');
-  await _db.collection('reportsWorkspace').createIndex({ startTime: -1 });
+  // 5. migrationWorkspaces — one doc per migration run (all directions)
+  if (!existing.has('migrationWorkspaces')) await _db.createCollection('migrationWorkspaces');
+  await _db.collection('migrationWorkspaces').createIndex({ appUserId: 1, startTime: -1 });
+
+  // 5b. migrationJobs — one doc per user per run (live runs only)
+  if (!existing.has('migrationJobs')) await _db.createCollection('migrationJobs');
+  await _db.collection('migrationJobs').createIndex({ workspaceId: 1, appUserId: 1 });
+  await _db.collection('migrationJobs').createIndex({ jobId: 1 }, { unique: true });
 
   // 6. checkpoints
   if (!existing.has('checkpoints')) await _db.createCollection('checkpoints');
@@ -106,5 +111,5 @@ async function ensureCollections() {
   if (!existing.has('cl2gUploads')) await _db.createCollection('cl2gUploads');
   await _db.collection('cl2gUploads').createIndex({ appUserId: 1, uploadTime: -1 });
 
-  logger.info('All 12 collections verified with indexes (multi-tenant scoped)');
+  logger.info('All 14 collections verified with indexes (multi-tenant scoped)');
 }
