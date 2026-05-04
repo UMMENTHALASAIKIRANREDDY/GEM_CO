@@ -380,6 +380,23 @@ app.use('/api/c2g', c2gRouter);
 const cl2gRouter = createCL2GRouter({ db });
 app.use('/api/cl2g', cl2gRouter);
 
+// ─── Index bootstrap ──────────────────────────────────────────────────────────
+
+async function ensureIndexes(database) {
+  const idx = (col, spec, opts = {}) =>
+    database.collection(col).createIndex(spec, { background: true, ...opts });
+
+  await Promise.all([
+    idx('migrationWorkspaces', { appUserId: 1, startTime: -1 }),
+    idx('migrationJobs',       { workspaceId: 1, appUserId: 1 }),
+    idx('migrationJobs',       { jobId: 1 }, { unique: true }),
+    idx('userMappings',        { appUserId: 1, migDir: 1 }, { unique: true }),
+    idx('uploads',             { appUserId: 1, uploadTime: -1 }),
+    idx('userConfig',          { appUserId: 1 }, { unique: true }),
+    idx('cachedUsers',         { appUserId: 1, role: 1, migDir: 1 }),
+  ]);
+}
+
 // ─── Startup ──────────────────────────────────────────────────────────────────
 
 connectMongo().then(async () => {
@@ -390,6 +407,8 @@ connectMongo().then(async () => {
   } catch (e) {
     console.warn('[cogem] Copilot DB connect failed (non-fatal):', e.message);
   }
+
+  ensureIndexes(db()).catch(e => console.warn('[startup] Index creation failed:', e.message));
 
   await restoreGoogleSessions();
   await restoreMsSessions();
