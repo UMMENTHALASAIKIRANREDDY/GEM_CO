@@ -1009,64 +1009,27 @@ export function createG2CRouter(deps) {
     // Attach migration executors to session so toolExecutor can fire them
     req.session._agentDeps = {
       startMigration: async ({ dryRun, batchId, migDir: dir, appUserId: uid }) => {
+        // Validate preconditions only — UI handles the actual migration trigger and SSE connection
         if (dir === 'gemini-copilot') {
-          const msEmail = req.session.msEmail || null;
-          const uploadId = migrationState.uploadData?.id;
-          const uploadDoc = uploadId
-            ? await db().collection('uploads').findOne({ _id: uploadId, appUserId: uid })
-            : await db().collection('uploads').findOne({ appUserId: uid }, { sort: { uploadTime: -1 } });
+          const uploadDoc = await db().collection('uploads').findOne({ appUserId: uid }, { sort: { uploadTime: -1 } });
           const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: 'gemini-copilot' });
-          return runMigration({
-            extract_path: migrationState.uploadExtractPath || uploadDoc?.extractPath,
-            tenant_id: migrationState.tenantId || null,
-            customer_name: migrationState.customerName || 'Gemini',
-            user_mappings: mappingDoc?.mappings || {},
-            dry_run: dryRun,
-            batch_id: batchId,
-            appUserId: uid,
-            googleEmail: req.session.appUser?.email,
-            msEmail,
-          });
+          if (!uploadDoc) return { error: 'No Gemini export uploaded. Upload your takeout ZIP first.' };
+          if (!mappingDoc || !Object.keys(mappingDoc.mappings || {}).length) return { error: 'No user mappings for Gemini→Copilot. Map users first.' };
+          return { validated: true, batchId, note: 'UI will start migration and connect to log stream' };
         }
         if (dir === 'copilot-gemini') {
           const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: 'copilot-gemini' });
-          const pairs = Object.entries(mappingDoc?.mappings || {}).map(([src, dst]) => ({ sourceEmail: src, destEmail: dst }));
-          if (!pairs.length) return { error: 'No user mappings found for Copilot→Gemini. Map users first.' };
-          const body = { pairs, folderName: migrationState.customerName || 'CopilotChats', dryRun };
-          const resp = await fetch(`http://localhost:${process.env.PORT || 4000}/api/c2g/migrate`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Cookie: req.headers.cookie || '' },
-            body: JSON.stringify(body),
-          });
-          return resp.ok ? resp.json() : { error: `C2G migration start failed: ${resp.status}` };
+          if (!mappingDoc || !Object.keys(mappingDoc.mappings || {}).length) return { error: 'No user mappings for Copilot→Gemini. Map users first.' };
+          return { validated: true, batchId, note: 'UI will start migration and connect to log stream' };
         }
         if (dir === 'claude-gemini') {
-          const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: 'claude-gemini' });
           const uploadDoc = await db().collection('cl2gUploads').findOne({ appUserId: uid }, { sort: { uploadTime: -1 } });
-          if (!uploadDoc) return { error: 'No ZIP uploaded for Claude→Gemini. Upload your Claude export first.' };
-          const mappings = mappingDoc?.mappings || {};
-          const uploadUsers = uploadDoc.users || [];
-          const pairs = Object.entries(mappings)
-            .filter(([, dst]) => dst)
-            .map(([src, dst]) => {
-              const u = uploadUsers.find(u => u.email_address === src || u.uuid === src);
-              return {
-                sourceUuid: u?.uuid || src,
-                sourceDisplayName: u?.full_name || u?.email_address || src,
-                sourceEmail: u?.email_address || src,
-                destEmail: dst,
-              };
-            });
-          if (!pairs.length) return { error: 'No user mappings found for Claude→Gemini. Map users first.' };
-          const body = { uploadId: uploadDoc._id, pairs, folderName: migrationState.customerName || 'ClaudeChats', dryRun };
-          const resp = await fetch(`http://localhost:${process.env.PORT || 4000}/api/cl2g/migrate`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Cookie: req.headers.cookie || '' },
-            body: JSON.stringify(body),
-          });
-          return resp.ok ? resp.json() : { error: `CL2G migration start failed: ${resp.status}` };
+          const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: 'claude-gemini' });
+          if (!uploadDoc) return { error: 'No Claude export ZIP uploaded. Upload your export first.' };
+          if (!mappingDoc || !Object.keys(mappingDoc.mappings || {}).length) return { error: 'No user mappings for Claude→Gemini. Map users first.' };
+          return { validated: true, batchId, note: 'UI will start migration and connect to log stream' };
         }
-        return Promise.resolve({ started: true, note: `${dir} migration queued` });
+        return Promise.resolve({ validated: true, note: `${dir} migration will be started by UI` });
       },
       retryMigration: async ({ batchId: retryFromBatchId, appUserId: uid }) => {
         const batchDoc = await db().collection('migrationWorkspaces').findOne({ _id: retryFromBatchId, appUserId: uid });
