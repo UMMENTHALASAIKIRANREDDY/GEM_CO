@@ -28,7 +28,8 @@ export class AgentDeployer {
     this.customerName = customerName;
     this.tenantId = tenantId;
     this.appUserId = appUserId;
-    this.agentName = 'Gemini Conversation Agent';
+    this.agentName = options.agentName || 'Gemini Conversation Agent';
+    this.sourceLabel = options.sourceLabel || 'Gemini';
     this.appId = this._generateGuid();
     this.notebookName = options.notebookName || customerName;
     this.sectionName = options.sectionName || `${customerName} Conversations`;
@@ -92,29 +93,26 @@ export class AgentDeployer {
   }
 
   _buildInstructions() {
-    return `You are the ${this.agentName}. You help users search and recall their AI conversations that were migrated from Google Gemini to Microsoft 365.
+    return `You are the ${this.agentName}. You help users search and recall their AI conversations that were migrated from ${this.sourceLabel} to Microsoft 365.
 
 Where to find conversations:
 - OneNote: "${this.notebookName}" notebook → "${this.sectionName}" section — each page is one complete conversation thread
-- OneDrive: "${this.driveFolder}" folder — contains migrated Google Drive documents (.docx, .xlsx, .pptx)
+- OneDrive: "${this.driveFolder}" folder — contains migrated documents (.docx, .xlsx, .pptx)
 
 Each OneNote page contains:
 - A title and date (in the page metadata)
-- One or more prompts the user originally asked in Gemini
-- The original Gemini response for each prompt
-- A Copilot-generated response for comparison
-- A footer with the migration date and a link to the original Gemini conversation (when available)
+- One or more prompts the user originally asked in ${this.sourceLabel}
+- The original ${this.sourceLabel} response for each prompt
+- A footer with the migration date
 
 How to answer:
-- Search the user's OneNote "${this.sectionName}" section and OneDrive "${this.driveFolder}" folder for relevant content.
+- Search the user's OneNote "${this.sectionName}" section for relevant content.
 - Match the user's query against page titles, prompt text, and response content.
 - Treat each OneNote page as one complete, self-contained conversation thread. Never mix content across pages unless the user explicitly asks to compare.
 - For follow-up questions ("What was the number they mentioned?" / "What did it say about that?") — stay in the same page from the previous turn. Do not re-search unless the user changes topic.
-- When quoting, identify whether the text came from the user's original prompt, the Gemini response, or the Copilot response.
+- When quoting, identify whether the text came from the user's original prompt or the ${this.sourceLabel} response.
 - Always cite the conversation title and date.
-- For visual content (charts, images): note that visuals may not have migrated — point the user to the original Gemini link in the page footer.
-- If both Gemini and Copilot responses exist for a prompt, present both clearly labeled.
-- If nothing matches, suggest the user check their "${this.notebookName}" notebook in OneNote or the "${this.driveFolder}" folder in OneDrive directly.
+- If nothing matches, suggest the user check their "${this.notebookName}" notebook in OneNote directly.
 
 Never make up information. Only answer based on the actual migrated conversation data.`;
   }
@@ -133,7 +131,7 @@ Never make up information. Only answer based on the actual migrated conversation
       "$schema": "https://developer.microsoft.com/json-schemas/copilot/declarative-agent/v1.5/schema.json",
       "version": "v1.5",
       "name": this.agentName,
-      "description": `Search and review migrated ${this.customerName} Gemini conversations. Ask questions about past chats and get instant answers grounded in your conversation history.`,
+      "description": `Search and review migrated ${this.customerName} ${this.sourceLabel} conversations. Ask questions about past chats and get instant answers grounded in your conversation history.`,
       "instructions": this._buildInstructions(),
       "capabilities": [
         {

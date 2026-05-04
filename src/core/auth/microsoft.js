@@ -24,7 +24,7 @@ function _createMsalApp(tenantId) {
     auth: {
       clientId: process.env.AZURE_CLIENT_ID,
       clientSecret: process.env.AZURE_CLIENT_SECRET,
-      authority: `https://login.microsoftonline.com/${tenantId}`
+      authority: `https://login.microsoftonline.com/common`
     }
   });
 }
@@ -178,6 +178,23 @@ export function isAuthenticated(appUserId) {
   // Has account (can silent-refresh) — considered connected even if access token expired
   if (session.account) return true;
   return !!session.token && Date.now() < session.tokenExpiry;
+}
+
+/**
+ * Return the Azure tenant ID for the currently connected MS session.
+ * Reads from in-memory session first, falls back to DB authSessions.
+ */
+export async function getTenantForUser(appUserId) {
+  const session = _sessions.get(appUserId);
+  if (session?.tenant) return session.tenant;
+  // Fallback: read from DB (e.g. after server restart before session restored)
+  try {
+    const db = getDb();
+    const doc = await db.collection('authSessions').findOne({ appUserId, provider: 'microsoft' }, { projection: { tenantId: 1 } });
+    return doc?.tenantId || null;
+  } catch {
+    return null;
+  }
 }
 
 export function clearMsToken(appUserId) {

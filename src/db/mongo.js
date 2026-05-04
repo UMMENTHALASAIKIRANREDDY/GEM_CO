@@ -58,7 +58,7 @@ async function ensureCollections() {
   try { await _db.collection('userMappings').dropIndex('direction_1_appUserId_1'); } catch {}
   await _db.collection('userMappings').createIndex(
     { direction: 1, appUserId: 1 },
-    { unique: true, sparse: true }  // sparse: excludes docs where direction/appUserId are null
+    { unique: true, partialFilterExpression: { direction: { $type: 'string' }, appUserId: { $type: 'string' } } }
   );
 
   // 5. reportsWorkspace
@@ -106,5 +106,9 @@ async function ensureCollections() {
   if (!existing.has('cl2gUploads')) await _db.createCollection('cl2gUploads');
   await _db.collection('cl2gUploads').createIndex({ appUserId: 1, uploadTime: -1 });
 
-  logger.info('All 12 collections verified with indexes (multi-tenant scoped)');
+  // 13. cl2cUploads — Claude export ZIP uploads for CL2C migrations
+  if (!existing.has('cl2cUploads')) await _db.createCollection('cl2cUploads');
+  await _db.collection('cl2cUploads').createIndex({ appUserId: 1, uploadTime: -1 });
+
+  logger.info('All 13 collections verified with indexes (multi-tenant scoped)');
 }

@@ -12,6 +12,7 @@ import { getLogger } from './src/utils/logger.js';
 import { createG2CRouter } from './src/modules/g2c/routes.js';
 import { createC2GRouter } from './src/modules/c2g/routes.js';
 import { createCL2GRouter } from './src/modules/cl2g/routes.js';
+import { createCL2CRouter } from './src/modules/cl2c/routes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -308,6 +309,10 @@ app.use('/api/c2g', c2gRouter);
 // CL2G router — mounted at /api/cl2g (Claude → Gemini; self-contained)
 const cl2gRouter = createCL2GRouter({ db });
 app.use('/api/cl2g', cl2gRouter);
+
+// CL2C router — mounted at /api/cl2c (Claude → Copilot/OneNote)
+const cl2cRouter = createCL2CRouter({ db, isAuthenticated, getValidToken, getCurrentTenantId: () => currentTenantId });
+app.use('/api/cl2c', cl2cRouter);
 
 // ─── Startup ──────────────────────────────────────────────────────────────────
 
