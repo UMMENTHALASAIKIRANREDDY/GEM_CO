@@ -484,22 +484,22 @@ const Step1=({googleUsers,googleAuthed,onComplete,onBack,showToast,uploadData:ac
 
       {/* Export status banner — shown on nav-back (activeUpload set) and on fresh load (previousExport only) */}
       {previousExport&&(
-        <div className="scale-in" style={{display:'flex',alignItems:'center',gap:14,padding:'14px 16px',background:'#F0FDF4',border:'1.5px solid #86EFAC',borderRadius:12,marginBottom:16}}>
-          <div style={{width:36,height:36,borderRadius:10,background:'#DCFCE7',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
-            <Check s={18} c='#16a34a'/>
+        <div className="scale-in" style={{display:'flex',alignItems:'center',gap:14,padding:'14px 16px',background:C.tint,border:`1.5px solid ${C.primaryL}`,borderRadius:12,marginBottom:16}}>
+          <div style={{width:36,height:36,borderRadius:10,background:'white',border:`1px solid ${C.primaryL}`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+            <Check s={18} c={C.primary}/>
           </div>
           <div style={{flex:1,minWidth:0}}>
-            <div style={{fontWeight:600,fontSize:13,color:'#166534'}}>{activeUpload?'Export loaded':'Previous export found'}</div>
-            <div style={{fontSize:12,color:'#16a34a',marginTop:2}}>
+            <div style={{fontWeight:600,fontSize:13,color:C.primary}}>{activeUpload?'Export loaded':'Previous export found'}</div>
+            <div style={{fontSize:12,color:C.muted,marginTop:2}}>
               {previousExport.total_users} user{previousExport.total_users!==1?'s':''} · {previousExport.total_conversations} conversations · {previousExport.upload_time?new Date(previousExport.upload_time).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):''}
             </div>
           </div>
           <div style={{display:'flex',gap:8,flexShrink:0}}>
-            <button onClick={()=>{setPreviousExport(null)}} style={{fontSize:12,padding:'6px 12px',borderRadius:8,border:`1px solid #86EFAC`,background:'white',color:'#166534',cursor:'pointer',fontFamily:'inherit',fontWeight:500}}>
+            <button onClick={()=>{setPreviousExport(null)}} style={{fontSize:12,padding:'6px 12px',borderRadius:8,border:`1px solid ${C.primaryL}`,background:'white',color:C.primary,cursor:'pointer',fontFamily:'inherit',fontWeight:500}}>
               New Export
             </button>
             {!activeUpload&&(
-              <button onClick={()=>loadSavedUpload(previousExport)} style={{fontSize:12,padding:'6px 14px',borderRadius:8,border:'none',background:'#16a34a',color:'white',cursor:'pointer',fontFamily:'inherit',fontWeight:600,display:'flex',alignItems:'center',gap:6}}>
+              <button onClick={()=>loadSavedUpload(previousExport)} style={{fontSize:12,padding:'6px 14px',borderRadius:8,border:'none',background:C.primary,color:'white',cursor:'pointer',fontFamily:'inherit',fontWeight:600,display:'flex',alignItems:'center',gap:6}}>
                 Continue →
               </button>
             )}
