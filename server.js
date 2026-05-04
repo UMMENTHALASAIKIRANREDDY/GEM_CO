@@ -21,6 +21,7 @@ import { createG2CRouter } from './src/modules/g2c/routes.js';
 import { createC2GRouter } from './src/modules/c2g/routes.js';
 import { createCL2GRouter } from './src/modules/cl2g/routes.js';
 import { createCL2CRouter } from './src/modules/cl2c/routes.js';
+import { runAgentLoop } from './src/agent/agentLoop.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -349,6 +350,16 @@ app.post('/api/chat-history', requireAuth, async (req, res) => {
     await db().collection('chatHistory').updateOne({ appUserId }, { $set: update }, { upsert: true });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Agent SSE chat endpoint ──────────────────────────────────────────────────
+app.post('/api/chat', requireAuth, async (req, res) => {
+  try {
+    const { message, migrationState, migrationLogs, isSystemTrigger } = req.body;
+    await runAgentLoop(req, res, { message, migrationState, migrationLogs, isSystemTrigger, db: db() });
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+  }
 });
 
 // All migration runs for current user (all directions)
