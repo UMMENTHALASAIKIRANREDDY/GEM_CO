@@ -105,6 +105,23 @@ export async function acquireGoogleTokenByCode(code, stateParam) {
     logger.warn(`Could not fetch Google profile for ${appUserId}:${accountId}: ${e.message}`);
   }
 
+  // Deduplicate: if this email is already in another session, merge into it
+  if (email) {
+    for (const [existingKey, existingSession] of _sessions.entries()) {
+      if (existingKey === key) continue;
+      if (!existingKey.startsWith(`${appUserId}:`)) continue;
+      if (existingSession.email === email) {
+        existingSession.tokens = tokens;
+        existingSession.tokenExpiry = session.tokenExpiry;
+        existingSession.oauth2Client.setCredentials(tokens);
+        _sessions.delete(key);
+        try { const db = getDb(); db.collection('authSessions').deleteOne({ appUserId, provider: 'google', accountId }).catch(() => {}); } catch {}
+        logger.info(`Google: ${email} already connected for ${appUserId} — refreshed existing session ${existingSession.accountId}`);
+        return { tokens, email, displayName, accountId: existingSession.accountId, alreadyConnected: true };
+      }
+    }
+  }
+
   try {
     const db = getDb();
     await db.collection('authSessions').updateOne(

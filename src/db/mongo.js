@@ -51,7 +51,20 @@ async function ensureCollections() {
   // 2. cloudMembers
   if (!existing.has('cloudMembers')) await _db.createCollection('cloudMembers');
   try { await _db.collection('cloudMembers').dropIndex('email_1_source_1'); } catch {}
-  await _db.collection('cloudMembers').createIndex({ appUserId: 1, googleEmail: 1, msEmail: 1, email: 1, source: 1 }, { unique: true });
+  try { await _db.collection('cloudMembers').dropIndex('appUserId_1_googleEmail_1_msEmail_1_email_1_source_1'); } catch {}
+  try { await _db.collection('cloudMembers').dropIndex('appUserId_1_email_1_source_1'); } catch {}
+  // Deduplicate: keep only the most recently discovered doc per (appUserId, email, source)
+  try {
+    const dupes = await _db.collection('cloudMembers').aggregate([
+      { $group: { _id: { appUserId: '$appUserId', email: '$email', source: '$source' }, ids: { $push: '$_id' }, count: { $sum: 1 } } },
+      { $match: { count: { $gt: 1 } } }
+    ]).toArray();
+    for (const d of dupes) {
+      const [, ...toDelete] = d.ids; // keep first, delete rest
+      await _db.collection('cloudMembers').deleteMany({ _id: { $in: toDelete } });
+    }
+  } catch {}
+  await _db.collection('cloudMembers').createIndex({ appUserId: 1, email: 1, source: 1 }, { unique: true });
 
   // 3. uploads
   if (!existing.has('uploads')) await _db.createCollection('uploads');

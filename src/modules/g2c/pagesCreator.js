@@ -59,8 +59,16 @@ export class PagesCreator {
         body: JSON.stringify({ displayName: notebookName })
       });
       if (!createRes.ok) {
-        const err = await createRes.text();
-        throw new Error(`Cannot create notebook for ${targetEmail}: ${createRes.status} — ${err.slice(0, 200)}`);
+        const errText = await createRes.text();
+        let errCode = null;
+        try { errCode = JSON.parse(errText)?.error?.code; } catch {}
+        if (createRes.status === 404 && errCode === '20102') {
+          throw new Error(
+            `ONENOTE_NOT_PROVISIONED:${targetEmail} — OneNote/OneDrive is not yet provisioned for this user. ` +
+            `Ask ${targetEmail} to sign in to OneDrive (https://onedrive.com) or OneNote at least once to activate their account, then retry.`
+          );
+        }
+        throw new Error(`Cannot create notebook for ${targetEmail}: ${createRes.status} — ${errText.slice(0, 200)}`);
       }
       notebook = await createRes.json();
       logger.info(`Created notebook "${notebookName}" for ${targetEmail}`);

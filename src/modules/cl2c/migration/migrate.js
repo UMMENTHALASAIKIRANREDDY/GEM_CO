@@ -51,18 +51,25 @@ export async function migrateUserPair({
     }
 
     // One OneNote page per conversation
+    let oneNoteBlocked = false;
     for (const conv of filteredConvs) {
+      if (oneNoteBlocked) break;
       try {
         await creator.createClaudePage(destUserEmail, conv);
         result.filesUploaded++;
         result.files.push({ name: conv.name || 'Untitled', type: 'onenote-page' });
       } catch (err) {
-        result.errors.push(`Conversation "${(conv.name || 'Untitled').slice(0, 60)}": ${err.message}`);
+        if (err.message.startsWith('ONENOTE_NOT_PROVISIONED:')) {
+          oneNoteBlocked = true;
+          result.errors.push(err.message.replace(/^ONENOTE_NOT_PROVISIONED:[^\s]+ — /, ''));
+        } else {
+          result.errors.push(`Conversation "${(conv.name || 'Untitled').slice(0, 60)}": ${err.message}`);
+        }
       }
     }
 
     // Memory page (optional)
-    if (opts.includeMemory !== false && memory?.conversations_memory) {
+    if (!oneNoteBlocked && opts.includeMemory !== false && memory?.conversations_memory) {
       try {
         await creator.createClaudeMemoryPage(destUserEmail, memory.conversations_memory, sourceDisplayName);
         result.filesUploaded++;
@@ -73,7 +80,7 @@ export async function migrateUserPair({
     }
 
     // Projects page (optional)
-    if (opts.includeProjects !== false) {
+    if (!oneNoteBlocked && opts.includeProjects !== false) {
       const validProjects = projects.filter(p => p.name || (p.docs || []).length);
       if (validProjects.length > 0) {
         try {

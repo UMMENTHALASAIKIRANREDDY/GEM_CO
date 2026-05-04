@@ -156,15 +156,16 @@ app.get('/auth/callback', async (req, res) => {
     if (!code) return res.status(400).send('No authorization code received');
     const msResult = await acquireTokenByCode(code, state);
     const msEmail = msResult.email || msResult?.account?.username || null;
+    const msAlready = !!msResult.alreadyConnected;
     if (msEmail) {
       req.session.msEmail = msEmail;
       await new Promise((resolve, reject) => req.session.save(err => err ? reject(err) : resolve()));
     }
     dbLog.info(`authSessions.upsert — ${msEmail} (microsoft)`);
     res.send(`<html><body>
-      <h2 style="font-family:Segoe UI,sans-serif;color:#107c10">✓ Signed in successfully!</h2>
+      <h2 style="font-family:Segoe UI,sans-serif;color:#107c10">${msAlready ? '⚠ Account already connected' : '✓ Signed in successfully!'}</h2>
       <p style="font-family:Segoe UI,sans-serif;color:#605e5c">You can close this window.</p>
-      <script>if (window.opener) { window.opener.postMessage({ type: 'auth-success' }, '*'); } setTimeout(() => window.close(), 1500);</script>
+      <script>if (window.opener) { window.opener.postMessage({ type: 'auth-success', alreadyConnected: ${msAlready} }, '*'); } setTimeout(() => window.close(), 1500);</script>
     </body></html>`);
   } catch (err) { res.send(`<html><body><h2>Auth error</h2><p>${err.message}</p><script>window.close();</script></body></html>`); }
 });
@@ -196,16 +197,16 @@ app.get('/auth/google/callback', async (req, res) => {
     const { code, error, state } = req.query;
     if (error) return res.send(`<html><body><h2>Auth failed</h2><p>${error}</p><script>window.close();</script></body></html>`);
     if (!code) return res.status(400).send('No authorization code received');
-    const { email } = await acquireGoogleTokenByCode(code, state);
+    const { email, alreadyConnected: gAlready } = await acquireGoogleTokenByCode(code, state);
     if (email) {
       req.session.googleEmail = email;
       await new Promise((resolve, reject) => req.session.save(err => err ? reject(err) : resolve()));
     }
     dbLog.info(`authSessions.upsert — ${email} (google)`);
     res.send(`<html><body>
-      <h2 style="font-family:Segoe UI,sans-serif;color:#107c10">✓ Google signed in!</h2>
+      <h2 style="font-family:Segoe UI,sans-serif;color:#107c10">${gAlready ? '⚠ Account already connected' : '✓ Google signed in!'}</h2>
       <p style="font-family:Segoe UI,sans-serif;color:#605e5c">You can close this window.</p>
-      <script>if (window.opener) { window.opener.postMessage({ type: 'google-auth-success' }, '*'); } setTimeout(() => window.close(), 1500);</script>
+      <script>if (window.opener) { window.opener.postMessage({ type: 'google-auth-success', alreadyConnected: ${!!gAlready} }, '*'); } setTimeout(() => window.close(), 1500);</script>
     </body></html>`);
   } catch (err) { res.send(`<html><body><h2>Auth error</h2><p>${err.message}</p><script>window.close();</script></body></html>`); }
 });

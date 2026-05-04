@@ -352,7 +352,7 @@ export function createG2CRouter(deps) {
         if (users.length > 0) {
           const ops = users.map(u => ({
             updateOne: {
-              filter: { email: u.email, source: 'google', appUserId, googleEmail, msEmail },
+              filter: { email: u.email, source: 'google', appUserId },
               update: { $set: { appUserId, googleEmail, msEmail, displayName: u.name, discoveredAt: new Date() } },
               upsert: true
             }
@@ -395,7 +395,7 @@ export function createG2CRouter(deps) {
         if (users.length > 0) {
           const ops = users.map(u => ({
             updateOne: {
-              filter: { email: u.mail || u.userPrincipalName, source: 'microsoft', appUserId, googleEmail, msEmail },
+              filter: { email: u.mail || u.userPrincipalName, source: 'microsoft', appUserId },
               update: { $set: { appUserId, googleEmail, msEmail, displayName: u.displayName, tenantId: req.query.tenant_id || null, discoveredAt: new Date() } },
               upsert: true
             }
@@ -773,7 +773,9 @@ export function createG2CRouter(deps) {
             }
           }
 
+          let oneNoteBlocked = false;
           for (const conv of enrichedConversations) {
+            if (oneNoteBlocked) break;
             try {
               let convWithResponses = skip_ai_response ? conv : await generator.generate(conv, skip_followups);
 
@@ -816,9 +818,17 @@ export function createG2CRouter(deps) {
               pagesCreated++;
               emit('success', `  Page created: ${conv.title?.slice(0, 60)}`);
             } catch (err) {
-              errors.push({ conversation: conv.title, error: err.message });
-              dbLog.error(`Page creation failed for "${conv.title}" → ${err.message}`);
-              emit('error', `  Failed: ${conv.title?.slice(0, 40)} — ${err.message}`);
+              if (err.message.startsWith('ONENOTE_NOT_PROVISIONED:')) {
+                oneNoteBlocked = true;
+                const cleanMsg = err.message.replace(/^ONENOTE_NOT_PROVISIONED:[^\s]+ — /, '');
+                errors.push({ conversation: conv.title, error: cleanMsg });
+                dbLog.error(`OneNote not provisioned for ${m365Email} — skipping remaining conversations`);
+                emit('error', `  OneNote not provisioned for ${m365Email} — ${cleanMsg}`);
+              } else {
+                errors.push({ conversation: conv.title, error: err.message });
+                dbLog.error(`Page creation failed for "${conv.title}" → ${err.message}`);
+                emit('error', `  Failed: ${conv.title?.slice(0, 40)} — ${err.message}`);
+              }
             }
           }
 

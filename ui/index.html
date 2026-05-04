@@ -165,6 +165,7 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
   const [tab,setTab]=useState('all'); // 'all' | 'manage'
   const [lgG,setLgG]=useState(false),[lgM,setLgM]=useState(false);
   const [errG,setErrG]=useState(''),[errM,setErrM]=useState('');
+  const [infoG,setInfoG]=useState(''),[infoM,setInfoM]=useState('');
   const [googleAccounts,setGoogleAccounts]=useState([]); // [{accountId,email,displayName}]
   const [msAccounts,setMsAccounts]=useState([]);          // [{accountId,email,displayName,tenantId}]
 
@@ -177,29 +178,39 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
   useEffect(()=>{if(msAuthed&&msUsers.length===0)loadMsUsers();if(msAuthed)loadMsAccounts();},[msAuthed]);
   useEffect(()=>{if(tab==='manage'){if(googleAuthed)loadGoogleAccounts();if(msAuthed)loadMsAccounts();}},[tab]);
 
-  const signInGoogle=()=>{window.open('/auth/google/login','googleauth','width=500,height=700,left=300,top=100');window.addEventListener('message',function h(e){if(e.data?.type==='google-auth-success'){window.removeEventListener('message',h);
+  const signInGoogle=()=>{setErrG('');setInfoG('');window.open('/auth/google/login','googleauth','width=500,height=700,left=300,top=100');window.addEventListener('message',function h(e){if(e.data?.type==='google-auth-success'){window.removeEventListener('message',h);
+    if(e.data.alreadyConnected){setInfoG('This Google account is already connected.');return;}
     setTimeout(()=>{fetch('/auth/google/status').then(r=>r.json()).then(d=>{if(d.authenticated){setGoogleAuthed(true);loadGoogleUsers();loadGoogleAccounts();setTab('manage');}}).catch(()=>{setGoogleAuthed(true);loadGoogleUsers();loadGoogleAccounts();setTab('manage');})},500);
   }})};
-  const signInMs=()=>{const url=`/auth/login${tenantId?`?tenant_id=${tenantId}`:''}`;window.open(url,'msauth','width=500,height=700,left=300,top=100');window.addEventListener('message',function h(e){if(e.data?.type==='auth-success'){window.removeEventListener('message',h);
+  const signInMs=()=>{setErrM('');setInfoM('');const url=`/auth/login${tenantId?`?tenant_id=${tenantId}`:''}`;window.open(url,'msauth','width=500,height=700,left=300,top=100');window.addEventListener('message',function h(e){if(e.data?.type==='auth-success'){window.removeEventListener('message',h);
+    if(e.data.alreadyConnected){setInfoM('This Microsoft account is already connected.');return;}
     setTimeout(()=>{fetch('/auth/status').then(r=>r.json()).then(d=>{setMsAuthed(true);loadMsUsers();loadMsAccounts();setTab('manage');}).catch(()=>{setMsAuthed(true);loadMsUsers();setTab('manage');})},500);
   }})};
 
-  const disconnectGoogleAccount=async(accountId)=>{await fetch('/api/auth/google/disconnect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId})});await loadGoogleAccounts();const r=await fetch('/auth/google/status');const d=await r.json();if(!d.authenticated){setGoogleAuthed(false);setGoogleUsers([]);}};
-  const disconnectMsAccount=async(accountId)=>{await fetch('/api/auth/ms/disconnect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId})});await loadMsAccounts();const r=await fetch('/auth/status');const d=await r.json();if(!d.msConnected){setMsAuthed(false);setMsUsers([]);}setMsAccounts(a=>a.filter(x=>x.accountId!==accountId));};
+  const disconnectGoogleAccount=async(accountId)=>{await fetch('/api/auth/google/disconnect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId})});setGoogleUsers([]);await loadGoogleAccounts();const r=await fetch('/auth/google/status');const d=await r.json();if(!d.authenticated){setGoogleAuthed(false);}else{loadGoogleUsers();}};
+  const disconnectMsAccount=async(accountId)=>{await fetch('/api/auth/ms/disconnect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId})});setMsUsers([]);await loadMsAccounts();const r=await fetch('/auth/status');const d=await r.json();if(!d.msConnected){setMsAuthed(false);}else{loadMsUsers();}setMsAccounts(a=>a.filter(x=>x.accountId!==accountId));};
 
   const tabStyle=(active)=>({padding:'8px 20px',fontSize:13,fontWeight:active?600:500,color:active?C.primary:C.muted,background:active?'#fff':'transparent',border:'none',borderBottom:active?`2px solid ${C.primary}`:'2px solid transparent',cursor:'pointer',fontFamily:'inherit',transition:'all .15s',marginBottom:-1});
 
-  const AddCloudCard=({icon,label,sub,onConnect,loading})=>{
+  const AddCloudCard=({icon,label,onConnect,loading,connectedCount=0})=>{
     const [hov,setHov]=useState(false);
+    const isConn=connectedCount>0;
     return(
       <button onClick={!loading?onConnect:undefined} onMouseEnter={()=>!loading&&setHov(true)} onMouseLeave={()=>setHov(false)}
-        style={{display:'flex',flexDirection:'column',alignItems:'center',gap:10,padding:'28px 20px',borderRadius:14,border:`2px dashed ${hov?C.primary:'#D1D5DB'}`,background:hov?C.tint:'#FAFAFA',cursor:loading?'default':'pointer',textAlign:'center',transition:'all .15s',fontFamily:'inherit',minWidth:140,flex:'1 1 140px',outline:'none',opacity:loading?.7:1}}>
-        <div style={{minHeight:56,display:'flex',alignItems:'center',justifyContent:'center'}}>{loading?<Spinner s={40}/>:icon}</div>
-        <div style={{fontWeight:700,fontSize:13,color:hov?C.primary:C.dark}}>{label}</div>
-        {sub&&<div style={{fontSize:11,color:C.muted,lineHeight:1.4}}>{sub}</div>}
-        <div style={{fontSize:11,fontWeight:600,color:hov?C.primary:C.muted,display:'flex',alignItems:'center',gap:4,marginTop:2}}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          {loading?'Connecting...':'Add Account'}
+        style={{display:'flex',flexDirection:'column',alignItems:'center',gap:7,padding:'16px 14px',borderRadius:12,
+          border:`2px ${isConn?'solid':'dashed'} ${isConn?'#16a34a':hov?C.primary:'#D1D5DB'}`,
+          background:isConn?'#F0FDF4':hov?C.tint:'#FAFAFA',
+          cursor:loading?'default':'pointer',textAlign:'center',transition:'all .15s',fontFamily:'inherit',
+          minWidth:120,flex:'1 1 120px',outline:'none',opacity:loading?.7:1}}>
+        <div style={{position:'relative',display:'flex',alignItems:'center',justifyContent:'center'}}>
+          {loading?<Spinner s={22}/>:icon}
+          {isConn&&!loading&&<span style={{position:'absolute',top:-5,right:-8,width:14,height:14,borderRadius:'50%',background:'#16a34a',display:'flex',alignItems:'center',justifyContent:'center'}}><Check s={9} c="#fff"/></span>}
+        </div>
+        <div style={{fontWeight:700,fontSize:13,color:isConn?'#166534':hov?C.primary:C.dark}}>{label}</div>
+        {isConn&&<div style={{fontSize:10,color:'#16a34a',fontWeight:600}}>{connectedCount} account{connectedCount>1?'s':''} connected</div>}
+        <div style={{fontSize:11,fontWeight:600,color:isConn?C.primary:hov?C.primary:C.muted,display:'flex',alignItems:'center',gap:4,marginTop:1}}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          {loading?'Connecting...':isConn?'Add Another':'Add Account'}
         </div>
       </button>
     );
@@ -241,19 +252,20 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
           <div style={{fontSize:12,color:C.muted,marginBottom:14}}>Click a cloud to add and connect an account. You can add multiple Google accounts.</div>
           <div style={{display:'flex',gap:14,flexWrap:'wrap',marginBottom:20}}>
             <AddCloudCard
-              icon={<GoogleIcon s={180}/>}
+              icon={<GoogleIcon/>}
               label="Google Workspace"
-              sub="Gmail, Drive, Gemini"
-              onConnect={signInGoogle} loading={lgG}/>
+              onConnect={signInGoogle} loading={lgG}
+              connectedCount={googleAccounts.length}/>
             <AddCloudCard
-              icon={<MsIcon s={180}/>}
+              icon={<MsIcon/>}
               label="Microsoft 365"
-              sub="Teams, Copilot, OneDrive"
-              onConnect={signInMs} loading={lgM}/>
+              onConnect={signInMs} loading={lgM}
+              connectedCount={msAccounts.length}/>
           </div>
           {errG&&<div style={{fontSize:12,color:C.error,marginBottom:8}}>{errG}</div>}
           {errM&&<div style={{fontSize:12,color:C.error,marginBottom:8}}>{errM}</div>}
-          {hasAny&&<div style={{fontSize:12,color:'#16a34a',display:'flex',alignItems:'center',gap:6,marginBottom:16}}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>{[googleAccounts.length>0&&`${googleAccounts.length} Google account${googleAccounts.length>1?'s':''} connected`,msAccounts.length>0&&`${msAccounts.length} Microsoft account${msAccounts.length>1?'s':''} connected`].filter(Boolean).join(' · ')}</div>}
+          {infoG&&<div style={{display:'flex',alignItems:'center',gap:8,fontSize:12,color:'#92400e',background:'#FFFBEB',border:'1px solid #FCD34D',borderRadius:8,padding:'10px 14px',marginBottom:8}}><IcoWarn s={13}/>Google: {infoG}</div>}
+          {infoM&&<div style={{display:'flex',alignItems:'center',gap:8,fontSize:12,color:'#92400e',background:'#FFFBEB',border:'1px solid #FCD34D',borderRadius:8,padding:'10px 14px',marginBottom:8}}><IcoWarn s={13}/>Microsoft: {infoM}</div>}
           {!hasAny&&<div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:8,fontSize:13,color:'#991B1B',marginBottom:16}}><IcoWarn s={14}/>Connect at least one cloud account to proceed.</div>}
         </div>
       )}
@@ -272,7 +284,7 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
               <div style={{fontSize:12,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.5,marginBottom:10}}>Google Workspace</div>
               {googleAccounts.map(acc=>(
                 <ConnectedAccountRow key={acc.accountId}
-                  icon={<GoogleIcon s={120}/>}
+                  icon={<GoogleIcon/>}
                   email={acc.email} displayName={acc.displayName}
                   onDisconnect={()=>disconnectGoogleAccount(acc.accountId)}/>
               ))}
@@ -286,7 +298,7 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
             <div style={{marginBottom:20}}>
               <div style={{fontSize:12,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.5,marginBottom:10}}>Google Workspace</div>
               <button onClick={signInGoogle} disabled={lgG} style={{fontSize:13,color:C.primary,background:C.tint,border:`1px solid ${C.primary}`,borderRadius:10,cursor:'pointer',fontFamily:'inherit',padding:'14px 20px',display:'flex',alignItems:'center',gap:8,width:'100%',justifyContent:'center',opacity:lgG?.6:1}}>
-                {lgG?<Spinner s={14}/>:<GoogleIcon s={100}/>}
+                {lgG?<Spinner s={14}/>:<GoogleIcon/>}
                 Connect Google Workspace
               </button>
             </div>
@@ -295,7 +307,7 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
             <div style={{fontSize:12,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.5,marginBottom:10}}>Microsoft 365</div>
             {msAccounts.map(acc=>(
               <ConnectedAccountRow key={acc.accountId}
-                icon={<MsIcon s={120}/>}
+                icon={<MsIcon/>}
                 email={acc.email} displayName={acc.displayName||(acc.tenantId?`Tenant: ${acc.tenantId}`:null)}
                 onDisconnect={()=>disconnectMsAccount(acc.accountId)}/>
             ))}
@@ -387,12 +399,19 @@ const Step1=({googleUsers,googleAuthed,onComplete,onBack,showToast,uploadData:ac
   const [dragOver,setDragOver]=useState(false);
   const [savedUploads,setSavedUploads]=useState([]);
   const [showMenu,setShowMenu]=useState(false);
+  const [previousExport,setPreviousExport]=useState(null); // most recent DB export, shown when no activeUpload
   const menuRef=useRef(null);
 
   useEffect(()=>{if(googleUsers.length>0&&selected.size===0)setSelected(new Set(googleUsers.map(u=>u.email)))},[googleUsers]);
 
   const loadSavedUploads=async()=>{
-    try{const r=await fetch('/api/uploads');const d=await r.json();setSavedUploads(d.uploads||[])}catch{}
+    try{
+      const r=await fetch('/api/uploads');const d=await r.json();
+      const uploads=d.uploads||[];
+      setSavedUploads(uploads);
+      // If no active upload already in use, surface the most recent one as a resume prompt
+      if(!activeUpload&&uploads.length>0)setPreviousExport(uploads[0]);
+    }catch{}
   };
 
   useEffect(()=>{loadSavedUploads()},[]);
@@ -407,7 +426,7 @@ const Step1=({googleUsers,googleAuthed,onComplete,onBack,showToast,uploadData:ac
   const toggleAll=()=>{if(selected.size===googleUsers.length)setSelected(new Set());else setSelected(new Set(googleUsers.map(u=>u.email)))};
 
   const startExport=async()=>{
-    setExporting(true);setElapsed(0);
+    setPreviousExport(null);setExporting(true);setElapsed(0);
     elapsedRef.current=setInterval(()=>setElapsed(p=>p+1),1000);
     setExportStatus('Creating Vault export...');
     try{
@@ -467,6 +486,29 @@ const Step1=({googleUsers,googleAuthed,onComplete,onBack,showToast,uploadData:ac
         <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Import Data</div>
         <div style={{fontSize:13,color:C.muted}}>Select users to export from Google Workspace, or upload a Vault ZIP file.</div>
       </div>
+
+      {/* Previous export resume banner */}
+      {previousExport&&!activeUpload&&(
+        <div className="scale-in" style={{display:'flex',alignItems:'center',gap:14,padding:'14px 16px',background:'#F0FDF4',border:'1.5px solid #86EFAC',borderRadius:12,marginBottom:16}}>
+          <div style={{width:36,height:36,borderRadius:10,background:'#DCFCE7',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+            <Check s={18} c='#16a34a'/>
+          </div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontWeight:600,fontSize:13,color:'#166534'}}>Previous export found</div>
+            <div style={{fontSize:12,color:'#16a34a',marginTop:2}}>
+              {previousExport.total_users} user{previousExport.total_users!==1?'s':''} · {previousExport.total_conversations} conversations · {previousExport.upload_time?new Date(previousExport.upload_time).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):''}
+            </div>
+          </div>
+          <div style={{display:'flex',gap:8,flexShrink:0}}>
+            <button onClick={()=>{setPreviousExport(null)}} style={{fontSize:12,padding:'6px 12px',borderRadius:8,border:`1px solid #86EFAC`,background:'white',color:'#166534',cursor:'pointer',fontFamily:'inherit',fontWeight:500}}>
+              New Export
+            </button>
+            <button onClick={()=>loadSavedUpload(previousExport)} style={{fontSize:12,padding:'6px 14px',borderRadius:8,border:'none',background:'#16a34a',color:'white',cursor:'pointer',fontFamily:'inherit',fontWeight:600,display:'flex',alignItems:'center',gap:6}}>
+              Continue →
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Tabs + hamburger */}
       <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:20}}>
@@ -3364,11 +3406,11 @@ function App(){
 
   // Load users at App level as soon as auth is confirmed — not dependent on Step0 being visible
   useEffect(()=>{
-    if(!googleAuthed||googleUsers.length>0)return;
+    if(!googleAuthed)return;
     fetch('/api/google/users').then(r=>r.ok?r.json():null).then(d=>{if(d?.users)setGoogleUsers(d.users)}).catch(()=>{});
   },[googleAuthed]);
   useEffect(()=>{
-    if(!msAuthed||msUsers.length>0)return;
+    if(!msAuthed)return;
     fetch('/api/ms/users').then(r=>r.ok?r.json():null).then(d=>{if(d?.users)setMsUsers(d.users)}).catch(()=>{});
   },[msAuthed]);
   useEffect(()=>{lsSet(KRef.current.selUsers,[...selectedUsers])},[selectedUsers]);

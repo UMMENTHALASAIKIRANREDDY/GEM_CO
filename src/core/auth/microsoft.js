@@ -94,6 +94,23 @@ export async function acquireTokenByCode(code, stateParam) {
   const email = result.account?.username || null;
   const displayName = result.account?.name || null;
 
+  // Deduplicate: if this email is already in another session, merge into it
+  if (email) {
+    for (const [existingKey, existingSession] of _sessions.entries()) {
+      if (existingKey === key) continue;
+      if (!existingKey.startsWith(`${appUserId}:`)) continue;
+      if (existingSession.email === email) {
+        existingSession.token = result.accessToken;
+        existingSession.tokenExpiry = tokenExpiry;
+        existingSession.account = result.account || existingSession.account;
+        _sessions.delete(key);
+        try { const db = getDb(); db.collection('authSessions').deleteOne({ appUserId, provider: 'microsoft', accountId }).catch(() => {}); } catch {}
+        logger.info(`MS: ${email} already connected for ${appUserId} — refreshed existing session ${existingSession.accountId}`);
+        return { ...result, email, displayName, accountId: existingSession.accountId, alreadyConnected: true };
+      }
+    }
+  }
+
   _sessions.set(key, {
     msalApp,
     tenant: tenantId,
