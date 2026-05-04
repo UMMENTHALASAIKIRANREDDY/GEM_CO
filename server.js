@@ -293,6 +293,21 @@ app.put('/api/config', requireAuth, async (req, res) => {
 
 // ─── Migration workspace + job endpoints ─────────────────────────────────────
 
+// One-call state load on login — returns config, mappings, recent workspaces, recent uploads
+app.get('/api/init', requireAuth, async (req, res) => {
+  try {
+    const { appUserId } = getWorkspaceContext(req);
+    if (!appUserId) return res.status(401).json({ error: 'Session missing user id' });
+    const [config, mappings, recentWorkspaces, recentUploads] = await Promise.all([
+      db().collection('userConfig').findOne({ appUserId }),
+      db().collection('userMappings').find({ appUserId }).toArray(),
+      db().collection('migrationWorkspaces').find({ appUserId }).sort({ startTime: -1 }).limit(10).toArray(),
+      db().collection('uploads').find({ appUserId }).sort({ uploadTime: -1 }).limit(5).toArray(),
+    ]);
+    res.json({ config, mappings, recentWorkspaces, recentUploads });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // All migration runs for current user (all directions)
 app.get('/api/workspaces', requireAuth, async (req, res) => {
   try {
