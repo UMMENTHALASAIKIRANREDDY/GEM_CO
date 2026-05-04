@@ -1067,9 +1067,13 @@ export function createG2CRouter(deps) {
   });
 
   // ─── Audit routes ─────────────────────────────────────────────────────────────
+  const requireAuditAuth = (req, res, next) => {
+    if (!req.session?.appUser) return res.status(401).json({ error: 'Not logged in' });
+    next();
+  };
 
   // GET /audit/sessions — 50 most recent sessions with summary fields
-  router.get('/audit/sessions', async (req, res) => {
+  router.get('/audit/sessions', requireAuditAuth, async (req, res) => {
     try {
       const sessions = await db().collection('agentAuditLog').aggregate([
         { $sort: { ts: -1 } },
@@ -1078,8 +1082,8 @@ export function createG2CRouter(deps) {
           firstTs: { $last: '$ts' },
           lastTs: { $first: '$ts' },
           appUserId: { $first: '$appUserId' },
-          step: { $first: '$step' },
-          migDir: { $first: '$migDir' },
+          step: { $last: '$step' },
+          migDir: { $last: '$migDir' },
           messageSnippet: { $last: '$message' },
           eventCount: { $sum: 1 },
         }},
@@ -1094,7 +1098,7 @@ export function createG2CRouter(deps) {
   });
 
   // GET /audit/session/:id — all events for a session, sorted ascending
-  router.get('/audit/session/:id', async (req, res) => {
+  router.get('/audit/session/:id', requireAuditAuth, async (req, res) => {
     try {
       const events = await db().collection('agentAuditLog')
         .find({ sessionId: req.params.id })
@@ -1107,7 +1111,7 @@ export function createG2CRouter(deps) {
   });
 
   // GET /audit/stream — SSE fan-out of live audit events
-  router.get('/audit/stream', (req, res) => {
+  router.get('/audit/stream', requireAuditAuth, (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');

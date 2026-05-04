@@ -127,7 +127,9 @@ function escHtml(s) {
 let evtSource = null;
 
 function connectSSE() {
-  if (evtSource) evtSource.close();
+  const old = evtSource;
+  evtSource = null;
+  if (old) old.close();
   evtSource = new EventSource(`${API}/api/audit/stream`);
 
   evtSource.onopen = () => {
@@ -176,9 +178,9 @@ function connectSSE() {
   };
 
   evtSource.onerror = () => {
+    if (!evtSource || evtSource.readyState === EventSource.CLOSED) return;
     elLiveBadge.textContent = '● Offline';
     elLiveBadge.className = 'badge-offline';
-    // Retry in 5s
     setTimeout(connectSSE, 5000);
   };
 }
