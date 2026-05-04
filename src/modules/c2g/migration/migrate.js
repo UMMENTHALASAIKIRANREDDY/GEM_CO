@@ -14,6 +14,7 @@ import {
   BorderStyle,
   AlignmentType,
   ExternalHyperlink,
+  PageBreak,
 } from "docx";
 import {
   getServiceAccountAuth,
@@ -384,122 +385,166 @@ function textRuns(text, style = {}) {
   return runs;
 }
 
-// ── Build DOCX with embedded images ──────────────────────────────────
+// ── Build ONE merged DOCX for all conversations ───────────────────────
 
-async function buildConversationDocx(items, convIdx, userName, downloadedImages, uploadedFileLinks) {
+async function buildAllConversationsDocx(sessions, userName, downloadedImages, uploadedFileLinks) {
   const children = [];
-
-  children.push(
-    new Paragraph({
-      heading: HeadingLevel.TITLE,
-      alignment: AlignmentType.CENTER,
-      children: [new TextRun({ text: `Conversation ${convIdx}`, bold: true, size: 44 })],
-    })
+  const sessionList = [...sessions]; // array of [sessionId, items]
+  const isChatGPT = sessionList.some(([, items]) =>
+    items.some((i) => i.sessionId?.startsWith("chatgpt-") || i._conversationTitle)
   );
+  const aiLabel = isChatGPT ? "ChatGPT" : "Copilot";
 
-  children.push(
-    new Paragraph({
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 100 },
-      children: [new TextRun({
-        text: `${userName} — ${items.length} message${items.length === 1 ? "" : "s"}`,
-        size: 24, color: "666666", italics: true,
-      })],
-    })
-  );
+  // ── Cover ────────────────────────────────────────────────────────────
+  children.push(new Paragraph({
+    heading: HeadingLevel.TITLE,
+    alignment: AlignmentType.CENTER,
+    spacing: { after: 120 },
+    children: [new TextRun({ text: `${aiLabel} Chat History`, bold: true, size: 48 })],
+  }));
+  children.push(new Paragraph({
+    alignment: AlignmentType.CENTER,
+    spacing: { after: 80 },
+    children: [new TextRun({ text: userName, size: 28, color: "444444", italics: true })],
+  }));
+  children.push(new Paragraph({
+    alignment: AlignmentType.CENTER,
+    spacing: { after: 500 },
+    children: [new TextRun({
+      text: `${sessionList.length} conversation${sessionList.length !== 1 ? "s" : ""} · Exported ${new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}`,
+      size: 20, color: "888888",
+    })],
+  }));
 
-  const firstDate = items[0]?.createdDateTime;
-  if (firstDate) {
-    children.push(
-      new Paragraph({
-        alignment: AlignmentType.CENTER,
-        spacing: { after: 300 },
-        children: [new TextRun({ text: formatTimestamp(firstDate), size: 20, color: "888888" })],
-      })
-    );
+  // ── Table of Contents ────────────────────────────────────────────────
+  children.push(new Paragraph({
+    heading: HeadingLevel.HEADING_1,
+    spacing: { before: 200, after: 160 },
+    children: [new TextRun({ text: "CONVERSATION INDEX", bold: true, size: 26, color: "0B5394", allCaps: true })],
+  }));
+
+  for (let i = 0; i < sessionList.length; i++) {
+    const [, items] = sessionList[i];
+    const title = conversationTitle(items);
+    const dateStr = items[0]?.createdDateTime ? formatTimestamp(items[0].createdDateTime) : "";
+    children.push(new Paragraph({
+      spacing: { after: 60 },
+      children: [
+        new TextRun({ text: `${i + 1}.  `, bold: true, size: 20, color: "0B5394" }),
+        new TextRun({ text: title, size: 20, color: "1E3A5F", bold: true }),
+        new TextRun({ text: dateStr ? `\t${dateStr}` : "", size: 18, color: "999999" }),
+        new TextRun({ text: `  (${items.length} msg${items.length !== 1 ? "s" : ""})`, size: 17, color: "AAAAAA" }),
+      ],
+    }));
   }
 
-  const isChatGPT = items.some((i) => i.sessionId?.startsWith("chatgpt-") || i._conversationTitle);
+  // Page break before conversations
+  children.push(new Paragraph({ spacing: { before: 400 }, children: [new PageBreak()] }));
 
-  for (const item of items) {
-    const isUser = item.interactionType === "userPrompt";
-    const senderLabel = isUser ? "You" : isChatGPT ? "ChatGPT" : "Copilot";
-    const text = extractText(item);
-    const attachments = extractAttachments(item);
+  // ── All Conversations ────────────────────────────────────────────────
+  for (let convIdx = 0; convIdx < sessionList.length; convIdx++) {
+    const [, items] = sessionList[convIdx];
+    const title = conversationTitle(items);
+    const firstDate = items[0]?.createdDateTime;
 
-    if (!text && attachments.length === 0) continue;
+    if (convIdx > 0) {
+      children.push(new Paragraph({
+        spacing: { before: 400, after: 400 },
+        border: { top: { style: BorderStyle.SINGLE, size: 6, color: "D1D5DB", space: 1 } },
+        children: [],
+      }));
+    }
 
-    children.push(
-      new Paragraph({
+    children.push(new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      spacing: { before: 100, after: 60 },
+      children: [new TextRun({ text: `Conversation ${convIdx + 1}: ${title}`, bold: true, size: 30, color: "0B5394" })],
+    }));
+
+    if (firstDate) {
+      children.push(new Paragraph({
+        spacing: { after: 180 },
+        children: [new TextRun({ text: `Date: ${formatTimestamp(firstDate)}`, size: 18, color: "888888", italics: true })],
+      }));
+    }
+
+    for (const item of items) {
+      const isUser = item.interactionType === "userPrompt";
+      const senderLabel = isUser ? "You" : aiLabel;
+      const text = extractText(item);
+      const attachments = extractAttachments(item);
+
+      if (!text && attachments.length === 0) continue;
+
+      children.push(new Paragraph({
         spacing: { before: 200, after: 40 },
         children: [
           new TextRun({ text: senderLabel, bold: true, size: 22, color: isUser ? "0B5394" : "38761D" }),
           new TextRun({ text: `    ${formatTimestamp(item.createdDateTime)}`, size: 16, color: "AAAAAA" }),
         ],
-      })
-    );
+      }));
 
-    if (text) {
-      children.push(
-        new Paragraph({
+      if (text) {
+        children.push(new Paragraph({
           spacing: { after: 80 },
           indent: { left: 360 },
           border: { left: { style: BorderStyle.SINGLE, size: 4, color: isUser ? "0B5394" : "38761D", space: 8 } },
           children: textRuns(text, { size: 21, font: "Calibri", color: "333333" }),
-        })
-      );
-    }
+        }));
+      }
 
-    for (const att of attachments) {
-      if (att.type === "image" && downloadedImages.has(att.url)) {
-        const imgBuf = downloadedImages.get(att.url);
-        try {
-          children.push(
-            new Paragraph({
+      for (const att of attachments) {
+        const imgKey = att.url || att.originalUrl;
+        if (att.type === "image" && downloadedImages.has(imgKey)) {
+          const imgBuf = downloadedImages.get(imgKey);
+          try {
+            children.push(new Paragraph({
               spacing: { after: 80 },
               indent: { left: 360 },
-              children: [
-                new ImageRun({
-                  data: imgBuf,
-                  transformation: { width: 400, height: 300 },
-                  type: att.contentType?.includes("png") ? "png" : "jpg",
-                }),
-              ],
-            })
-          );
-        } catch {
-          children.push(
-            new Paragraph({
+              children: [new ImageRun({
+                data: imgBuf,
+                transformation: { width: 400, height: 300 },
+                type: att.contentType?.includes("png") ? "png" : "jpg",
+              })],
+            }));
+          } catch {
+            children.push(new Paragraph({
               indent: { left: 360 },
               children: [new TextRun({ text: `[Image: ${att.name || att.url}]`, italics: true, size: 18, color: "888888" })],
-            })
-          );
+            }));
+          }
+        } else if (att.type === "file") {
+          const label = att.name || "Attached file";
+          const driveLink = uploadedFileLinks?.get(att.url);
+          const linkUrl = driveLink || att.url;
+          const prefix = driveLink ? "Google Drive" : "Original";
+          if (linkUrl) {
+            children.push(new Paragraph({
+              spacing: { after: 60 },
+              indent: { left: 360 },
+              children: [
+                new TextRun({ text: `[${prefix}] `, size: 18, bold: true, color: driveLink ? "38761D" : "888888" }),
+                new ExternalHyperlink({
+                  link: linkUrl,
+                  children: [new TextRun({ text: label, style: "Hyperlink", size: 20, color: "0B5394", underline: {} })],
+                }),
+              ],
+            }));
+          } else {
+            children.push(new Paragraph({
+              indent: { left: 360 },
+              children: [new TextRun({ text: `[Attachment] ${label}`, size: 18, color: "888888", italics: true })],
+            }));
+          }
         }
-      } else if (att.type === "file") {
-        const label = att.name || "Attached file";
-        const driveLink = uploadedFileLinks?.get(att.url);
-        const linkUrl = driveLink || att.url;
-        const prefix = driveLink ? "Google Drive" : "Original";
-        children.push(
-          new Paragraph({
-            spacing: { after: 60 },
-            indent: { left: 360 },
-            children: [
-              new TextRun({ text: `[${prefix}] `, size: 18, bold: true, color: driveLink ? "38761D" : "888888" }),
-              new ExternalHyperlink({
-                link: linkUrl,
-                children: [new TextRun({ text: label, style: "Hyperlink", size: 20, color: "0B5394", underline: {} })],
-              }),
-            ],
-          })
-        );
       }
     }
   }
 
   const doc = new Document({
     creator: "Copilot Migration Tool",
-    title: `Conversation ${convIdx}`,
+    title: `${aiLabel} Chat History — ${userName}`,
+    description: `All ${aiLabel} conversations for ${userName}`,
     styles: { default: { document: { run: { font: "Calibri", size: 22 } } } },
     sections: [{ children }],
   });
@@ -702,65 +747,73 @@ export async function migrateUserPair({
     const mainFolder = await createDriveFolder(auth, folderName);
 
     console.log(`[C2G] Processing ${sessions.size} conversation(s) for ${sourceDisplayName}...`);
-    let convIdx = 0;
+
+    // ── Step 1: Download all assets across all conversations ──────────
+    const allDownloadedImages = new Map();
+    const allFilesToUpload = [];
+    const seenAssetNames = new Set();
+    let convCount = 0;
     for (const [, items] of sessions) {
-      convIdx++;
+      convCount++;
+      console.log(`[C2G] Conv ${convCount}/${sessions.size}: downloading assets...`);
       try {
-        const title = conversationTitle(items);
-        const dateStr = items[0]?.createdDateTime
-          ? new Date(items[0].createdDateTime).toISOString().slice(0, 10)
-          : "unknown";
-
-        console.log(`[C2G] Conv ${convIdx}/${sessions.size}: downloading assets...`);
         const { downloadedImages, filesToUpload } = await downloadConversationAssets(items, accessToken, sourceUserId);
-        console.log(`[C2G] Conv ${convIdx}: ${filesToUpload.length} file(s) to upload, ${downloadedImages.size} image(s)`);
-
-        const convFolder = mainFolder;
-
-        const uploadedFileLinks = new Map();
-
+        for (const [url, buf] of downloadedImages) allDownloadedImages.set(url, buf);
         for (const asset of filesToUpload) {
-          try {
-            const uploaded = await uploadFileToDrive(auth, asset.name, asset.mime, asset.buffer, convFolder.id);
-            result.filesUploaded++;
-            result.files.push({
-              name: asset.name,
-              title: `${asset.type === "image" ? "Image" : "File"}: ${asset.name}`,
-              driveFileId: uploaded.id,
-              webViewLink: uploaded.webViewLink,
-            });
-            if (asset.originalUrl) {
-              uploadedFileLinks.set(asset.originalUrl, uploaded.webViewLink);
-            }
-          } catch (uploadErr) {
-            result.errors.push(`Asset ${asset.name}: ${uploadErr.message}`);
+          // Deduplicate by name across all conversations
+          let assetName = asset.name;
+          if (seenAssetNames.has(assetName)) {
+            const ext = assetName.includes(".") ? assetName.slice(assetName.lastIndexOf(".")) : "";
+            const base = assetName.slice(0, assetName.length - ext.length);
+            assetName = `${base}_${allFilesToUpload.length + 1}${ext}`;
           }
+          seenAssetNames.add(assetName);
+          allFilesToUpload.push({ ...asset, name: assetName });
         }
-
-        const docxBuffer = await buildConversationDocx(items, convIdx, sourceDisplayName || sourceUserId, downloadedImages, uploadedFileLinks);
-        const docxName = `Conversation_${convIdx}_${dateStr}.docx`;
-
-        const docxFile = await uploadFileToDrive(
-          auth, docxName,
-          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-          docxBuffer,
-          convFolder.id
-        );
-
-        result.filesUploaded++;
-        result.files.push({
-          name: docxName,
-          title,
-          driveFileId: docxFile.id,
-          webViewLink: docxFile.webViewLink,
-        });
-        console.log(`[C2G] Conv ${convIdx}/${sessions.size}: uploaded DOCX + ${filesToUpload.length} files`);
       } catch (err) {
-        console.error(`[C2G] Conv ${convIdx} error: ${err.message}`);
-        result.errors.push(`Conversation ${convIdx}: ${err.message || String(err)}`);
+        console.warn(`[C2G] Asset download error for conv ${convCount}: ${err.message}`);
       }
     }
-    console.log(`[C2G] Done for ${sourceDisplayName}: ${result.filesUploaded} files uploaded, ${result.errors.length} errors`);
+    console.log(`[C2G] Total: ${allFilesToUpload.length} attachment(s), ${allDownloadedImages.size} image(s)`);
+
+    // ── Step 2: Upload all attachment files to Drive (flat in folder) ─
+    const uploadedFileLinks = new Map();
+    for (const asset of allFilesToUpload) {
+      try {
+        const uploaded = await uploadFileToDrive(auth, asset.name, asset.mime, asset.buffer, mainFolder.id);
+        result.filesUploaded++;
+        result.files.push({
+          name: asset.name,
+          title: `${asset.type === "image" ? "Image" : "File"}: ${asset.name}`,
+          driveFileId: uploaded.id,
+          webViewLink: uploaded.webViewLink,
+        });
+        if (asset.originalUrl) uploadedFileLinks.set(asset.originalUrl, uploaded.webViewLink);
+      } catch (uploadErr) {
+        result.errors.push(`Asset ${asset.name}: ${uploadErr.message}`);
+      }
+    }
+
+    // ── Step 3: Build ONE merged DOCX for all conversations ───────────
+    try {
+      const safeName = (sourceDisplayName || sourceUserId)
+        .replace(/[/\\:*?"<>|]/g, "_").replace(/\s+/g, "_").slice(0, 80).trim() || "User";
+      const docxName = `${safeName}_All_Conversations.docx`;
+      const docxBuffer = await buildAllConversationsDocx(sessions, sourceDisplayName || sourceUserId, allDownloadedImages, uploadedFileLinks);
+      const docxFile = await uploadFileToDrive(
+        auth, docxName,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        docxBuffer, mainFolder.id
+      );
+      result.filesUploaded++;
+      result.files.push({ name: docxName, title: "All Conversations", driveFileId: docxFile.id, webViewLink: docxFile.webViewLink });
+      console.log(`[C2G] Uploaded merged DOCX: ${docxName}`);
+    } catch (err) {
+      console.error(`[C2G] Merged DOCX build error: ${err.message}`);
+      result.errors.push(`Merged DOCX: ${err.message}`);
+    }
+
+    console.log(`[C2G] Done for ${sourceDisplayName}: ${result.filesUploaded} file(s) uploaded, ${result.errors.length} error(s)`);
   } catch (err) {
     result.errors.push(err.message || String(err));
   }
