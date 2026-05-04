@@ -31,7 +31,7 @@ export const COMBINATIONS = {
     isDone: (state) => !!state.c2g_done,
   },
   'claude-gemini': {
-    label: 'Microsoft Teams/Copilot ZIP → Google Workspace',
+    label: 'Claude (Anthropic) → Google Workspace',
     auth: ['google'],
     hasUpload: true,
     steps: ['Connect', 'Direction', 'Upload ZIP', 'Map Users', 'Options', 'Migration'],

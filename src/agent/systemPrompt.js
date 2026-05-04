@@ -42,8 +42,16 @@ export function buildSystemPrompt(migrationState, migrationLogs = []) {
 - Use natural language: "Looks like...", "Good news —", "One thing I notice...", "Let me..."
 - Never be robotic or repeat the same phrasing twice in a row
 
-## Available Migration Combinations
-${combosText}
+## Available Migration Directions
+- "gemini-copilot" = Google Workspace → Microsoft 365 Copilot. Needs: Google + Microsoft 365.
+- "copilot-gemini" = Microsoft 365 Copilot → Google Workspace. Needs: Microsoft 365 + Google.
+- "claude-gemini" = Claude (Anthropic AI) → Google Workspace. Needs: Google ONLY (no Microsoft needed). User uploads a Claude export ZIP.
+
+## Direction Recognition Rules
+- User says "Claude", "Anthropic", "claude.ai", "Claude AI", "claude to google", "claude to gemini" → migDir = "claude-gemini"
+- User says "Gemini to Copilot", "Google to Microsoft", "G2C" → migDir = "gemini-copilot"
+- User says "Copilot to Gemini", "Microsoft to Google", "C2G" → migDir = "copilot-gemini"
+- NEVER map "Claude" to "copilot-gemini" or "gemini-copilot" — Claude is ALWAYS "claude-gemini"
 
 ## What the user sees RIGHT NOW
 ${panelContext}
@@ -51,7 +59,7 @@ ${panelContext}
 ## Current State
 - Direction: ${dirLabel}
 - Google Workspace: ${googleAuthed ? '✓ connected' : '✗ not connected'}
-- Microsoft 365: ${msAuthed ? '✓ connected' : '✗ not connected'}
+- Microsoft 365: ${msAuthed ? '✓ connected' : '✗ not connected'}${migDir === 'claude-gemini' ? '\n- NOTE: Claude→Gemini only needs Google. Microsoft 365 is NOT required.' : ''}
 - Mappings: ${step < 2 ? 'N/A — user not at mapping step yet' : `${effectiveMappings} users mapped`}
 - Migration: ${isRunning ? 'RUNNING' : isDone ? 'DONE' : 'not started'}
 - Last run: ${lastRunWasDry ? 'dry run' : 'live'} | Users: ${stats.users ?? 0} · Files: ${stats.pages ?? 0} · Errors: ${stats.errors ?? 0}
@@ -79,8 +87,8 @@ function buildPanelContext({
   c2g_live, cl2g_live, c2g_done, cl2g_done, googleAuthed, msAuthed, selected_users_count,
 }) {
   if (!migDir) {
-    if (step === 0) return 'LEFT PANEL: Connect Clouds. User needs to connect Google and/or Microsoft 365.';
-    if (step === 1) return 'LEFT PANEL: Choose Direction. User sees Gemini→Copilot, Copilot→Gemini, Claude→Gemini options.';
+    if (step === 0) return `LEFT PANEL: Connect Clouds. Google: ${googleAuthed ? '✓ connected' : '✗ not connected'}. Microsoft 365: ${msAuthed ? '✓ connected' : '✗ not connected'}. Note: Claude→Gemini needs Google only. Gemini↔Copilot needs both.`;
+    if (step === 1) return 'LEFT PANEL: Choose Direction. Options: "gemini-copilot" (Google→Microsoft), "copilot-gemini" (Microsoft→Google), "claude-gemini" (Claude AI→Google, needs Google only).';
   }
   if (migDir === 'gemini-copilot') {
     if (step === 0) return 'LEFT PANEL: Connect Clouds (Gemini→Copilot). Needs Google Workspace + Microsoft 365.';
@@ -97,7 +105,7 @@ function buildPanelContext({
     return `LEFT PANEL: Migration (Copilot→Gemini). Running: ${c2g_live}. Done: ${c2g_done}.`;
   }
   if (migDir === 'claude-gemini') {
-    if (step <= 1) return 'LEFT PANEL: Connect/Direction (Claude→Gemini).';
+    if (step <= 1) return `LEFT PANEL: Connect/Direction (Claude→Gemini). ONLY Google Workspace needed — Microsoft 365 is NOT required. Google: ${googleAuthed ? '✓ connected' : '✗ not connected'}.`;
     if (step === 2) return `LEFT PANEL: Upload ZIP (Claude→Gemini). ${cl2g_upload_users > 0 ? `✓ ${cl2g_upload_users} users` : '✗ not uploaded'}.`;
     if (step === 3) return `LEFT PANEL: Map Users (Claude→Gemini). ${cl2g_mappings_count} users mapped.`;
     if (step === 4) return `LEFT PANEL: Options (Claude→Gemini). dryRun=${options.dryRun}.`;

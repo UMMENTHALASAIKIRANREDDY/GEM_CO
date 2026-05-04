@@ -90,10 +90,10 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'select_direction',
-      description: 'Set the migration direction and advance the left panel to the next step. Call when user says which direction they want.',
+      description: 'Set the migration direction and advance the left panel to the next step. Call when user says which direction they want. "claude-gemini" = Claude (Anthropic) → Google. "gemini-copilot" = Google → Microsoft 365. "copilot-gemini" = Microsoft 365 → Google.',
       parameters: {
         type: 'object',
-        properties: { migDir: { type: 'string', enum: ['gemini-copilot', 'copilot-gemini', 'claude-gemini'] } },
+        properties: { migDir: { type: 'string', enum: ['gemini-copilot', 'copilot-gemini', 'claude-gemini'], description: 'claude-gemini for Claude→Google, gemini-copilot for Google→Microsoft, copilot-gemini for Microsoft→Google' } },
         required: ['migDir'],
       },
     },
