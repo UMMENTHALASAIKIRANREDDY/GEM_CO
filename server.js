@@ -22,10 +22,11 @@ import { createC2GRouter } from './src/modules/c2g/routes.js';
 import { createCL2GRouter } from './src/modules/cl2g/routes.js';
 import { createCL2CRouter } from './src/modules/cl2c/routes.js';
 import { runAgentLoop } from './src/agent/agentLoop.js';
+import { auditEmitter } from './src/agent/auditLogger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4000;
 
 const dbLog = getLogger('db:ops');
 function db() { return getDb(); }
@@ -134,7 +135,7 @@ app.post('/api/logout', (req, res) => {
 
 // ─── Auth gates ───────────────────────────────────────────────────────────────
 
-const PUBLIC_PATHS = ['/api/login', '/api/me', '/api/logout', '/audit/sessions', '/audit/stream'];
+const PUBLIC_PATHS = ['/api/login', '/api/me', '/api/logout'];
 app.use('/api', (req, res, next) => {
   if (PUBLIC_PATHS.includes(req.path)) return next();
   if (!req.session?.appUser) return res.status(401).json({ error: 'Not logged in' });
@@ -425,6 +426,48 @@ app.post('/api/users', requireAuth, async (req, res) => {
     if (e.code === 11000) return res.status(409).json({ error: 'Email already exists' });
     res.status(500).json({ error: e.message });
   }
+});
+
+// ─── Agent audit routes ───────────────────────────────────────────────────────
+
+// List recent agent sessions (distinct sessionIds, most recent first)
+app.get('/audit/sessions', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 20;
+    const sessions = await db().collection('agentAuditLog').aggregate([
+      { $sort: { ts: -1 } },
+      { $group: { _id: '$sessionId', lastTs: { $first: '$ts' }, firstTs: { $last: '$ts' }, eventCount: { $sum: 1 }, appUserId: { $first: '$appUserId' } } },
+      { $sort: { lastTs: -1 } },
+      { $limit: limit },
+      { $project: { sessionId: '$_id', lastTs: 1, firstTs: 1, eventCount: 1, appUserId: 1, _id: 0 } }
+    ]).toArray();
+    res.json(sessions);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Get all events for a specific session
+app.get('/audit/session/:id', async (req, res) => {
+  try {
+    const events = await db().collection('agentAuditLog')
+      .find({ sessionId: req.params.id })
+      .sort({ ts: 1 })
+      .toArray();
+    res.json(events);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// SSE stream of live audit events
+app.get('/audit/stream', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const onEvent = (event) => {
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
+  auditEmitter.on('event', onEvent);
+  req.on('close', () => auditEmitter.off('event', onEvent));
 });
 
 // ─── Mount module routers ─────────────────────────────────────────────────────
