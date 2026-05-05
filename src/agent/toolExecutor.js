@@ -6,6 +6,36 @@ import { loadHistory } from './conversationHistory.js';
 
 const logger = getLogger('agent:executor');
 
+function checkStepPrerequisites(targetStep, migDir, migrationState) {
+  const {
+    googleAuthed = false, msAuthed = false,
+    uploadData = null,
+    mappings_count = 0, c2g_mappings_count = 0, cl2g_mappings_count = 0,
+    cl2g_upload_users = 0,
+  } = migrationState ?? {};
+
+  if (migDir === 'gemini-copilot') {
+    if (targetStep >= 3 && !uploadData)
+      return 'Upload your Google Workspace data first (Step 2 — Import Data).';
+    if (targetStep >= 4 && mappings_count === 0)
+      return 'Map your users first (Step 3 — Map Users). At least one mapping is required.';
+  }
+
+  if (migDir === 'copilot-gemini') {
+    if (targetStep >= 3 && c2g_mappings_count === 0)
+      return 'Map your users first (Step 2 — Map Users). At least one mapping is required.';
+  }
+
+  if (migDir === 'claude-gemini') {
+    if (targetStep >= 3 && cl2g_upload_users === 0)
+      return 'Upload your Claude export ZIP first (Step 2 — Upload ZIP).';
+    if (targetStep >= 4 && cl2g_mappings_count === 0)
+      return 'Map your users first (Step 3 — Map Users). At least one mapping is required.';
+  }
+
+  return null; // no blocker
+}
+
 export async function executeTool(toolName, args, { streamEvent, session, migrationState, migrationLogs, db, agentDeps }) {
   const migDir = migrationState?.migDir;
   const appUserId = session?.appUser?._id?.toString() || session?.appUserId?.toString() || null;
@@ -15,6 +45,8 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
     // ── UI event tools ─────────────────────────────────────────────────────
     case 'navigate_to_step': {
       const step = typeof args.step === 'number' ? args.step : parseInt(args.step, 10);
+      const blocker = checkStepPrerequisites(step, migDir, migrationState);
+      if (blocker) return { navigated: false, blocked: true, reason: blocker };
       streamEvent('navigate', { step });
       return { navigated: true, step };
     }
