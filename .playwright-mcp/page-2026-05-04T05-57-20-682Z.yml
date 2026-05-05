@@ -1,0 +1,55 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - img "CloudFuze" [ref=e5] [cursor=pointer]
+    - generic [ref=e7] [cursor=pointer]: CloudFuze
+    - generic [ref=e8]:
+      - generic [ref=e11]: Idle
+      - generic [ref=e12]:
+        - generic [ref=e13]: AD
+        - generic [ref=e14]: Admin User
+        - button "Sign out" [ref=e15] [cursor=pointer]:
+          - img [ref=e16]
+          - text: Sign out
+  - generic [ref=e19]:
+    - generic [ref=e21]:
+      - generic [ref=e23]:
+        - generic "Drag to swap panels" [ref=e24]:
+          - img [ref=e25]
+        - img [ref=e33] [cursor=pointer]
+        - generic [ref=e39] [cursor=pointer]: CloudFuze Migration
+      - generic [ref=e41]:
+        - generic [ref=e42]:
+          - generic [ref=e43]: Connect Clouds
+          - generic [ref=e44]: Connect source and destination cloud accounts with admin credentials.
+        - generic [ref=e45]:
+          - button "Google Workspace Click to connect" [ref=e47] [cursor=pointer]:
+            - img [ref=e49]
+            - generic [ref=e54]: Google Workspace
+            - generic [ref=e55]: Click to connect
+          - button "Microsoft Teams / 365 Click to connect" [ref=e57] [cursor=pointer]:
+            - img [ref=e59]
+            - generic [ref=e65]:
+              - text: Microsoft
+              - text: Teams / 365
+            - generic [ref=e66]: Click to connect
+        - generic [ref=e67]:
+          - img [ref=e68]
+          - text: Google Workspace connection is required to proceed.
+        - button "Continue →" [ref=e70]
+    - generic [ref=e73]:
+      - generic [ref=e74]:
+        - generic [ref=e75]:
+          - generic "Drag to swap panels" [ref=e76]:
+            - img [ref=e77]
+          - img [ref=e85] [cursor=pointer]
+          - generic [ref=e91] [cursor=pointer]: Migration Agent
+        - generic [ref=e94]: Ready
+      - generic [ref=e95]:
+        - generic [ref=e97]:
+          - img [ref=e99]
+          - generic [ref=e104]: Migration Agent
+          - generic [ref=e105]: Your AI guide for migrating Google Gemini conversations to Microsoft Copilot. Ask me anything or let me guide you through the process.
+        - generic [ref=e107]:
+          - button "+" [ref=e109] [cursor=pointer]
+          - textbox "Ask me anything or type a command..." [ref=e110]
+          - button "Send" [disabled] [ref=e111]
