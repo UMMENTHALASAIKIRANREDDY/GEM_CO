@@ -1658,8 +1658,9 @@ const StepC2GOptions=({c2gOptions,setC2gOptions,c2gConfig,setC2gConfig,googleAut
   );
 };
 
-const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c2gLive,onChangeDirection,lastRunWasDry,onStartLive,c2gTotal})=>{
-  const ring=c2gDone?100:c2gTotal>0?Math.min(Math.round((c2gStats.users/c2gTotal)*100),99):c2gLive?5:0;
+const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c2gLive,onChangeDirection,lastRunWasDry,onStartLive,c2gTotal,c2gFolderName})=>{
+  // Use users processed / total; floor at 5% while live so ring always shows movement
+  const ring=c2gDone?100:c2gTotal>0?Math.max(5,Math.min(Math.round((c2gStats.users/c2gTotal)*100),99)):c2gLive?5:0;
   return(
     <div className="fade-up">
       {!c2gDone&&!c2gLive&&(
@@ -1711,7 +1712,8 @@ const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c
               </div>
             ))}
           </div>
-          <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+          {!lastRunWasDry&&<GemSetupInstructions folderName={c2gFolderName||'CopilotChats'}/>}
+          <div style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:12}}>
             {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{flex:'1 1 140px',justifyContent:'center'}}><IcoRocket s={14}/> Start Live Migration</Btn>}
             <Btn variant="ghost" onClick={onBack} style={{flex:'1 1 100px',justifyContent:'center'}}>← Options</Btn>
             <Btn variant="ghost" onClick={()=>onRunAnother&&onRunAnother()} style={{flex:'1 1 120px',justifyContent:'center'}}>New Migration</Btn>
@@ -3006,9 +3008,8 @@ function App(){
       }catch(parseErr){console.error('C2G SSE parse error',parseErr,e.data)}
     };
     sseRef.current.onerror=(ev)=>{
-      console.error('C2G SSE error',ev);
-      if(sseRef.current){sseRef.current.close();setC2gLive(false);}
-      addLog('error','Lost connection to migration log stream.');
+      // Let EventSource auto-reconnect; don't close or setC2gLive(false) — migration runs in backend
+      console.warn('C2G SSE connection dropped, will auto-reconnect',ev);
     };
     // Wait for SSE connection to establish before triggering migration
     const sseReady=new Promise(resolve=>{sseRef.current.onopen=()=>resolve();setTimeout(resolve,1000)});
@@ -3461,7 +3462,7 @@ function App(){
                   {/* Copilot → Gemini steps */}
                   {step===2&&migDir==='copilot-gemini'&&<StepC2GMap msUsers={msUsers} googleUsers={googleUsers} c2gMappings={c2gMappings} setC2gMappings={setC2gMappings} c2gSelectedUsers={c2gSelectedUsers} setC2gSelectedUsers={setC2gSelectedUsers} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast}/>}
                   {step===3&&migDir==='copilot-gemini'&&<StepC2GOptions c2gOptions={c2gOptions} setC2gOptions={setC2gOptions} c2gConfig={c2gConfig} setC2gConfig={setC2gConfig} googleAuthed={googleAuthed} msAuthed={msAuthed} onRun={runC2GMigration} onBack={()=>setStep(2)}/>}
-                  {(step===4||step===5)&&migDir==='copilot-gemini'&&<StepC2GMigrate c2gStats={c2gStats} c2gDone={c2gDone} c2gBatchId={null} onRunAnother={()=>{setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(3)} onStart={runC2GMigration} c2gLive={c2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={c2gLastDry} onStartLive={()=>runC2GMigration(true)} c2gTotal={c2gTotal}/>}
+                  {(step===4||step===5)&&migDir==='copilot-gemini'&&<StepC2GMigrate c2gStats={c2gStats} c2gDone={c2gDone} c2gBatchId={null} onRunAnother={()=>{setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(3)} onStart={runC2GMigration} c2gLive={c2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={c2gLastDry} onStartLive={()=>runC2GMigration(true)} c2gTotal={c2gTotal} c2gFolderName={c2gConfig?.folderName}/>}
                   {/* Claude → Gemini steps */}
                   {step===2&&migDir==='claude-gemini'&&<StepCL2GUpload cl2gUploadData={cl2gUploadData} setCl2gUploadData={setCl2gUploadData} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast} onUploadComplete={(n)=>{if(agentMode==='guide')addAgentMsg('bot',`Claude export loaded — **${n} user${n!==1?'s':''}** found. I can match them to your Google Workspace accounts automatically.`,{quickReplies:['Auto-map all users now','I\'ll review mappings manually','How does auto-mapping work?']});}}/>}
                   {step===3&&migDir==='claude-gemini'&&<StepCL2GMap cl2gUploadData={cl2gUploadData} googleUsers={googleUsers} cl2gMappings={cl2gMappings} setCl2gMappings={setCl2gMappings} cl2gSelectedUuids={cl2gSelectedUuids} setCl2gSelectedUuids={setCl2gSelectedUuids} onNext={()=>setStep(4)} onBack={()=>setStep(2)} showToast={showToast}/>}
