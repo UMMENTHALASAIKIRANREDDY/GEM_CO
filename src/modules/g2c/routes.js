@@ -617,8 +617,8 @@ export function createG2CRouter(deps) {
     try {
       const text = req.file.buffer.toString('utf8');
       const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-      const firstLower = lines[0]?.toLowerCase() ?? '';
-      const hasHeader = firstLower.includes('source') || firstLower.includes('google') || firstLower.includes('email');
+      const cols = lines[0]?.split(',').map(s => s.trim()) ?? [];
+      const hasHeader = cols.every(c => !c.includes('@'));
       const dataLines = hasHeader ? lines.slice(1) : lines;
 
       const mappings = {};
