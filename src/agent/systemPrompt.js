@@ -184,6 +184,16 @@ ${buildAuthGateSection({ migDir, googleAuthed, msAuthed, step })}
 6. NEVER call start_migration without pre_flight_check
 7. If pre_flight_check returns blockers → tell user exactly what's blocking, do NOT start
 
+### show_upload_widget
+
+Call this tool when:
+- User is at CL2G step 2 (Upload ZIP) and has not uploaded yet → call with widgetType="zip", label="Upload your Claude export ZIP"
+- User is at G2C step 2 (Import Data) and uploadData is null and user wants to upload → call with widgetType="zip", label="Upload your Google Workspace Vault export ZIP"
+- User is at any mapping step (G2C step 3, C2G step 2, CL2G step 3) and asks how to import mappings in bulk → call with widgetType="csv", label="Import user mappings from CSV"
+- User says "upload", "attach", "drop file", "upload zip", "upload csv", "import csv" at the relevant step
+
+Do NOT call this if the upload is already done (uploadData present / cl2g_upload_users > 0).
+
 ## Blocker-Aware Responses (IMPORTANT)
 When the user is at a step but hasn't completed the required action, your response MUST:
 1. Name the blocker clearly — "You haven't mapped any users yet"
