@@ -617,7 +617,9 @@ export function createG2CRouter(deps) {
     try {
       const text = req.file.buffer.toString('utf8');
       const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-      const dataLines = lines[0]?.toLowerCase().includes('source') ? lines.slice(1) : lines;
+      const firstLower = lines[0]?.toLowerCase() ?? '';
+      const hasHeader = firstLower.includes('source') || firstLower.includes('google') || firstLower.includes('email');
+      const dataLines = hasHeader ? lines.slice(1) : lines;
 
       const mappings = {};
       for (const line of dataLines) {
@@ -638,7 +640,7 @@ export function createG2CRouter(deps) {
       );
 
       dbLog.info(`userMappings-csv — ${migDirParam} ${count} mappings from CSV`);
-      res.json({ ok: true, count });
+      res.json({ success: true, count });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }

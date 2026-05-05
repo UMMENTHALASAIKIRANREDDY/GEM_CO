@@ -1364,7 +1364,7 @@ const AgentChat=({msgs,typing,input,onInput,onSend,onLogLineClick,onQuickReply,w
                   widgetType={w.widgetType}
                   label={w.label}
                   migDir={w.migDir}
-                  onDone={(result)=>onWidgetDone&&onWidgetDone(i,w,result)}
+                  onDone={(result)=>onWidgetDone&&onWidgetDone(m.id,w,result)}
                 />
               </div>
             );
@@ -3489,7 +3489,7 @@ function App(){
                 <span style={{fontSize:12,color:live?'#16a34a':C.muted,fontWeight:500}}>{live?'Migrating':'Ready'}</span>
               </div>
             </div>
-            <AgentChat msgs={agentMsgs} typing={agentTyping} input={agentInput} onInput={setAgentInput} onSend={()=>sendToAgent()} onLogLineClick={handleLogLineClick} onQuickReply={handleAgentQuickReply} widgetProps={widgetProps} onShowReports={()=>setShowReports(true)} onClearChat={()=>setAgentMsgs([])} onWidgetDone={(idx,w,result)=>{setAgentMsgs(prev=>prev.map((m,i)=>i===idx?{...m,content:{...m.content,done:true}}:m));const notifyMsg=w.widgetType==='zip'?`Upload complete. ${result.total_users??result.users?.length??0} users loaded.`:`CSV imported. ${result.count??0} mappings loaded.`;sendToAgent(notifyMsg,false);}}/>
+            <AgentChat msgs={agentMsgs} typing={agentTyping} input={agentInput} onInput={setAgentInput} onSend={()=>sendToAgent()} onLogLineClick={handleLogLineClick} onQuickReply={handleAgentQuickReply} widgetProps={widgetProps} onShowReports={()=>setShowReports(true)} onClearChat={()=>setAgentMsgs([])} onWidgetDone={(msgId,w,result)=>{setAgentMsgs(prev=>prev.map(m=>m.id===msgId?{...m,content:{...m.content,done:true}}:m));const notifyMsg=w.widgetType==='zip'?`Upload complete. ${result.total_users??result.users?.length??0} users loaded.`:`CSV imported. ${result.count??0} mappings loaded.`;sendToAgent(notifyMsg,false);}}/>
           </div>
         );
         return(
