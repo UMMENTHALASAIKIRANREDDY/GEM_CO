@@ -2727,8 +2727,8 @@ function App(){
     setSelectedUsers(new Set());
     if(agentMode==='guide'){
       const n=data.total_users||data.users?.length||0;
-      addAgentMsg('bot',`Vault data loaded — **${n} user${n!==1?'s':''}** found. Want me to auto-map them by email?`,
-        {quickReplies:['Yes, auto-map','I\'ll map manually']});
+      addAgentMsg('bot',`Vault data loaded — **${n} user${n!==1?'s':''}** found. I can auto-map them by email right now.`,
+        {quickReplies:['Auto-map all users now','I\'ll review and map manually','Show me the user list']});
     }
     setTimeout(()=>setStep(3),400);
   };
@@ -2765,7 +2765,7 @@ function App(){
               ? `Migration finished with **${s.errors} error${s.errors!==1?'s':''}**. The items below failed — retry to recover them.`
               : `All done! **${s.pages} pages** migrated across **${s.users} user${s.users!==1?'s':''}**. Everything looks clean.`,
             {statusCard:{users:s.users,files:s.pages,errors:s.errors},
-             quickReplies:s.errors>0?['Retry Failed','Download Report','Start Another']:['Download Report','What do I do next?','Start Another']}
+             quickReplies:s.errors>0?['Retry the failed items','Download the full report','Start a new migration']:['Download the migration report','Start a new migration']}
           ),600);
         }
       }catch{}
@@ -2924,7 +2924,7 @@ function App(){
                 ? `Dry run complete — **${s2.files} file${s2.files!==1?'s':''}** would be uploaded for **${s2.users} user${s2.users!==1?'s':''}**. Ready to go live?`
                 : `All done! **${s2.files} file${s2.files!==1?'s':''}** uploaded to Google Drive across **${s2.users} user${s2.users!==1?'s':''}**.`,
             {statusCard:{users:s2.users,files:s2.files,errors:s2.errors,label:isDry?'Dry Run Preview':'Migration Results'},
-             quickReplies:s2.errors>0?['Retry Failed','Download Report','Start Another']:isDry?['Start Live Migration','Start Another']:['Download Report','What do I do next?','Start Another']}
+             quickReplies:s2.errors>0?['Retry the failed items','Download the full report','Start a new migration']:isDry?['Run the live migration now','Download dry run report']:['Download the migration report','Start a new migration']}
           ),400);
         }
       }catch(parseErr){console.error('C2G SSE parse error',parseErr,e.data)}
@@ -3002,7 +3002,7 @@ function App(){
             s2.errors>0?`Migration finished with **${s2.errors} error${s2.errors!==1?'s':''}**. Check the log for details.`
             :isDry?`Dry run complete — **${s2.files} file${s2.files!==1?'s':''}** would be uploaded for **${s2.users} user${s2.users!==1?'s':''}**. Ready to go live?`
             :`All done! **${s2.files} file${s2.files!==1?'s':''}** uploaded to Google Drive across **${s2.users} user${s2.users!==1?'s':''}**.`,
-            {statusCard:{users:s2.users,files:s2.files,errors:s2.errors,label:isDry?'Dry Run Preview':'Migration Results'},quickReplies:s2.errors>0?['Download Report','Start Another']:isDry?['Start Live Migration','Start Another']:['Download Report','What do I do next?','Start Another']}
+            {statusCard:{users:s2.users,files:s2.files,errors:s2.errors,label:isDry?'Dry Run Preview':'Migration Results'},quickReplies:s2.errors>0?['Retry the failed items','Download the full report']:isDry?['Run the live migration now','Download dry run report']:['Download the migration report','Start a new migration']}
           ),400);
         }
       }catch(parseErr){console.error('CL2G SSE parse error',parseErr)}
@@ -3184,12 +3184,24 @@ function App(){
 
   const handleAgentQuickReply=useCallback(qr=>{
     if(!qr)return;
+
+    // Direction selection chips — resolve to agent message so select_direction tool fires
+    const G2C_CHIPS=['Gemini → Copilot','Google to Microsoft','Migrate Google Workspace → Microsoft 365','Migrate Google → Microsoft 365','I want to migrate Google Workspace → Microsoft 365','Migrate Google Workspace'];
+    const C2G_CHIPS=['Copilot → Gemini','Microsoft to Google','Migrate Microsoft 365 → Google Workspace','Migrate Microsoft 365 → Google','Migrate Microsoft 365'];
+    const CL2G_CHIPS=['Claude → Gemini','Claude to Google','Teams/Copilot ZIP → Google','Migrate Claude AI → Google Workspace','Migrate Claude AI → Google','Start Claude → Google migration now','Start Claude → Google migration (Google only needed)'];
+
+    if(G2C_CHIPS.includes(qr)){addAgentMsg('user',qr);setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current('I want to migrate from Google Workspace to Microsoft 365'),300);return;}
+    if(C2G_CHIPS.includes(qr)){addAgentMsg('user',qr);setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current('I want to migrate from Microsoft 365 Copilot to Google Workspace'),300);return;}
+    if(CL2G_CHIPS.includes(qr)){addAgentMsg('user',qr);setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current('I want to migrate from Claude AI to Google Workspace'),300);return;}
+
+    // Auth chips — trigger sign-in directly without going through agent
+    if(['Connect Google Workspace','Connect Google','Sign in with Google','Connect Google Workspace first','Connect Google Workspace to continue'].includes(qr)){setStep(0);handleChatSignInGoogle&&handleChatSignInGoogle();return;}
+    if(['Connect Microsoft 365','Sign in with Microsoft','Connect Microsoft 365 first','Connect Microsoft 365 to continue','Connect Microsoft 365 to unlock more migrations','Connect Microsoft 365 to unlock more options'].includes(qr)){setStep(0);handleChatSignInMs&&handleChatSignInMs();return;}
+
+    // Navigation chips
     if(qr==='Choose direction'||qr==="What's the difference?"){setStep(1);addAgentMsg('user',qr);setTimeout(()=>sendToAgentRef.current(qr),300);return;}
-    if(qr==='Gemini → Copilot'||qr==='Google to Microsoft'){addAgentMsg('user',qr);setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current('Google to Microsoft'),300);return;}
-    if(qr==='Copilot → Gemini'||qr==='Microsoft to Google'){addAgentMsg('user',qr);setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current('Microsoft to Google'),300);return;}
-    if(qr==='Claude → Gemini'||qr==='Claude to Google'||qr==='Teams/Copilot ZIP → Google'){addAgentMsg('user',qr);setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current('Claude to Google'),300);return;}
-    if(qr==='Connect Google Workspace'||qr==='Connect Google'||qr==='Sign in with Google'){setStep(0);handleChatSignInGoogle&&handleChatSignInGoogle();return;}
-    if(qr==='Connect Microsoft 365'||qr==='Sign in with Microsoft'){setStep(0);handleChatSignInMs&&handleChatSignInMs();return;}
+
+    // All other chips go to agent as chat messages
     sendToAgent(qr);
   },[sendToAgent,addAgentMsg,setStep,setMigDir,handleChatSignInGoogle,handleChatSignInMs]);
 
@@ -3213,7 +3225,7 @@ function App(){
                 :migDir==='claude-gemini'
                   ?`Google connected! You're all set for Claude → Gemini. Ready to upload your Claude ZIP?`
                   :`Google connected! Now connect Microsoft 365 to unlock Gemini↔Copilot migration — or choose Claude → Gemini which only needs Google.`;
-              addAgentMsg('bot',msg,{quickReplies:msAuthed?['Gemini → Copilot','Copilot → Gemini','Claude → Gemini']:['Connect Microsoft 365','Claude → Gemini — Google only']});
+              addAgentMsg('bot',msg,{quickReplies:msAuthed?['Migrate Google → Microsoft 365','Migrate Microsoft 365 → Google','Migrate Claude AI → Google']:['Connect Microsoft 365 to unlock more migrations','Start Claude → Google migration now']});
             }
           }).catch(()=>{setGoogleAuthed(true);setChatGLoading(false);});
         },500);
@@ -3236,7 +3248,7 @@ function App(){
               const msg=googleAuthed
                 ?`Microsoft 365 connected! Both accounts ready — choose your migration direction.`
                 :`Microsoft 365 connected! Now connect Google Workspace to complete setup.`;
-              addAgentMsg('bot',msg,{quickReplies:googleAuthed?['Gemini → Copilot','Copilot → Gemini']:['Connect Google Workspace']});
+              addAgentMsg('bot',msg,{quickReplies:googleAuthed?['Migrate Google → Microsoft 365','Migrate Microsoft 365 → Google']:['Connect Google Workspace to continue']});
             }
           }).catch(()=>{setMsAuthed(true);setChatMLoading(false);});
         },500);
@@ -3369,7 +3381,7 @@ function App(){
                   {step===3&&migDir==='copilot-gemini'&&<StepC2GOptions c2gOptions={c2gOptions} setC2gOptions={setC2gOptions} c2gConfig={c2gConfig} setC2gConfig={setC2gConfig} googleAuthed={googleAuthed} msAuthed={msAuthed} onRun={runC2GMigration} onBack={()=>setStep(2)}/>}
                   {(step===4||step===5)&&migDir==='copilot-gemini'&&<StepC2GMigrate c2gStats={c2gStats} c2gDone={c2gDone} c2gBatchId={null} onRunAnother={()=>{setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(3)} onStart={runC2GMigration} c2gLive={c2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={c2gLastDry} onStartLive={()=>runC2GMigration(true)} c2gTotal={c2gTotal}/>}
                   {/* Claude → Gemini steps */}
-                  {step===2&&migDir==='claude-gemini'&&<StepCL2GUpload cl2gUploadData={cl2gUploadData} setCl2gUploadData={setCl2gUploadData} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast} onUploadComplete={(n)=>{if(agentMode==='guide')addAgentMsg('bot',`ZIP uploaded — **${n} user${n!==1?'s':''}** found. Want me to auto-map them by email?`,{quickReplies:['Yes, auto-map','I\'ll map manually','What is auto-map?']});}}/>}
+                  {step===2&&migDir==='claude-gemini'&&<StepCL2GUpload cl2gUploadData={cl2gUploadData} setCl2gUploadData={setCl2gUploadData} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast} onUploadComplete={(n)=>{if(agentMode==='guide')addAgentMsg('bot',`Claude export loaded — **${n} user${n!==1?'s':''}** found. I can match them to your Google Workspace accounts automatically.`,{quickReplies:['Auto-map all users now','I\'ll review mappings manually','How does auto-mapping work?']});}}/>}
                   {step===3&&migDir==='claude-gemini'&&<StepCL2GMap cl2gUploadData={cl2gUploadData} googleUsers={googleUsers} cl2gMappings={cl2gMappings} setCl2gMappings={setCl2gMappings} cl2gSelectedUuids={cl2gSelectedUuids} setCl2gSelectedUuids={setCl2gSelectedUuids} onNext={()=>setStep(4)} onBack={()=>setStep(2)} showToast={showToast}/>}
                   {step===4&&migDir==='claude-gemini'&&<StepCL2GOptions cl2gOptions={cl2gOptions} setCl2gOptions={setCl2gOptions} cl2gConfig={cl2gConfig} setCl2gConfig={setCl2gConfig} googleAuthed={googleAuthed} onRun={runCL2GMigration} onBack={()=>setStep(3)}/>}
                   {(step===5||step===6)&&migDir==='claude-gemini'&&<StepCL2GMigrate cl2gStats={cl2gStats} cl2gDone={cl2gDone} onRunAnother={()=>{setCl2gDone(false);setCl2gStats({users:0,files:0,errors:0});setCl2gOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(4)} onStart={runCL2GMigration} cl2gLive={cl2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={cl2gLastDry} onStartLive={()=>runCL2GMigration(true)} cl2gTotal={cl2gTotal} folderName={cl2gConfig.folderName||'ClaudeChats'}/>}

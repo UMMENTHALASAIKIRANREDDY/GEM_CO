@@ -12,9 +12,11 @@ const GEM_ORIGIN = process.env.GEM_ORIGIN || 'http://localhost:4000';
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Proxy all /api/* and /auth/* to GEM CO on port 4000
-app.use(['/api', '/auth'], createProxyMiddleware({
+// Note: pathFilter used (not app.use path) so Express does NOT strip the prefix
+app.use(createProxyMiddleware({
   target: GEM_ORIGIN,
   changeOrigin: true,
+  pathFilter: ['/api/**', '/auth/**'],
   on: {
     error: (err, req, res) => {
       res.status(502).json({ error: 'GEM CO unreachable', detail: err.message });
