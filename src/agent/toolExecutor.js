@@ -77,6 +77,16 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
       return { shown: true };
     }
 
+    case 'show_upload_widget': {
+      const { widgetType = 'zip', label } = args;
+      streamEvent('show_upload_widget', {
+        widgetType,
+        label: label || (widgetType === 'zip' ? 'Upload your export ZIP file' : 'Import user mappings from CSV'),
+        migDir,
+      });
+      return { shown: true, widgetType };
+    }
+
     case 'show_post_migration_guide': {
       streamEvent('show_widget', { widget: { type: 'post_migration_guide', migDir } });
       return { shown: true };

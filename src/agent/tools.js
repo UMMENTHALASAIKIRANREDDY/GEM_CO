@@ -190,4 +190,26 @@ export const AGENT_TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'show_upload_widget',
+      description: 'Inject an upload widget into the chat for the user to upload a file. Use widgetType="zip" when the user needs to upload a ZIP export file (Claude export for CL2G, Google Vault for G2C). Use widgetType="csv" when the user needs to upload a CSV to bulk-import user mappings. Only call this when the user is at the correct step and needs to upload.',
+      parameters: {
+        type: 'object',
+        properties: {
+          widgetType: {
+            type: 'string',
+            enum: ['zip', 'csv'],
+            description: 'zip = file archive upload (Claude export or Google Vault); csv = user mapping CSV upload',
+          },
+          label: {
+            type: 'string',
+            description: 'Short label shown above the widget, e.g. "Upload your Claude export ZIP" or "Import user mappings from CSV"',
+          },
+        },
+        required: ['widgetType'],
+      },
+    },
+  },
 ];
