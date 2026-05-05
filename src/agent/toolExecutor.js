@@ -8,17 +8,18 @@ const logger = getLogger('agent:executor');
 
 function checkStepPrerequisites(targetStep, migDir, migrationState) {
   const {
-    googleAuthed = false, msAuthed = false,
     uploadData = null,
-    mappings_count = 0, c2g_mappings_count = 0, cl2g_mappings_count = 0,
+    mappings_count = 0, selected_users_count = 0,
+    c2g_mappings_count = 0, cl2g_mappings_count = 0,
     cl2g_upload_users = 0,
   } = migrationState ?? {};
 
   if (migDir === 'gemini-copilot') {
     if (targetStep >= 3 && !uploadData)
       return 'Upload your Google Workspace data first (Step 2 — Import Data).';
-    if (targetStep >= 4 && mappings_count === 0)
-      return 'Map your users first (Step 3 — Map Users). At least one mapping is required.';
+    // Allow if either explicit mappings OR users have been selected
+    if (targetStep >= 4 && mappings_count === 0 && selected_users_count === 0)
+      return 'Map your users first (Step 3 — Map Users). Select at least one user to migrate.';
   }
 
   if (migDir === 'copilot-gemini') {
