@@ -111,5 +111,16 @@ async function ensureCollections() {
   if (!existing.has('cl2gUploads')) await _db.createCollection('cl2gUploads');
   await _db.collection('cl2gUploads').createIndex({ appUserId: 1, uploadTime: -1 });
 
-  logger.info('All 14 collections verified with indexes (multi-tenant scoped)');
+  // 13. chatHistory — persists agent chat messages per user for cross-device restore
+  if (!existing.has('chatHistory')) await _db.createCollection('chatHistory');
+  // Drop old unique index if it exists, then create correct non-unique index
+  try { await _db.collection('chatHistory').dropIndex('appUserId_1'); } catch (_) {}
+  await _db.collection('chatHistory').createIndex({ appUserId: 1, timestamp: -1 });
+
+  // 14. agentAuditLog — structured per-session agent trace for the monitor UI
+  if (!existing.has('agentAuditLog')) await _db.createCollection('agentAuditLog');
+  await _db.collection('agentAuditLog').createIndex({ sessionId: 1, ts: 1 });
+  await _db.collection('agentAuditLog').createIndex({ ts: -1 });
+
+  logger.info('All 16 collections verified with indexes (multi-tenant scoped)');
 }

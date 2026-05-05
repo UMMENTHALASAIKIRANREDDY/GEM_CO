@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agent Harness Monitor</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <span class="brand">Agent Harness Monitor</span>
+      <div class="topbar-controls">
+        <span id="live-badge" class="badge-offline">● Offline</span>
+        <button id="btn-refresh">Refresh</button>
+      </div>
+    </header>
+
+    <main id="panels">
+      <!-- Left: session list -->
+      <aside id="panel-sessions">
+        <div class="panel-header">Sessions</div>
+        <ul id="session-list"></ul>
+      </aside>
+
+      <!-- Center: event trace -->
+      <section id="panel-trace">
+        <div class="panel-header">
+          <span id="trace-title">Select a session</span>
+          <span id="trace-count" class="dim"></span>
+        </div>
+        <div id="trace-events"></div>
+      </section>
+
+      <!-- Right: detail inspector -->
+      <aside id="panel-detail">
+        <div class="panel-header">Event Detail</div>
+        <pre id="detail-json"></pre>
+      </aside>
+    </main>
+  </div>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>

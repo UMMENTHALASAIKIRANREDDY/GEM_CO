@@ -132,7 +132,7 @@ app.post('/api/logout', (req, res) => {
 
 // ─── Auth gates ───────────────────────────────────────────────────────────────
 
-const PUBLIC_PATHS = ['/api/login', '/api/me', '/api/logout'];
+const PUBLIC_PATHS = ['/api/login', '/api/me', '/api/logout', '/audit/sessions', '/audit/stream'];
 app.use('/api', (req, res, next) => {
   if (PUBLIC_PATHS.includes(req.path)) return next();
   if (!req.session?.appUser) return res.status(401).json({ error: 'Not logged in' });
@@ -288,13 +288,29 @@ app.get('/api/init', requireAuth, async (req, res) => {
   try {
     const { appUserId } = getWorkspaceContext(req);
     if (!appUserId) return res.status(401).json({ error: 'Session missing user id' });
-    const [config, mappings, recentWorkspaces, recentUploads] = await Promise.all([
+    const [config, mappings, recentWorkspaces, recentUploads, chatDoc] = await Promise.all([
       db().collection('userConfig').findOne({ appUserId }),
       db().collection('userMappings').find({ appUserId }).toArray(),
       db().collection('migrationWorkspaces').find({ appUserId }).sort({ startTime: -1 }).limit(10).toArray(),
       db().collection('uploads').find({ appUserId }).sort({ uploadTime: -1 }).limit(5).toArray(),
+      db().collection('chatHistory').findOne({ appUserId }),
     ]);
-    res.json({ config, mappings, recentWorkspaces, recentUploads });
+    res.json({ config, mappings, recentWorkspaces, recentUploads, chatMessages: chatDoc?.messages || [], uiState: chatDoc?.uiState || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Save chat messages + UI position for cross-device persistence
+app.post('/api/chat-history', requireAuth, async (req, res) => {
+  try {
+    const { appUserId } = getWorkspaceContext(req);
+    if (!appUserId) return res.status(401).json({ error: 'Not authenticated' });
+    const { messages, uiState } = req.body;
+    if (!Array.isArray(messages)) return res.status(400).json({ error: 'messages must be array' });
+    const update = { messages: messages.slice(-30), updatedAt: new Date() };
+    // uiState carries step, migDir, options — enough to restore left-panel position on any device
+    if (uiState && typeof uiState === 'object') update.uiState = uiState;
+    await db().collection('chatHistory').updateOne({ appUserId }, { $set: update }, { upsert: true });
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

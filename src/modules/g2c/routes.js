@@ -27,6 +27,7 @@ import { CheckpointManager } from '../../utils/checkpoint.js';
 import { AgentDeployer } from '../../agent/agentDeployer.js';
 import { getLogger } from '../../utils/logger.js';
 import { runAgentLoop } from '../../agent/agentLoop.js';
+import { auditEmitter } from '../../agent/auditLogger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Root of the project (3 levels up from src/modules/g2c/)
@@ -598,8 +599,8 @@ export function createG2CRouter(deps) {
     const { customerName, mappings, selectedUsers } = req.body;
     const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
     await db().collection('userMappings').updateOne(
-      { appUserId, migDir: 'gemini-copilot', batchId: 'latest' },
-      { $set: { customerName, mappings, selectedUsers, appUserId, migDir: 'gemini-copilot', googleEmail, msEmail, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+      { appUserId, migDir: 'gemini-copilot' },
+      { $set: { customerName, mappings, selectedUsers, appUserId, migDir: 'gemini-copilot', googleEmail, msEmail, batchId: 'latest', updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
       { upsert: true }
     );
     dbLog.info(`userMappings.upsert — G2C ${Object.keys(mappings || {}).length} mappings, ${(selectedUsers || []).length} selected`);
@@ -1004,69 +1005,33 @@ export function createG2CRouter(deps) {
     next();
   }, async (req, res) => {
     const { message, migrationState = {}, migrationLogs = [], isSystemTrigger = false } = req.body;
+    const appUserName = req.session.appUser?.name || req.session.appUser?.email?.split('@')[0] || 'there';
     if (!message) return res.status(400).json({ error: 'message required' });
 
-    // Attach migration executors to session so toolExecutor can fire them
-    req.session._agentDeps = {
+    // Build migration executors as local closures (not stored in session — functions can't be serialized)
+    const agentDeps = {
       startMigration: async ({ dryRun, batchId, migDir: dir, appUserId: uid }) => {
+        // Validate preconditions only — UI handles the actual migration trigger and SSE connection
         if (dir === 'gemini-copilot') {
-          const msEmail = req.session.msEmail || null;
-          const uploadId = migrationState.uploadData?.id;
-          const uploadDoc = uploadId
-            ? await db().collection('uploads').findOne({ _id: uploadId, appUserId: uid })
-            : await db().collection('uploads').findOne({ appUserId: uid }, { sort: { uploadTime: -1 } });
+          const uploadDoc = await db().collection('uploads').findOne({ appUserId: uid }, { sort: { uploadTime: -1 } });
           const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: 'gemini-copilot' });
-          return runMigration({
-            extract_path: migrationState.uploadExtractPath || uploadDoc?.extractPath,
-            tenant_id: migrationState.tenantId || null,
-            customer_name: migrationState.customerName || 'Gemini',
-            user_mappings: mappingDoc?.mappings || {},
-            dry_run: dryRun,
-            batch_id: batchId,
-            appUserId: uid,
-            googleEmail: req.session.appUser?.email,
-            msEmail,
-          });
+          if (!uploadDoc) return { error: 'No Gemini export uploaded. Upload your takeout ZIP first.' };
+          if (!mappingDoc || !Object.keys(mappingDoc.mappings || {}).length) return { error: 'No user mappings for Gemini→Copilot. Map users first.' };
+          return { validated: true, batchId, note: 'UI will start migration and connect to log stream' };
         }
         if (dir === 'copilot-gemini') {
           const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: 'copilot-gemini' });
-          const pairs = Object.entries(mappingDoc?.mappings || {}).map(([src, dst]) => ({ sourceEmail: src, destEmail: dst }));
-          if (!pairs.length) return { error: 'No user mappings found for Copilot→Gemini. Map users first.' };
-          const body = { pairs, folderName: migrationState.customerName || 'CopilotChats', dryRun };
-          const resp = await fetch(`http://localhost:${process.env.PORT || 4000}/api/c2g/migrate`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Cookie: req.headers.cookie || '' },
-            body: JSON.stringify(body),
-          });
-          return resp.ok ? resp.json() : { error: `C2G migration start failed: ${resp.status}` };
+          if (!mappingDoc || !Object.keys(mappingDoc.mappings || {}).length) return { error: 'No user mappings for Copilot→Gemini. Map users first.' };
+          return { validated: true, batchId, note: 'UI will start migration and connect to log stream' };
         }
         if (dir === 'claude-gemini') {
-          const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: 'claude-gemini' });
           const uploadDoc = await db().collection('cl2gUploads').findOne({ appUserId: uid }, { sort: { uploadTime: -1 } });
-          if (!uploadDoc) return { error: 'No ZIP uploaded for Claude→Gemini. Upload your Claude export first.' };
-          const mappings = mappingDoc?.mappings || {};
-          const uploadUsers = uploadDoc.users || [];
-          const pairs = Object.entries(mappings)
-            .filter(([, dst]) => dst)
-            .map(([src, dst]) => {
-              const u = uploadUsers.find(u => u.email_address === src || u.uuid === src);
-              return {
-                sourceUuid: u?.uuid || src,
-                sourceDisplayName: u?.full_name || u?.email_address || src,
-                sourceEmail: u?.email_address || src,
-                destEmail: dst,
-              };
-            });
-          if (!pairs.length) return { error: 'No user mappings found for Claude→Gemini. Map users first.' };
-          const body = { uploadId: uploadDoc._id, pairs, folderName: migrationState.customerName || 'ClaudeChats', dryRun };
-          const resp = await fetch(`http://localhost:${process.env.PORT || 4000}/api/cl2g/migrate`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Cookie: req.headers.cookie || '' },
-            body: JSON.stringify(body),
-          });
-          return resp.ok ? resp.json() : { error: `CL2G migration start failed: ${resp.status}` };
+          const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: 'claude-gemini' });
+          if (!uploadDoc) return { error: 'No Claude export ZIP uploaded. Upload your export first.' };
+          if (!mappingDoc || !Object.keys(mappingDoc.mappings || {}).length) return { error: 'No user mappings for Claude→Gemini. Map users first.' };
+          return { validated: true, batchId, note: 'UI will start migration and connect to log stream' };
         }
-        return Promise.resolve({ started: true, note: `${dir} migration queued` });
+        return Promise.resolve({ validated: true, note: `${dir} migration will be started by UI` });
       },
       retryMigration: async ({ batchId: retryFromBatchId, appUserId: uid }) => {
         const batchDoc = await db().collection('migrationWorkspaces').findOne({ _id: retryFromBatchId, appUserId: uid });
@@ -1094,10 +1059,75 @@ export function createG2CRouter(deps) {
 
     await runAgentLoop(req, res, {
       message,
-      migrationState,
+      migrationState: { ...migrationState, appUserName },
       migrationLogs,
       isSystemTrigger: isSystemTrigger || message === '__step_context__',
       db: db(),
+      agentDeps,
+    });
+  });
+
+  // ─── Audit routes (internal monitor tool — no auth required) ─────────────────
+
+  // GET /audit/sessions — 50 most recent sessions with summary fields
+  router.get('/audit/sessions', async (req, res) => {
+    try {
+      const sessions = await db().collection('agentAuditLog').aggregate([
+        { $sort: { ts: -1 } },
+        { $group: {
+          _id: '$sessionId',
+          firstTs: { $last: '$ts' },
+          lastTs: { $first: '$ts' },
+          appUserId: { $first: '$appUserId' },
+          step: { $last: '$step' },
+          migDir: { $last: '$migDir' },
+          messageSnippet: { $last: '$message' },
+          eventCount: { $sum: 1 },
+        }},
+        { $sort: { lastTs: -1 } },
+        { $limit: 50 },
+        { $project: { sessionId: '$_id', _id: 0, firstTs: 1, lastTs: 1, appUserId: 1, step: 1, migDir: 1, messageSnippet: 1, eventCount: 1 } },
+      ]).toArray();
+      res.json(sessions);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // GET /audit/session/:id — all events for a session, sorted ascending
+  router.get('/audit/session/:id', async (req, res) => {
+    try {
+      const events = await db().collection('agentAuditLog')
+        .find({ sessionId: req.params.id })
+        .sort({ ts: 1 })
+        .toArray();
+      res.json(events);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // GET /audit/stream — SSE fan-out of live audit events
+  router.get('/audit/stream', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+
+    const onEvent = (event) => {
+      if (!res.writableEnded) {
+        try {
+          res.write(`data: ${JSON.stringify(event)}\n\n`);
+          res.flush?.();
+        } catch (_) {}
+      }
+    };
+    auditEmitter.on('event', onEvent);
+
+    req.on('close', () => {
+      auditEmitter.off('event', onEvent);
     });
   });
 

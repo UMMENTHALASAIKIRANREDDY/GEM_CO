@@ -9,8 +9,8 @@ export async function callAI(messages, tools) {
 
   if (azureEndpoint && azureKey) {
     const url = `${azureEndpoint.replace(/\/$/, '')}/openai/deployments/${azureDeployment}/chat/completions?api-version=2024-02-15-preview`;
-    const body = { messages, max_tokens: 900, temperature: 0.4 };
-    if (tools) body.tools = tools;
+    const body = { messages, max_tokens: 1800, temperature: 0.15 };
+    if (tools) { body.tools = tools; body.tool_choice = 'auto'; }
     const r = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'api-key': azureKey },
@@ -19,8 +19,8 @@ export async function callAI(messages, tools) {
     if (!r.ok) { const t = await r.text(); throw new Error(`Azure OpenAI error ${r.status}: ${t}`); }
     response = await r.json();
   } else if (openaiKey) {
-    const body = { model: 'gpt-4o', messages, max_tokens: 700, temperature: 0.35 };
-    if (tools) body.tools = tools;
+    const body = { model: 'gpt-4o', messages, max_tokens: 1800, temperature: 0.15 };
+    if (tools) { body.tools = tools; body.tool_choice = 'auto'; }
     const r = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },

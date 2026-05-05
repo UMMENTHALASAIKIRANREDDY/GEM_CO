@@ -55,11 +55,11 @@ const C={primary:'#0129AC',primaryH:'#0C18D4',primaryL:'#809EFC',tint:'#E1ECFF',
   bg:'#F6F6F6',white:'#FFFFFF',dark:'#2e2e2e',muted:'#707070',
   border:'#EBEBEB',success:'#0129AC',error:'#FF1F1F',warn:'#809EFC'};
 
-/* ── localStorage — 3 allowed cache keys ── */
-// Only these 3 keys are permitted. All other state lives in React or MongoDB.
+/* ── localStorage — cache keys ── */
 const LS_UPLOAD  = 'gem_upload_cache';   // lightweight upload metadata {uploadId,fileName,size}
 const LS_MAPPING = 'gem_mapping_cache';  // mapping UI snapshot {g2c,c2g} (MongoDB is authoritative)
-const LS_PREFS   = 'gem_ui_prefs';       // cosmetic UI prefs {splitPct,panelSwapped,leftMode}
+const LS_PREFS   = 'gem_ui_prefs';       // cosmetic UI prefs + migration state
+const LS_CHAT    = 'gem_chat_history';   // last 30 agent messages (role, content, ts)
 const lsGet=(k,fb)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb}catch{return fb}};
 const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}};
 // Clear ALL gem_ keys (used when switching users and for manual reset)
@@ -689,7 +689,7 @@ const MIG_ENTITIES=[
   {label:'Flagged',icon:<IcoFlag s={18}/>,  color:C.primaryL},
 ];
 
-const StepMigrate=({stats,done,lastRunWasDry,batchId,onStartLive,onRunAnother,onRetry,retrying,hasUploadData,onGoToConnect,onRetryWithPath,totalExpected=0,onChangeDirection})=>{
+const StepMigrate=({stats,done,live,lastRunWasDry,batchId,onStartLive,onRunAnother,onRetry,retrying,hasUploadData,onGoToConnect,onRetryWithPath,totalExpected=0,onChangeDirection})=>{
   const [batchUsers,setBatchUsers]=useState(null);
   const [showUserDetail,setShowUserDetail]=useState(false);
   const [errorGroups,setErrorGroups]=useState(null);
@@ -763,7 +763,10 @@ const StepMigrate=({stats,done,lastRunWasDry,batchId,onStartLive,onRunAnother,on
               </div>
             ))}
           </div>
-          <div style={{background:C.tint,borderRadius:8,padding:'10px 14px',fontSize:12,color:C.primary,textAlign:'center'}}>Processing conversations... watch the log →</div>
+          {live
+            ? <div style={{background:C.tint,borderRadius:8,padding:'10px 14px',fontSize:12,color:C.primary,textAlign:'center'}}>Processing conversations... watch the log →</div>
+            : <div style={{background:'#FEF3C7',borderRadius:8,padding:'10px 14px',fontSize:12,color:'#92400E',textAlign:'center'}}>Migration was interrupted. Log back in to see if it completed, or go back to restart.</div>
+          }
         </>
       ):(
         <>
@@ -2450,7 +2453,7 @@ function App(){
   const cl2gLiveRef=useRef(false);
   const [splitPct,setSplitPct]=useState(()=>lsGet(LS_PREFS,{}).splitPct||50);
   const [panelSwapped,setPanelSwapped]=useState(()=>lsGet(LS_PREFS,{}).panelSwapped||false);
-  const [agentMsgs,setAgentMsgs]=useState([]);
+  const [agentMsgs,setAgentMsgs]=useState(()=>lsGet(LS_CHAT,[]));
   const [agentTyping,setAgentTyping]=useState(false);
   const [agentInput,setAgentInput]=useState('');
   const [agentMode,setAgentMode]=useState('guide');
@@ -2485,6 +2488,7 @@ function App(){
   const greetedRef=useRef(false);
   const prevGuideKeyRef=useRef(null);
   const sendToAgentRef=useRef(null);
+  const [agentMigrationTrigger,setAgentMigrationTrigger]=useState(null);
 
   const showToast=useCallback((message,type='success')=>{
     setToast({message,type});
@@ -2513,18 +2517,29 @@ function App(){
     }).then(u=>{
       if(!u)return;
       // Detect user switch — clear stale LS data from previous session
-      const uid=u._id||u.id;
+      const uid=u._id||u.id||u.email;
       const lastUid=localStorage.getItem('gem_last_user');
       if(lastUid&&lastUid!==uid){
         lsClearAll();
-        setMappings([]);setC2gMappings([]);setUploadData(null);
+        // Reset all migration state to defaults so previous user's data is gone
+        setStep(0);setMigDir(null);setUploadData(null);
+        setMappings({});setSelectedUsers(new Set());
+        setMigDone(false);setStats({users:0,pages:0,errors:0,flagged:0});
+        setLastRunWasDry(false);setCurrentBatchId(null);setLogs([]);
+        setC2gMappings({});setC2gSelectedUsers(new Set());
+        setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gTotal(0);
+        setC2gOptions({dryRun:true,fromDate:'',toDate:''});
+        setCl2gUploadData(null);setCl2gMappings({});setCl2gSelectedUuids(new Set());
+        setCl2gDone(false);setCl2gStats({users:0,files:0,errors:0});setCl2gTotal(0);
+        setCl2gOptions({dryRun:true,fromDate:'',toDate:'',includeMemory:true,includeProjects:true});
+        setAgentMsgs([]);greetedRef.current=false;prevGuideKeyRef.current=null;
       }
       localStorage.setItem('gem_last_user',uid);
       setAppUser(u);
-      // localStorage already restored all state — mark ready immediately
-      setWsLoaded(true);
+      // NOTE: setWsLoaded(true) is intentionally deferred until after auth/init
+      // so the agent greeting fires with correct googleAuthed/msAuthed state.
 
-      // Background: validate auth + sync mappings from DB (non-blocking)
+      // Fetch auth status + DB state, THEN mark ready so greeting has correct context
       Promise.all([
         fetch('/auth/status').then(r=>r.json()).catch(()=>({})),
         fetch('/api/init').then(r=>r.ok?r.json():null).catch(()=>null),
@@ -2533,6 +2548,35 @@ function App(){
         if(authStatus.msConnected!==undefined) setMsAuthed(!!authStatus.msConnected);
 
         if(initData){
+          // Restore chat history from DB (cross-device) — DB wins over localStorage
+          if(initData.chatMessages?.length>0){
+            setAgentMsgs(initData.chatMessages);
+            lsSet(LS_CHAT,initData.chatMessages);
+          }
+
+          // Restore UI position from DB — cross-device (step, migDir, options)
+          // recentWorkspaces recovery below may further update done/stats state
+          const ui=initData.uiState;
+          if(ui){
+            if(typeof ui.step==='number') setStep(ui.step);
+            if(ui.migDir) setMigDir(ui.migDir);
+            if(ui.stats) setStats(ui.stats);
+            if(ui.c2gStats) setC2gStats(ui.c2gStats);
+            if(ui.cl2gStats) setCl2gStats(ui.cl2gStats);
+            if(ui.migDone!=null) setMigDone(!!ui.migDone);
+            if(ui.c2gDone!=null) setC2gDone(!!ui.c2gDone);
+            if(ui.cl2gDone!=null) setCl2gDone(!!ui.cl2gDone);
+            if(ui.lastRunWasDry!=null) setLastRunWasDry(!!ui.lastRunWasDry);
+            if(ui.c2gLastDry!=null) setC2gLastDry(!!ui.c2gLastDry);
+            if(ui.cl2gLastDry!=null) setCl2gLastDry(!!ui.cl2gLastDry);
+            if(ui.currentBatchId) setCurrentBatchId(ui.currentBatchId);
+            if(ui.options) setOptions(p=>({...p,...ui.options}));
+            if(ui.c2gOptions) setC2gOptions(p=>({...p,...ui.c2gOptions}));
+            if(ui.cl2gOptions) setCl2gOptions(p=>({...p,...ui.cl2gOptions}));
+            // Sync to localStorage so same-device is also up to date
+            lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),...ui});
+          }
+
           // DB mappings override localStorage (DB is authoritative for mappings)
           const g2cMap=initData.mappings?.find(m=>m.migDir==='gemini-copilot');
           const c2gMap=initData.mappings?.find(m=>m.migDir==='copilot-gemini');
@@ -2540,10 +2584,78 @@ function App(){
           if(g2cMap?.mappings&&Object.keys(g2cMap.mappings).length) setMappings(g2cMap.mappings);
           if(c2gMap?.mappings&&Object.keys(c2gMap.mappings).length) setC2gMappings(c2gMap.mappings);
           if(cl2gMap?.mappings&&Object.keys(cl2gMap.mappings).length) setCl2gMappings(cl2gMap.mappings);
+
+          // Recovery: if migration was in-progress when user logged out, sync final state from DB
+          // live/c2gLive/cl2gLive are never persisted — on re-login they're false but step may be 5+
+          const workspaces=initData.recentWorkspaces||[];
+          if(workspaces.length>0){
+            // Find the most recent workspace per direction
+            const dirMap={};
+            for(const ws of workspaces){
+              if(!dirMap[ws.migDir])dirMap[ws.migDir]=ws;
+            }
+            // G2C recovery: step 5/6 but migDone=false → check DB
+            const g2cWs=dirMap['gemini-copilot'];
+            if(g2cWs&&g2cWs.status==='completed'){
+              const r=g2cWs.report?.summary||{};
+              setMigDone(true);setLive(false);
+              setStats({users:r.total_users||g2cWs.migratedUsers||0,pages:r.total_pages_created||g2cWs.migratedConversations||0,errors:r.total_errors||g2cWs.failedUsers||0,flagged:0});
+              setCurrentBatchId(g2cWs._id);setLastRunWasDry(!!g2cWs.dryRun);
+              // Advance to done step if stuck mid-migration
+              setStep(prev=>prev>=5&&prev<7?6:prev);
+            } else if(g2cWs&&g2cWs.status==='running'){
+              // Migration still running on server — clear stuck state, user must restart
+              setMigDone(false);setLive(false);
+              setStep(prev=>prev>=5?4:prev); // back to options so they can restart
+            }
+            // C2G recovery
+            const c2gWs=dirMap['copilot-gemini'];
+            if(c2gWs&&c2gWs.status==='completed'){
+              const r=c2gWs.report?.summary||{};
+              setC2gDone(true);setC2gLive(false);
+              setC2gStats({users:r.total_users||c2gWs.migratedUsers||0,files:r.total_pages_created||0,errors:r.total_errors||0});
+              setC2gLastDry(!!c2gWs.dryRun);
+              setStep(prev=>prev>=4&&prev<6?5:prev);
+            } else if(c2gWs&&c2gWs.status==='running'){
+              setC2gDone(false);setC2gLive(false);
+              setStep(prev=>prev>=4?3:prev);
+            }
+            // CL2G recovery
+            const cl2gWs=dirMap['claude-gemini'];
+            if(cl2gWs&&cl2gWs.status==='completed'){
+              const r=cl2gWs.report?.summary||{};
+              setCl2gDone(true);setCl2gLive(false);cl2gLiveRef.current=false;
+              setCl2gStats({users:r.total_users||cl2gWs.migratedUsers||0,files:r.total_pages_created||0,errors:r.total_errors||0});
+              setCl2gLastDry(!!cl2gWs.dryRun);
+              setStep(prev=>prev>=5&&prev<7?6:prev);
+            } else if(cl2gWs&&cl2gWs.status==='running'){
+              setCl2gDone(false);setCl2gLive(false);cl2gLiveRef.current=false;
+              setStep(prev=>prev>=5?4:prev);
+            }
+          }
         }
+        // Mark ready AFTER auth state is known — prevents agent greeting from
+        // firing with googleAuthed=false and triggering a spurious navigate(0)
+        setWsLoaded(true);
+      }).catch(()=>{
+        // Auth/init failed — still mark ready so UI isn't stuck, but default auth stays false
+        setWsLoaded(true);
       });
     }).catch(()=>{window.location.href='/login.html'});
   },[]);
+
+  // Persist chat history — localStorage for instant restore, MongoDB for cross-device
+  useEffect(()=>{
+    if(agentMsgs.length===0)return;
+    const trimmed=agentMsgs.slice(-30);
+    lsSet(LS_CHAT,trimmed);
+    clearTimeout(window._chatSaveTimer);
+    window._chatSaveTimer=setTimeout(()=>{
+      // Save chat + current UI position so any device can restore exactly where user left off
+      const uiState={step,migDir,migDone,c2gDone,cl2gDone,stats,c2gStats,cl2gStats,lastRunWasDry,c2gLastDry,cl2gLastDry,currentBatchId,options,c2gOptions,cl2gOptions};
+      fetch('/api/chat-history',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:trimmed,uiState})}).catch(()=>{});
+    },1500);
+  },[agentMsgs,step,migDir,migDone,c2gDone,cl2gDone,stats,c2gStats,cl2gStats,lastRunWasDry,c2gLastDry,cl2gLastDry,currentBatchId,options,c2gOptions,cl2gOptions]);
 
   // Persist mapping cache to localStorage
   useEffect(()=>{lsSet(LS_MAPPING,{...lsGet(LS_MAPPING,{}),g2c:mappings})},[mappings]);
@@ -2615,8 +2727,8 @@ function App(){
     setSelectedUsers(new Set());
     if(agentMode==='guide'){
       const n=data.total_users||data.users?.length||0;
-      addAgentMsg('bot',`Vault data loaded — **${n} user${n!==1?'s':''}** found. Want me to auto-map them by email?`,
-        {quickReplies:['Yes, auto-map','I\'ll map manually']});
+      addAgentMsg('bot',`Vault data loaded — **${n} user${n!==1?'s':''}** found. I can auto-map them by email right now.`,
+        {quickReplies:['Auto-map all users now','I\'ll review and map manually','Show me the user list']});
     }
     setTimeout(()=>setStep(3),400);
   };
@@ -2653,7 +2765,7 @@ function App(){
               ? `Migration finished with **${s.errors} error${s.errors!==1?'s':''}**. The items below failed — retry to recover them.`
               : `All done! **${s.pages} pages** migrated across **${s.users} user${s.users!==1?'s':''}**. Everything looks clean.`,
             {statusCard:{users:s.users,files:s.pages,errors:s.errors},
-             quickReplies:s.errors>0?['Retry Failed','Download Report','Start Another']:['Download Report','What do I do next?','Start Another']}
+             quickReplies:s.errors>0?['Retry the failed items','Download the full report','Start a new migration']:['Download the migration report','Start a new migration']}
           ),600);
         }
       }catch{}
@@ -2812,7 +2924,7 @@ function App(){
                 ? `Dry run complete — **${s2.files} file${s2.files!==1?'s':''}** would be uploaded for **${s2.users} user${s2.users!==1?'s':''}**. Ready to go live?`
                 : `All done! **${s2.files} file${s2.files!==1?'s':''}** uploaded to Google Drive across **${s2.users} user${s2.users!==1?'s':''}**.`,
             {statusCard:{users:s2.users,files:s2.files,errors:s2.errors,label:isDry?'Dry Run Preview':'Migration Results'},
-             quickReplies:s2.errors>0?['Retry Failed','Download Report','Start Another']:isDry?['Start Live Migration','Start Another']:['Download Report','What do I do next?','Start Another']}
+             quickReplies:s2.errors>0?['Retry the failed items','Download the full report','Start a new migration']:isDry?['Run the live migration now','Download dry run report']:['Download the migration report','Start a new migration']}
           ),400);
         }
       }catch(parseErr){console.error('C2G SSE parse error',parseErr,e.data)}
@@ -2890,7 +3002,7 @@ function App(){
             s2.errors>0?`Migration finished with **${s2.errors} error${s2.errors!==1?'s':''}**. Check the log for details.`
             :isDry?`Dry run complete — **${s2.files} file${s2.files!==1?'s':''}** would be uploaded for **${s2.users} user${s2.users!==1?'s':''}**. Ready to go live?`
             :`All done! **${s2.files} file${s2.files!==1?'s':''}** uploaded to Google Drive across **${s2.users} user${s2.users!==1?'s':''}**.`,
-            {statusCard:{users:s2.users,files:s2.files,errors:s2.errors,label:isDry?'Dry Run Preview':'Migration Results'},quickReplies:s2.errors>0?['Download Report','Start Another']:isDry?['Start Live Migration','Start Another']:['Download Report','What do I do next?','Start Another']}
+            {statusCard:{users:s2.users,files:s2.files,errors:s2.errors,label:isDry?'Dry Run Preview':'Migration Results'},quickReplies:s2.errors>0?['Retry the failed items','Download the full report']:isDry?['Run the live migration now','Download dry run report']:['Download the migration report','Start a new migration']}
           ),400);
         }
       }catch(parseErr){console.error('CL2G SSE parse error',parseErr)}
@@ -2904,6 +3016,17 @@ function App(){
       if(!res.ok){const d=await res.json().catch(()=>({}));addLog('error',d.error||`Migration failed (${res.status})`);setCl2gLive(false);}
     }catch(err){addLog('error',err.message);setCl2gLive(false);}
   },[cl2gLive,cl2gSelectedUuids,cl2gMappings,cl2gOptions,cl2gConfig,cl2gUploadData,addLog,addAgentMsg]);
+
+  // When agent triggers start_migration, UI handles the actual execution (prevents double-migration)
+  useEffect(()=>{
+    if(!agentMigrationTrigger)return;
+    setAgentMigrationTrigger(null);
+    const{migDir:dir,dryRun}=agentMigrationTrigger;
+    const forceLive=dryRun===false;
+    if(dir==='gemini-copilot')runMigration(forceLive);
+    else if(dir==='copilot-gemini')runC2GMigration(forceLive);
+    else if(dir==='claude-gemini')runCL2GMigration(forceLive);
+  },[agentMigrationTrigger,runC2GMigration,runCL2GMigration]);
 
   const handleChangeDirection=useCallback(()=>{
     setMigDir(null);setStep(1);setAgentMode('guide');
@@ -2957,9 +3080,10 @@ function App(){
     else if(evt.event==='refresh_mapping'){setLeftMode&&typeof setLeftMode==='function'&&setLeftMode('mapping');}
     else if(evt.event==='refresh_reports'){setShowReports&&setShowReports(true);}
     else if(evt.event==='refresh_status'){setReportRefreshKey&&setReportRefreshKey(k=>k+1);}
+    else if(evt.event==='migration_started'&&evt.migDir){setAgentMigrationTrigger({migDir:evt.migDir,dryRun:evt.dryRun??true,ts:Date.now()});}
     else if(evt.event==='show_widget'&&evt.widget){/* widget stored inline — handled when text event arrives */}
     else if(evt.event==='set_config'&&evt.config){applyAgentConfig&&applyAgentConfig(evt.config);}
-  },[setStep,setMigDir,setLeftMode,setShowReports,setReportRefreshKey,applyAgentConfig]);
+  },[setStep,setMigDir,setLeftMode,setShowReports,setReportRefreshKey,applyAgentConfig,setAgentMigrationTrigger]);
 
   const sendToAgent=useCallback(async(overrideMsg,isSystem=false)=>{
     const userMsg=overrideMsg||agentInput.trim();
@@ -2985,19 +3109,33 @@ function App(){
         if(migDone||c2gDone||cl2gDone)return `Left panel: Migration complete. Stats: ${stats?.users||0} users, ${stats?.pages||0} files, ${stats?.errors||0} errors.`;
         return `Left panel: Step ${step}, direction ${migDir||'not selected'}.`;
       })();
-      const migrationState={step,migDir,live,migDone,stats,lastRunWasDry,currentBatchId,agentMode,
-        uploadData:uploadData?{id:uploadData.id,total_users:uploadData.total_users,total_conversations:uploadData.total_conversations}:null,
-        uploadExtractPath:uploadData?.extract_path||null,
-        tenantId:config.tenantId||null,
-        customerName:config.filePath||'Gemini',
-        googleAuthed,msAuthed,
-        mappings_count:Object.keys(mappings).length,
-        selected_users_count:selectedUsers.size,
-        options:{dryRun:options.dryRun,hasFilePath:!!config.filePath},
-        c2g_mappings_count:Object.keys(c2gMappings).length,
-        cl2g_upload_users:cl2gUploadData?.users?.length||0,
-        cl2g_mappings_count:Object.keys(cl2gMappings).length,
-        c2g_done:c2gDone,cl2g_done:cl2gDone,c2g_live:c2gLive,cl2g_live:cl2gLive,uiContext};
+      // Build direction-scoped state — only include stats for the active direction to avoid stale cross-direction confusion
+      const migrationState={step,migDir,live,agentMode,googleAuthed,msAuthed,uiContext,
+        // G2C (gemini-copilot) fields
+        ...(migDir==='gemini-copilot'||migDir===null?{
+          migDone,stats,lastRunWasDry,currentBatchId,
+          uploadData:uploadData?{id:uploadData.id,total_users:uploadData.total_users,total_conversations:uploadData.total_conversations}:null,
+          uploadExtractPath:uploadData?.extract_path||null,
+          tenantId:config.tenantId||null,
+          customerName:config.filePath||'Gemini',
+          mappings_count:Object.keys(mappings).length,
+          selected_users_count:selectedUsers.size,
+          options:{dryRun:options.dryRun,hasFilePath:!!config.filePath},
+        }:{}),
+        // C2G (copilot-gemini) fields
+        ...(migDir==='copilot-gemini'?{
+          c2g_done:c2gDone,c2g_live:c2gLive,c2g_stats:c2gStats,c2gLastDry:c2gLastDry,
+          c2g_mappings_count:Object.keys(c2gMappings).length,
+          c2g_options:{dryRun:c2gOptions.dryRun},
+        }:{}),
+        // CL2G (claude-gemini) fields
+        ...(migDir==='claude-gemini'?{
+          cl2g_done:cl2gDone,cl2g_live:cl2gLive,cl2g_stats:cl2gStats,cl2gLastDry:cl2gLastDry,
+          cl2g_upload_users:cl2gUploadData?.users?.length||0,
+          cl2g_mappings_count:Object.keys(cl2gMappings).length,
+          cl2g_options:{dryRun:cl2gOptions.dryRun},
+        }:{}),
+      };
       const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({message:userMsg,isSystemTrigger:isSystem,
           migrationLogs:(live||c2gLive)?logs.slice(-100).map(l=>`[${l.ts}][${l.type}] ${l.message}`):[],
@@ -3038,7 +3176,7 @@ function App(){
       });
     }catch(e){console.error('[Agent]',e);addAgentMsg('bot',"Sorry, I couldn't connect right now. Please try again.");}
     setAgentTyping(false);
-  },[agentInput,agentMsgs,logs,step,live,c2gLive,migDone,stats,lastRunWasDry,currentBatchId,uploadData,googleAuthed,msAuthed,mappings,selectedUsers,options,config,agentMode,migDir,cl2gMappings,cl2gUploadData,cl2gOptions,c2gMappings,c2gDone,cl2gDone,c2gLive,cl2gLive,applyAgentConfig,addAgentMsg,setMigDir,setStep,setShowReports,setLeftMode,applyUIEvent]);
+  },[agentInput,agentMsgs,logs,step,live,c2gLive,cl2gLive,migDone,c2gDone,cl2gDone,stats,c2gStats,cl2gStats,lastRunWasDry,c2gLastDry,cl2gLastDry,currentBatchId,uploadData,googleAuthed,msAuthed,mappings,selectedUsers,options,config,c2gOptions,cl2gOptions,agentMode,migDir,cl2gMappings,cl2gUploadData,c2gMappings,applyAgentConfig,addAgentMsg,setMigDir,setStep,setShowReports,setLeftMode,applyUIEvent]);
 
   const handleLogLineClick=useCallback(line=>{
     sendToAgent(`Explain this log line: "${line.text}"`);
@@ -3046,12 +3184,24 @@ function App(){
 
   const handleAgentQuickReply=useCallback(qr=>{
     if(!qr)return;
+
+    // Direction selection chips — resolve to agent message so select_direction tool fires
+    const G2C_CHIPS=['Gemini → Copilot','Google to Microsoft','Migrate Google Workspace → Microsoft 365','Migrate Google → Microsoft 365','I want to migrate Google Workspace → Microsoft 365','Migrate Google Workspace'];
+    const C2G_CHIPS=['Copilot → Gemini','Microsoft to Google','Migrate Microsoft 365 → Google Workspace','Migrate Microsoft 365 → Google','Migrate Microsoft 365'];
+    const CL2G_CHIPS=['Claude → Gemini','Claude to Google','Teams/Copilot ZIP → Google','Migrate Claude AI → Google Workspace','Migrate Claude AI → Google','Start Claude → Google migration now','Start Claude → Google migration (Google only needed)'];
+
+    if(G2C_CHIPS.includes(qr)){addAgentMsg('user',qr);setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current('I want to migrate from Google Workspace to Microsoft 365'),300);return;}
+    if(C2G_CHIPS.includes(qr)){addAgentMsg('user',qr);setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current('I want to migrate from Microsoft 365 Copilot to Google Workspace'),300);return;}
+    if(CL2G_CHIPS.includes(qr)){addAgentMsg('user',qr);setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current('I want to migrate from Claude AI to Google Workspace'),300);return;}
+
+    // Auth chips — trigger sign-in directly without going through agent
+    if(['Connect Google Workspace','Connect Google','Sign in with Google','Connect Google Workspace first','Connect Google Workspace to continue'].includes(qr)){setStep(0);handleChatSignInGoogle&&handleChatSignInGoogle();return;}
+    if(['Connect Microsoft 365','Sign in with Microsoft','Connect Microsoft 365 first','Connect Microsoft 365 to continue','Connect Microsoft 365 to unlock more migrations','Connect Microsoft 365 to unlock more options'].includes(qr)){setStep(0);handleChatSignInMs&&handleChatSignInMs();return;}
+
+    // Navigation chips
     if(qr==='Choose direction'||qr==="What's the difference?"){setStep(1);addAgentMsg('user',qr);setTimeout(()=>sendToAgentRef.current(qr),300);return;}
-    if(qr==='Gemini → Copilot'){setMigDir('gemini-copilot');setStep(2);addAgentMsg('user',qr);setTimeout(()=>sendToAgentRef.current(qr),300);return;}
-    if(qr==='Copilot → Gemini'){setMigDir('copilot-gemini');setStep(2);addAgentMsg('user',qr);setTimeout(()=>sendToAgentRef.current(qr),300);return;}
-    if(qr==='Claude → Gemini'||qr==='Teams/Copilot ZIP → Google'){setMigDir('claude-gemini');setStep(2);addAgentMsg('user',qr);setTimeout(()=>sendToAgentRef.current(qr),300);return;}
-    if(qr==='Connect Google'||qr==='Sign in with Google'){handleChatSignInGoogle&&handleChatSignInGoogle();return;}
-    if(qr==='Connect Microsoft 365'||qr==='Sign in with Microsoft'){handleChatSignInMs&&handleChatSignInMs();return;}
+
+    // All other chips go to agent as chat messages
     sendToAgent(qr);
   },[sendToAgent,addAgentMsg,setStep,setMigDir,handleChatSignInGoogle,handleChatSignInMs]);
 
@@ -3075,7 +3225,7 @@ function App(){
                 :migDir==='claude-gemini'
                   ?`Google connected! You're all set for Claude → Gemini. Ready to upload your Claude ZIP?`
                   :`Google connected! Now connect Microsoft 365 to unlock Gemini↔Copilot migration — or choose Claude → Gemini which only needs Google.`;
-              addAgentMsg('bot',msg,{quickReplies:msAuthed?['Gemini → Copilot','Copilot → Gemini','Claude → Gemini']:['Connect Microsoft 365','Claude → Gemini — Google only']});
+              addAgentMsg('bot',msg,{quickReplies:msAuthed?['Migrate Google → Microsoft 365','Migrate Microsoft 365 → Google','Migrate Claude AI → Google']:['Connect Microsoft 365 to unlock more migrations','Start Claude → Google migration now']});
             }
           }).catch(()=>{setGoogleAuthed(true);setChatGLoading(false);});
         },500);
@@ -3098,7 +3248,7 @@ function App(){
               const msg=googleAuthed
                 ?`Microsoft 365 connected! Both accounts ready — choose your migration direction.`
                 :`Microsoft 365 connected! Now connect Google Workspace to complete setup.`;
-              addAgentMsg('bot',msg,{quickReplies:googleAuthed?['Gemini → Copilot','Copilot → Gemini']:['Connect Google Workspace']});
+              addAgentMsg('bot',msg,{quickReplies:googleAuthed?['Migrate Google → Microsoft 365','Migrate Microsoft 365 → Google']:['Connect Google Workspace to continue']});
             }
           }).catch(()=>{setMsAuthed(true);setChatMLoading(false);});
         },500);
@@ -3142,9 +3292,13 @@ function App(){
     if(!wsLoaded||agentMode==='running')return;
     const key=`${step}:${migDir}`;
     if(prevGuideKeyRef.current===key)return;
+    // If chat history restored from localStorage, skip initial greeting to avoid duplicate
+    if(prevGuideKeyRef.current===null&&agentMsgs.length>0){
+      prevGuideKeyRef.current=key;
+      return;
+    }
     prevGuideKeyRef.current=key;
-    console.log('[Agent] Context trigger key=',key,'wsLoaded=',wsLoaded);
-    setTimeout(()=>sendToAgentRef.current('__step_context__',true),400);
+    setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current('__step_context__',true),400);
   },[wsLoaded,agentMode,step,migDir]);
 
   return(
@@ -3203,18 +3357,31 @@ function App(){
                   {/* Step 0: Connect */}
                   {step===0&&<Step0 googleAuthed={googleAuthed} setGoogleAuthed={setGoogleAuthed} msAuthed={msAuthed} setMsAuthed={setMsAuthed} googleUsers={googleUsers} setGoogleUsers={setGoogleUsers} msUsers={msUsers} setMsUsers={setMsUsers} tenantId={config.tenantId} onComplete={()=>setStep(1)}/>}
                   {/* Step 1: Direction picker */}
-                  {step===1&&<StepDirection onSelect={dir=>{setMigDir(dir);setStep(2);}} onBack={()=>setStep(0)} googleAuthed={googleAuthed} msAuthed={msAuthed}/>}
+                  {step===1&&<StepDirection onSelect={dir=>{
+                    setMigDir(dir);
+                    const needsMs=dir==='gemini-copilot'||dir==='copilot-gemini';
+                    const missingGoogle=!googleAuthed;
+                    const missingMs=needsMs&&!msAuthed;
+                    if(missingGoogle||missingMs){
+                      // Missing required auth — go back to connect clouds, agent will explain
+                      setStep(0);
+                      const missing=[missingGoogle&&'Google Workspace',missingMs&&'Microsoft 365'].filter(Boolean).join(' and ');
+                      setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current(`I selected ${dir} but I'm missing ${missing}`),300);
+                    }else{
+                      setStep(2);
+                    }
+                  }} onBack={()=>setStep(0)} googleAuthed={googleAuthed} msAuthed={msAuthed}/>}
                   {/* Gemini → Copilot steps */}
                   {step===2&&migDir==='gemini-copilot'&&<Step1 googleUsers={googleUsers} googleAuthed={googleAuthed} onComplete={handleImportComplete} onBack={()=>setStep(1)} showToast={showToast} uploadData={uploadData}/>}
                   {step===3&&migDir==='gemini-copilot'&&<Step2 uploadData={uploadData} msUsers={msUsers} mappings={mappings} setMappings={setMappings} selectedUsers={selectedUsers} setSelectedUsers={setSelectedUsers} onNext={()=>{addLog('info',`User mappings ready — ${selectedUsers.size||Object.keys(mappings).length} users selected`);setStep(4);}} onBack={()=>setStep(2)} showToast={showToast}/>}
                   {step===4&&migDir==='gemini-copilot'&&<Step3 options={options} setOptions={setOptions} config={config} setConfig={setConfig} msAuthed={msAuthed} googleAuthed={googleAuthed} onRun={retryMode?(()=>retryFailed(config.filePath||undefined)):runMigration} onBack={()=>{setRetryMode(false);setStep(retryMode?5:3)}} retryMode={retryMode}/>}
-                  {(step===5||step===6)&&migDir==='gemini-copilot'&&<StepMigrate stats={stats} done={migDone} lastRunWasDry={lastRunWasDry} batchId={currentBatchId} onStartLive={()=>runMigration(true)} onRunAnother={runAnotherBatch} onRetry={retryFailed} retrying={retrying} hasUploadData={!!uploadData} onGoToConnect={handleGoToConnect} onRetryWithPath={handleRetryWithPath} onChangeDirection={handleChangeDirection} totalExpected={(()=>{if(!uploadData?.users)return 0;const sel=selectedUsers.size>0?[...selectedUsers]:Object.keys(mappings);const emails=sel.length>0?new Set(sel):new Set(uploadData.users.map(u=>u.email));return uploadData.users.filter(u=>emails.has(u.email)).reduce((s,u)=>s+(u.conversation_count||0),0)})()}/>}
+                  {(step===5||step===6)&&migDir==='gemini-copilot'&&<StepMigrate stats={stats} done={migDone} live={live} lastRunWasDry={lastRunWasDry} batchId={currentBatchId} onStartLive={()=>runMigration(true)} onRunAnother={runAnotherBatch} onRetry={retryFailed} retrying={retrying} hasUploadData={!!uploadData} onGoToConnect={handleGoToConnect} onRetryWithPath={handleRetryWithPath} onChangeDirection={handleChangeDirection} totalExpected={(()=>{if(!uploadData?.users)return 0;const sel=selectedUsers.size>0?[...selectedUsers]:Object.keys(mappings);const emails=sel.length>0?new Set(sel):new Set(uploadData.users.map(u=>u.email));return uploadData.users.filter(u=>emails.has(u.email)).reduce((s,u)=>s+(u.conversation_count||0),0)})()}/>}
                   {/* Copilot → Gemini steps */}
                   {step===2&&migDir==='copilot-gemini'&&<StepC2GMap msUsers={msUsers} googleUsers={googleUsers} c2gMappings={c2gMappings} setC2gMappings={setC2gMappings} c2gSelectedUsers={c2gSelectedUsers} setC2gSelectedUsers={setC2gSelectedUsers} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast}/>}
                   {step===3&&migDir==='copilot-gemini'&&<StepC2GOptions c2gOptions={c2gOptions} setC2gOptions={setC2gOptions} c2gConfig={c2gConfig} setC2gConfig={setC2gConfig} googleAuthed={googleAuthed} msAuthed={msAuthed} onRun={runC2GMigration} onBack={()=>setStep(2)}/>}
                   {(step===4||step===5)&&migDir==='copilot-gemini'&&<StepC2GMigrate c2gStats={c2gStats} c2gDone={c2gDone} c2gBatchId={null} onRunAnother={()=>{setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(3)} onStart={runC2GMigration} c2gLive={c2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={c2gLastDry} onStartLive={()=>runC2GMigration(true)} c2gTotal={c2gTotal}/>}
                   {/* Claude → Gemini steps */}
-                  {step===2&&migDir==='claude-gemini'&&<StepCL2GUpload cl2gUploadData={cl2gUploadData} setCl2gUploadData={setCl2gUploadData} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast} onUploadComplete={(n)=>{if(agentMode==='guide')addAgentMsg('bot',`ZIP uploaded — **${n} user${n!==1?'s':''}** found. Want me to auto-map them by email?`,{quickReplies:['Yes, auto-map','I\'ll map manually','What is auto-map?']});}}/>}
+                  {step===2&&migDir==='claude-gemini'&&<StepCL2GUpload cl2gUploadData={cl2gUploadData} setCl2gUploadData={setCl2gUploadData} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast} onUploadComplete={(n)=>{if(agentMode==='guide')addAgentMsg('bot',`Claude export loaded — **${n} user${n!==1?'s':''}** found. I can match them to your Google Workspace accounts automatically.`,{quickReplies:['Auto-map all users now','I\'ll review mappings manually','How does auto-mapping work?']});}}/>}
                   {step===3&&migDir==='claude-gemini'&&<StepCL2GMap cl2gUploadData={cl2gUploadData} googleUsers={googleUsers} cl2gMappings={cl2gMappings} setCl2gMappings={setCl2gMappings} cl2gSelectedUuids={cl2gSelectedUuids} setCl2gSelectedUuids={setCl2gSelectedUuids} onNext={()=>setStep(4)} onBack={()=>setStep(2)} showToast={showToast}/>}
                   {step===4&&migDir==='claude-gemini'&&<StepCL2GOptions cl2gOptions={cl2gOptions} setCl2gOptions={setCl2gOptions} cl2gConfig={cl2gConfig} setCl2gConfig={setCl2gConfig} googleAuthed={googleAuthed} onRun={runCL2GMigration} onBack={()=>setStep(3)}/>}
                   {(step===5||step===6)&&migDir==='claude-gemini'&&<StepCL2GMigrate cl2gStats={cl2gStats} cl2gDone={cl2gDone} onRunAnother={()=>{setCl2gDone(false);setCl2gStats({users:0,files:0,errors:0});setCl2gOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(4)} onStart={runCL2GMigration} cl2gLive={cl2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={cl2gLastDry} onStartLive={()=>runCL2GMigration(true)} cl2gTotal={cl2gTotal} folderName={cl2gConfig.folderName||'ClaudeChats'}/>}

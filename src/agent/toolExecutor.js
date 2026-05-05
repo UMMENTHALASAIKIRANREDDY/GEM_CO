@@ -6,7 +6,7 @@ import { loadHistory } from './conversationHistory.js';
 
 const logger = getLogger('agent:executor');
 
-export async function executeTool(toolName, args, { streamEvent, session, migrationState, migrationLogs, db }) {
+export async function executeTool(toolName, args, { streamEvent, session, migrationState, migrationLogs, db, agentDeps }) {
   const migDir = migrationState?.migDir;
   const appUserId = session?.appUser?._id?.toString() || session?.appUserId?.toString() || null;
 
@@ -20,8 +20,19 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
     }
 
     case 'select_direction': {
-      streamEvent('select_direction', { direction: args.migDir, step: 2 });
-      return { selected: true, direction: args.migDir };
+      const dir = args.migDir;
+      const { googleAuthed = false, msAuthed = false } = migrationState ?? {};
+      const missingGoogle = !googleAuthed; // all directions need Google
+      const missingMs = (dir === 'gemini-copilot' || dir === 'copilot-gemini') && !msAuthed;
+
+      // Set direction first so UI shows the right context
+      streamEvent('select_direction', { direction: dir, step: missingGoogle || missingMs ? 0 : 2 });
+
+      if (missingGoogle || missingMs) {
+        const missing = [missingGoogle && 'Google Workspace', missingMs && 'Microsoft 365'].filter(Boolean).join(' and ');
+        return { selected: true, direction: dir, authRequired: missing, note: `Direction set to ${dir} but ${missing} must be connected first. User sent back to Connect Clouds step.` };
+      }
+      return { selected: true, direction: dir };
     }
 
     case 'show_reports': {
@@ -76,9 +87,14 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
     }
 
     case 'get_migration_status': {
-      const { step, migDir: dir, live, migDone, stats, c2g_live, cl2g_live, c2g_done, cl2g_done, currentBatchId } = migrationState;
-      const isRunning = live || c2g_live || cl2g_live;
-      const isDone = migDone || c2g_done || cl2g_done;
+      const dir = migrationState.migDir;
+      const isRunning = migrationState.live || migrationState.c2g_live || migrationState.cl2g_live;
+      const isDone = migrationState.migDone || migrationState.c2g_done || migrationState.cl2g_done;
+      // Pick direction-specific stats
+      const activeStats = dir === 'copilot-gemini' ? migrationState.c2g_stats
+        : dir === 'claude-gemini' ? migrationState.cl2g_stats
+        : migrationState.stats;
+      const currentBatchId = migrationState.currentBatchId;
       const logTail = migrationLogs?.slice(-20) ?? [];
       let dbStatus = null;
       if (currentBatchId) {
@@ -87,10 +103,10 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
         } catch (e) { logger.warn(`get_migration_status DB query failed: ${e.message}`); }
       }
       return {
-        step, direction: dir ?? 'none', running: isRunning, done: isDone,
-        users: stats?.users ?? dbStatus?.progressUsers ?? 0,
-        pages: stats?.pages ?? dbStatus?.progressPages ?? 0,
-        errors: stats?.errors ?? dbStatus?.progressErrors ?? 0,
+        step: migrationState.step, direction: dir ?? 'none', running: isRunning, done: isDone,
+        users: activeStats?.users ?? dbStatus?.progressUsers ?? 0,
+        pages: activeStats?.pages ?? activeStats?.files ?? dbStatus?.progressPages ?? 0,
+        errors: activeStats?.errors ?? dbStatus?.progressErrors ?? 0,
         recentLogs: logTail,
       };
     }
@@ -112,8 +128,9 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
         }
         if (effectiveMappings === 0) blockers.push('No users mapped');
         if (combo.isLive(migrationState)) blockers.push('Migration already running');
-        if ((migrationState.selected_users_count ?? 0) < effectiveMappings) {
-          warnings.push(`${effectiveMappings - (migrationState.selected_users_count ?? 0)} users have no destination — they will be skipped`);
+        const selectedCount = migrationState.selected_users_count;
+        if (migDir === 'gemini-copilot' && selectedCount != null && selectedCount < effectiveMappings) {
+          warnings.push(`${effectiveMappings - selectedCount} users have no destination — they will be skipped`);
         }
       }
       return { blockers, warnings, ready: blockers.length === 0 };
@@ -205,19 +222,20 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
 
     // ── Destructive tools — executed after agentLoop confirmation ──────────
     case 'start_migration': {
-      const { startMigration } = session._agentDeps ?? {};
+      const { startMigration } = agentDeps ?? session._agentDeps ?? {};
       if (!startMigration) return { error: 'Migration executor not available' };
       const batchId = `batch_${Date.now()}`;
       startMigration({ dryRun: args.dryRun ?? true, batchId, migDir, appUserId }).catch(e => {
         logger.error(`Background migration failed: ${e.message}`);
       });
       session.currentBatchId = batchId;
-      streamEvent('refresh_status', { batchId });
+      // Tell the UI to start migration and connect to SSE stream
+      streamEvent('migration_started', { batchId, migDir, dryRun: args.dryRun ?? true });
       return { started: true, batchId, dryRun: args.dryRun ?? true };
     }
 
     case 'retry_failed': {
-      const { retryMigration } = session._agentDeps ?? {};
+      const { retryMigration } = agentDeps ?? session._agentDeps ?? {};
       if (!retryMigration) return { error: 'Retry executor not available' };
       const batchId = session.currentBatchId;
       if (!batchId) return { error: 'No migration batch found to retry' };
