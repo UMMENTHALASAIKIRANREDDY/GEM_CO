@@ -157,7 +157,7 @@ ${panelContext}
 - Dry run already done: ${isDone && activeLastDry ? 'YES — user can go live now' : 'NO'}
 ${logsSection}
 ## Auth Gate (CRITICAL)
-${buildAuthGateSection({ migDir, googleAuthed, msAuthed, step })}
+${buildAuthGateSection({ migDir, googleAuthed, msAuthed, step, live, c2g_live, cl2g_live, migDone, c2g_done, cl2g_done })}
 
 ## Tool Rules — follow exactly, no exceptions
 
@@ -225,7 +225,7 @@ Chips must resolve the current blocker or confirm the next action. Rules:
 - NEVER lecture the user about safety when they've already decided what to do`;
 }
 
-function buildAuthGateSection({ migDir, googleAuthed, msAuthed, step }) {
+function buildAuthGateSection({ migDir, googleAuthed, msAuthed, step, live, c2g_live, cl2g_live, migDone, c2g_done, cl2g_done }) {
   if (!migDir) return 'No direction selected — auth gate not applicable yet.';
 
   const needsMs = migDir === 'gemini-copilot' || migDir === 'copilot-gemini';
@@ -237,8 +237,10 @@ function buildAuthGateSection({ migDir, googleAuthed, msAuthed, step }) {
   }
 
   const missing = [missingGoogle && 'Google Workspace', missingMs && 'Microsoft 365'].filter(Boolean).join(' and ');
-  // Do NOT navigate away if migration is running or done — auth token may have expired but migration already started
-  if (step >= 5) {
+  // Do NOT navigate away if migration is actively running or already done
+  const isRunning = live || c2g_live || cl2g_live;
+  const isDone = migDone || c2g_done || cl2g_done;
+  if (isRunning || isDone) {
     return `⚠️ ${missing} session may have expired but migration is in progress or complete. Do NOT navigate away. Inform the user if they need to reconnect for the next run.`;
   }
   if (step >= 2) {
