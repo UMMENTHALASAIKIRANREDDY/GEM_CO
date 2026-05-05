@@ -60,7 +60,7 @@ export async function acquireTokenByCode(code, stateParam) {
   }
 
   const msalApp = _createMsalApp(tenantId);
-  const baseUrl = process.env.APP_URL || `http://localhost:${process.env.PORT || 4000}`;
+  const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 4000}`;
   const result = await msalApp.acquireTokenByCode({
     scopes: DELEGATED_SCOPES,
     redirectUri: `${baseUrl}/auth/callback`,
