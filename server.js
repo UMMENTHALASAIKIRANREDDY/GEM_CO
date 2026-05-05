@@ -134,7 +134,7 @@ app.post('/api/logout', (req, res) => {
 
 // ─── Auth gates ───────────────────────────────────────────────────────────────
 
-const PUBLIC_PATHS = ['/api/login', '/api/me', '/api/logout'];
+const PUBLIC_PATHS = ['/api/login', '/api/me', '/api/logout', '/audit/sessions', '/audit/stream'];
 app.use('/api', (req, res, next) => {
   if (PUBLIC_PATHS.includes(req.path)) return next();
   if (!req.session?.appUser) return res.status(401).json({ error: 'Not logged in' });

@@ -1,0 +1,62 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - img "CloudFuze" [ref=e5] [cursor=pointer]
+    - generic [ref=e7] [cursor=pointer]: CloudFuze
+    - generic [ref=e8]:
+      - generic [ref=e11]: Idle
+      - generic [ref=e12]:
+        - generic [ref=e13]: LA
+        - generic [ref=e14]: Laxman Kadari
+        - button "Sign out" [ref=e15] [cursor=pointer]:
+          - img [ref=e16]
+          - text: Sign out
+  - generic [ref=e19]:
+    - generic [ref=e21]:
+      - generic [ref=e23]:
+        - generic "Drag to swap panels" [ref=e24]:
+          - img [ref=e25]
+        - img [ref=e33] [cursor=pointer]
+        - generic [ref=e39] [cursor=pointer]: CloudFuze Migration
+      - generic [ref=e150]:
+        - generic [ref=e151]:
+          - generic [ref=e152]:
+            - generic [ref=e153]: Upload Claude Export
+            - generic [ref=e154]: Download your Claude data export (ZIP) and upload it here.
+          - button "Previous uploads" [ref=e156] [cursor=pointer]:
+            - img [ref=e157]
+        - generic [ref=e158] [cursor=pointer]:
+          - img [ref=e159]
+          - generic [ref=e162]: Drag & drop your Claude export ZIP here
+          - generic [ref=e163]: or click to browse
+        - generic [ref=e164]:
+          - button "← Back" [ref=e165] [cursor=pointer]
+          - button "Continue →" [ref=e166]
+    - generic [ref=e74]:
+      - generic [ref=e75]:
+        - generic [ref=e76]:
+          - generic "Drag to swap panels" [ref=e77]:
+            - img [ref=e78]
+          - img [ref=e86] [cursor=pointer]
+          - generic [ref=e91] [cursor=pointer]:
+            - generic [ref=e92]: Migration Agent
+            - generic [ref=e167]:
+              - img [ref=e168]
+              - img [ref=e171]
+              - img [ref=e173]
+              - generic [ref=e178]: Claude → Gemini
+        - generic [ref=e95]: Ready
+      - generic [ref=e96]:
+        - generic [ref=e97]:
+          - generic [ref=e99]:
+            - img [ref=e101]
+            - paragraph [ref=e109]: Welcome to CloudFuze GEM. Connect your cloud accounts to get started.
+          - generic [ref=e139]:
+            - img [ref=e141]
+            - paragraph [ref=e149]: Choose your migration direction. Gemini→Copilot and Copilot→Gemini both require both accounts connected.
+          - generic [ref=e180]:
+            - img [ref=e182]
+            - paragraph [ref=e190]: Upload your Claude export ZIP. You can export it from Claude.ai → Settings → Data Export.
+        - generic [ref=e111]:
+          - button "+" [ref=e113] [cursor=pointer]
+          - textbox "Ask me anything or type a command..." [ref=e114]
+          - button "Send" [disabled] [ref=e115]

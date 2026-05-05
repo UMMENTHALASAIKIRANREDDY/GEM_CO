@@ -1,0 +1,71 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - img "CloudFuze" [ref=e5] [cursor=pointer]
+    - generic [ref=e7] [cursor=pointer]: CloudFuze
+    - generic [ref=e8]:
+      - generic [ref=e11]: Idle
+      - generic [ref=e12]:
+        - generic [ref=e13]: AD
+        - generic [ref=e14]: Admin User
+        - button "Sign out" [ref=e15] [cursor=pointer]:
+          - img [ref=e16]
+          - text: Sign out
+  - generic [ref=e19]:
+    - generic [ref=e21]:
+      - generic [ref=e23]:
+        - generic "Drag to swap panels" [ref=e24]:
+          - img [ref=e25]
+        - img [ref=e33] [cursor=pointer]
+        - generic [ref=e39] [cursor=pointer]: CloudFuze Migration
+      - generic [ref=e41]:
+        - generic [ref=e42]:
+          - generic [ref=e43]: Connect Clouds
+          - generic [ref=e44]: Connect source and destination cloud accounts with admin credentials.
+        - generic [ref=e45]:
+          - generic [ref=e113]:
+            - button "Google Workspace Connected" [ref=e114]:
+              - img [ref=e116]
+              - generic [ref=e121]: Google Workspace
+              - generic [ref=e122]: Connected
+            - button "Sign Out" [ref=e123] [cursor=pointer]:
+              - img [ref=e124]
+              - text: Sign Out
+          - generic [ref=e127]:
+            - button "Microsoft Teams / 365 Connected" [active] [ref=e128]:
+              - img [ref=e130]
+              - generic [ref=e136]:
+                - text: Microsoft
+                - text: Teams / 365
+              - generic [ref=e137]: Connected
+            - generic [ref=e138]: Session expired. Please sign in with Microsoft again.
+            - button "Sign Out" [ref=e139] [cursor=pointer]:
+              - img [ref=e140]
+              - text: Sign Out
+        - button "Continue →" [ref=e69] [cursor=pointer]
+    - generic [ref=e72]:
+      - generic [ref=e73]:
+        - generic [ref=e74]:
+          - generic "Drag to swap panels" [ref=e75]:
+            - img [ref=e76]
+          - img [ref=e84] [cursor=pointer]
+          - generic [ref=e90] [cursor=pointer]: Migration Agent
+        - generic [ref=e93]: Ready
+      - generic [ref=e94]:
+        - generic [ref=e144]:
+          - img [ref=e146]
+          - generic [ref=e151]:
+            - paragraph [ref=e154]:
+              - text: Okay, I can see that both
+              - strong [ref=e155]: Google Workspace
+              - text: and
+              - strong [ref=e156]: Microsoft 365
+              - text: are connected. The next step is to select the migration direction. Let's go ahead and set the direction from
+              - strong [ref=e157]: Google Workspace to Microsoft 365
+              - text: . I'll do that for you now.
+            - generic [ref=e158]:
+              - button "What can you help with?" [ref=e159] [cursor=pointer]
+              - button "Show me the options" [ref=e160] [cursor=pointer]
+        - generic [ref=e108]:
+          - button "+" [ref=e110] [cursor=pointer]
+          - textbox "Ask me anything or type a command..." [ref=e111]
+          - button "Send" [disabled] [ref=e112]

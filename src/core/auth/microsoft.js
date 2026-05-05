@@ -70,7 +70,6 @@ export async function acquireTokenByCode(code, stateParam) {
   }
 
   if (!accountId) {
-    // Fallback for old-format state without accountId
     const { randomUUID } = await import('crypto');
     accountId = randomUUID();
   }
@@ -78,6 +77,7 @@ export async function acquireTokenByCode(code, stateParam) {
   const key = _key(appUserId, accountId);
   const existing = _sessions.get(key);
   const msalApp = existing?.msalApp || _createMsalApp(tenantId);
+
 
   const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 4000}`;
   const result = await msalApp.acquireTokenByCode({

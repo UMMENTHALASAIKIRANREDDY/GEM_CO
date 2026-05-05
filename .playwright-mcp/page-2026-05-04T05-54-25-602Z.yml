@@ -1,0 +1,367 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - img "CloudFuze" [ref=e5] [cursor=pointer]
+    - generic [ref=e7] [cursor=pointer]: CloudFuze
+    - generic [ref=e8]:
+      - generic [ref=e11]: Idle
+      - generic [ref=e12]:
+        - generic [ref=e13]: AD
+        - generic [ref=e14]: Admin User
+        - button "Sign out" [ref=e15] [cursor=pointer]:
+          - img [ref=e16]
+          - text: Sign out
+  - generic [ref=e19]:
+    - generic [ref=e21]:
+      - generic [ref=e23]:
+        - generic "Drag to swap panels" [ref=e24]:
+          - img [ref=e25]
+        - img [ref=e33] [cursor=pointer]
+        - generic [ref=e39] [cursor=pointer]: CloudFuze Migration
+      - generic [ref=e219]:
+        - generic [ref=e220]:
+          - generic [ref=e221]: Import Data
+          - generic [ref=e222]: Select users to export from Google Workspace, or upload a Vault ZIP file.
+        - generic [ref=e223]:
+          - generic [ref=e224]:
+            - button "User's List" [ref=e225] [cursor=pointer]
+            - button "Upload ZIP" [ref=e226] [cursor=pointer]
+          - button "Previous uploads" [ref=e228] [cursor=pointer]:
+            - img [ref=e229]
+        - generic [ref=e230]:
+          - generic [ref=e231]:
+            - generic [ref=e232]: Signed in · 38 users
+            - button "Select All" [ref=e234] [cursor=pointer]
+          - generic [ref=e235]:
+            - textbox "Search users..." [ref=e236]
+            - img [ref=e238]
+          - generic [ref=e241]:
+            - generic [ref=e242] [cursor=pointer]:
+              - checkbox [checked] [ref=e243]
+              - generic [ref=e244]: AL
+              - generic [ref=e245]:
+                - generic [ref=e246]: alex A
+                - generic [ref=e247]: alex@storefuze.com
+              - img [ref=e248]
+            - generic [ref=e250] [cursor=pointer]:
+              - checkbox [checked] [ref=e251]
+              - generic [ref=e252]: AU
+              - generic [ref=e253]:
+                - generic [ref=e254]: Austin A
+                - generic [ref=e255]: austin@fuzebot.co
+              - img [ref=e256]
+            - generic [ref=e258] [cursor=pointer]:
+              - checkbox [checked] [ref=e259]
+              - generic [ref=e260]: CO
+              - generic [ref=e261]:
+                - generic [ref=e262]: collins gd
+                - generic [ref=e263]: collins-gd@storefuze.com
+              - img [ref=e264]
+            - generic [ref=e266] [cursor=pointer]:
+              - checkbox [checked] [ref=e267]
+              - generic [ref=e268]: DA
+              - generic [ref=e269]:
+                - generic [ref=e270]: dan d
+                - generic [ref=e271]: dan@storefuze.com
+              - img [ref=e272]
+            - generic [ref=e274] [cursor=pointer]:
+              - checkbox [checked] [ref=e275]
+              - generic [ref=e276]: DA
+              - generic [ref=e277]:
+                - generic [ref=e278]: david gd
+                - generic [ref=e279]: davidgd@storefuze.com
+              - img [ref=e280]
+            - generic [ref=e282] [cursor=pointer]:
+              - checkbox [checked] [ref=e283]
+              - generic [ref=e284]: FR
+              - generic [ref=e285]:
+                - generic [ref=e286]: Frankie F
+                - generic [ref=e287]: frankie@fuzebot.co
+              - img [ref=e288]
+            - generic [ref=e290] [cursor=pointer]:
+              - checkbox [checked] [ref=e291]
+              - generic [ref=e292]: GD
+              - generic [ref=e293]:
+                - generic [ref=e294]: gd user1
+                - generic [ref=e295]: gduser1@storefuze.com
+              - img [ref=e296]
+            - generic [ref=e298] [cursor=pointer]:
+              - checkbox [checked] [ref=e299]
+              - generic [ref=e300]: GD
+              - generic [ref=e301]:
+                - generic [ref=e302]: GD User3
+                - generic [ref=e303]: gduser3@storefuze.com
+              - img [ref=e304]
+            - generic [ref=e306] [cursor=pointer]:
+              - checkbox [checked] [ref=e307]
+              - generic [ref=e308]: GD
+              - generic [ref=e309]:
+                - generic [ref=e310]: GD User4
+                - generic [ref=e311]: gduser4@storefuze.com
+              - img [ref=e312]
+            - generic [ref=e314] [cursor=pointer]:
+              - checkbox [checked] [ref=e315]
+              - generic [ref=e316]: GD
+              - generic [ref=e317]:
+                - generic [ref=e318]: GD User2
+                - generic [ref=e319]: gduser@storefuze.com
+              - img [ref=e320]
+            - generic [ref=e322] [cursor=pointer]:
+              - checkbox [checked] [ref=e323]
+              - generic [ref=e324]: GU
+              - generic [ref=e325]:
+                - generic [ref=e326]: guru gd
+                - generic [ref=e327]: guru-gd@storefuze.com
+              - img [ref=e328]
+            - generic [ref=e330] [cursor=pointer]:
+              - checkbox [checked] [ref=e331]
+              - generic [ref=e332]: HY
+              - generic [ref=e333]:
+                - generic [ref=e334]: hyma gd
+                - generic [ref=e335]: hyma-gd@storefuze.com
+              - img [ref=e336]
+            - generic [ref=e338] [cursor=pointer]:
+              - checkbox [checked] [ref=e339]
+              - generic [ref=e340]: MA
+              - generic [ref=e341]:
+                - generic [ref=e342]: max m
+                - generic [ref=e343]: max@storefuze.com
+              - img [ref=e344]
+            - generic [ref=e346] [cursor=pointer]:
+              - checkbox [checked] [ref=e347]
+              - generic [ref=e348]: PE
+              - generic [ref=e349]:
+                - generic [ref=e350]: peter P
+                - generic [ref=e351]: peter@fuzebot.co
+              - img [ref=e352]
+            - generic [ref=e354] [cursor=pointer]:
+              - checkbox [checked] [ref=e355]
+              - generic [ref=e356]: RE
+              - generic [ref=e357]:
+                - generic [ref=e358]: rebel gd
+                - generic [ref=e359]: rebel-gd@storefuze.com
+              - img [ref=e360]
+            - generic [ref=e362] [cursor=pointer]:
+              - checkbox [checked] [ref=e363]
+              - generic [ref=e364]: SO
+              - generic [ref=e365]:
+                - generic [ref=e366]: Sonia S
+                - generic [ref=e367]: sonia@storefuze.com
+              - img [ref=e368]
+            - generic [ref=e370] [cursor=pointer]:
+              - checkbox [checked] [ref=e371]
+              - generic [ref=e372]: ZA
+              - generic [ref=e373]:
+                - generic [ref=e374]: Zara Z
+                - generic [ref=e375]: zara@storefuze.com
+              - img [ref=e376]
+            - generic [ref=e378] [cursor=pointer]:
+              - checkbox [checked] [ref=e379]
+              - generic [ref=e380]: AL
+              - generic [ref=e381]:
+                - generic [ref=e382]: alex A
+                - generic [ref=e383]: alex@storefuze.com
+              - img [ref=e384]
+            - generic [ref=e386] [cursor=pointer]:
+              - checkbox [checked] [ref=e387]
+              - generic [ref=e388]: AU
+              - generic [ref=e389]:
+                - generic [ref=e390]: Austin A
+                - generic [ref=e391]: austin@fuzebot.co
+              - img [ref=e392]
+            - generic [ref=e394] [cursor=pointer]:
+              - checkbox [checked] [ref=e395]
+              - generic [ref=e396]: DA
+              - generic [ref=e397]:
+                - generic [ref=e398]: dan d
+                - generic [ref=e399]: dan@storefuze.com
+              - img [ref=e400]
+            - generic [ref=e402] [cursor=pointer]:
+              - checkbox [checked] [ref=e403]
+              - generic [ref=e404]: FR
+              - generic [ref=e405]:
+                - generic [ref=e406]: Frankie F
+                - generic [ref=e407]: frankie@fuzebot.co
+              - img [ref=e408]
+            - generic [ref=e410] [cursor=pointer]:
+              - checkbox [checked] [ref=e411]
+              - generic [ref=e412]: MA
+              - generic [ref=e413]:
+                - generic [ref=e414]: max m
+                - generic [ref=e415]: max@storefuze.com
+              - img [ref=e416]
+            - generic [ref=e418] [cursor=pointer]:
+              - checkbox [checked] [ref=e419]
+              - generic [ref=e420]: PE
+              - generic [ref=e421]:
+                - generic [ref=e422]: peter P
+                - generic [ref=e423]: peter@fuzebot.co
+              - img [ref=e424]
+            - generic [ref=e426] [cursor=pointer]:
+              - checkbox [checked] [ref=e427]
+              - generic [ref=e428]: SO
+              - generic [ref=e429]:
+                - generic [ref=e430]: Sonia S
+                - generic [ref=e431]: sonia@storefuze.com
+              - img [ref=e432]
+            - generic [ref=e434] [cursor=pointer]:
+              - checkbox [checked] [ref=e435]
+              - generic [ref=e436]: ZA
+              - generic [ref=e437]:
+                - generic [ref=e438]: Zara Z
+                - generic [ref=e439]: zara@storefuze.com
+              - img [ref=e440]
+            - generic [ref=e442] [cursor=pointer]:
+              - checkbox [checked] [ref=e443]
+              - generic [ref=e444]: AL
+              - generic [ref=e445]:
+                - generic [ref=e446]: alex A
+                - generic [ref=e447]: alex@storefuze.com
+              - img [ref=e448]
+            - generic [ref=e450] [cursor=pointer]:
+              - checkbox [checked] [ref=e451]
+              - generic [ref=e452]: AU
+              - generic [ref=e453]:
+                - generic [ref=e454]: Austin A
+                - generic [ref=e455]: austin@fuzebot.co
+              - img [ref=e456]
+            - generic [ref=e458] [cursor=pointer]:
+              - checkbox [checked] [ref=e459]
+              - generic [ref=e460]: CO
+              - generic [ref=e461]:
+                - generic [ref=e462]: collins gd
+                - generic [ref=e463]: collins-gd@storefuze.com
+              - img [ref=e464]
+            - generic [ref=e466] [cursor=pointer]:
+              - checkbox [checked] [ref=e467]
+              - generic [ref=e468]: DA
+              - generic [ref=e469]:
+                - generic [ref=e470]: dan d
+                - generic [ref=e471]: dan@storefuze.com
+              - img [ref=e472]
+            - generic [ref=e474] [cursor=pointer]:
+              - checkbox [checked] [ref=e475]
+              - generic [ref=e476]: DA
+              - generic [ref=e477]:
+                - generic [ref=e478]: david gd
+                - generic [ref=e479]: davidgd@storefuze.com
+              - img [ref=e480]
+            - generic [ref=e482] [cursor=pointer]:
+              - checkbox [checked] [ref=e483]
+              - generic [ref=e484]: FR
+              - generic [ref=e485]:
+                - generic [ref=e486]: Frankie F
+                - generic [ref=e487]: frankie@fuzebot.co
+              - img [ref=e488]
+            - generic [ref=e490] [cursor=pointer]:
+              - checkbox [checked] [ref=e491]
+              - generic [ref=e492]: GU
+              - generic [ref=e493]:
+                - generic [ref=e494]: guru gd
+                - generic [ref=e495]: guru-gd@storefuze.com
+              - img [ref=e496]
+            - generic [ref=e498] [cursor=pointer]:
+              - checkbox [checked] [ref=e499]
+              - generic [ref=e500]: HY
+              - generic [ref=e501]:
+                - generic [ref=e502]: hyma gd
+                - generic [ref=e503]: hyma-gd@storefuze.com
+              - img [ref=e504]
+            - generic [ref=e506] [cursor=pointer]:
+              - checkbox [checked] [ref=e507]
+              - generic [ref=e508]: MA
+              - generic [ref=e509]:
+                - generic [ref=e510]: max m
+                - generic [ref=e511]: max@storefuze.com
+              - img [ref=e512]
+            - generic [ref=e514] [cursor=pointer]:
+              - checkbox [checked] [ref=e515]
+              - generic [ref=e516]: PE
+              - generic [ref=e517]:
+                - generic [ref=e518]: peter P
+                - generic [ref=e519]: peter@fuzebot.co
+              - img [ref=e520]
+            - generic [ref=e522] [cursor=pointer]:
+              - checkbox [checked] [ref=e523]
+              - generic [ref=e524]: RE
+              - generic [ref=e525]:
+                - generic [ref=e526]: rebel gd
+                - generic [ref=e527]: rebel-gd@storefuze.com
+              - img [ref=e528]
+            - generic [ref=e530] [cursor=pointer]:
+              - checkbox [checked] [ref=e531]
+              - generic [ref=e532]: SO
+              - generic [ref=e533]:
+                - generic [ref=e534]: Sonia S
+                - generic [ref=e535]: sonia@storefuze.com
+              - img [ref=e536]
+            - generic [ref=e538] [cursor=pointer]:
+              - checkbox [checked] [ref=e539]
+              - generic [ref=e540]: ZA
+              - generic [ref=e541]:
+                - generic [ref=e542]: Zara Z
+                - generic [ref=e543]: zara@storefuze.com
+              - img [ref=e544]
+          - button "Export 17 Users" [ref=e546] [cursor=pointer]
+        - button "← Back" [ref=e548] [cursor=pointer]
+    - generic [ref=e72]:
+      - generic [ref=e73]:
+        - generic [ref=e74]:
+          - generic "Drag to swap panels" [ref=e75]:
+            - img [ref=e76]
+          - img [ref=e84] [cursor=pointer]
+          - generic [ref=e89] [cursor=pointer]:
+            - generic [ref=e90]: Migration Agent
+            - generic [ref=e549]:
+              - img [ref=e550]
+              - img [ref=e555]
+              - img [ref=e557]
+              - generic [ref=e562]: Google → Microsoft
+        - generic [ref=e93]: Ready
+      - generic [ref=e94]:
+        - generic [ref=e95]:
+          - generic [ref=e144]:
+            - img [ref=e146]
+            - paragraph [ref=e154]:
+              - text: Okay, I can see that both
+              - strong [ref=e155]: Google Workspace
+              - text: and
+              - strong [ref=e156]: Microsoft 365
+              - text: are connected. The next step is to select the migration direction. Let's go ahead and set the direction from
+              - strong [ref=e157]: Google Workspace to Microsoft 365
+              - text: . I'll do that for you now.
+          - generic [ref=e200]:
+            - img [ref=e202]
+            - paragraph [ref=e210]:
+              - text: Okay, I can see that you're at the "Choose Direction" step. Since you have both
+              - strong [ref=e211]: Google Workspace
+              - text: and
+              - strong [ref=e212]: Microsoft 365
+              - text: connected, you should select the direction for your migration. Based on your options, you can choose
+              - strong [ref=e213]: Gemini→Copilot
+              - text: ","
+              - strong [ref=e214]: Copilot→Gemini
+              - text: ", or"
+              - strong [ref=e215]: Claude→Gemini
+              - text: . Go ahead and pick the one that matches your needs!
+          - generic [ref=e564]:
+            - img [ref=e566]
+            - paragraph [ref=e574]:
+              - text: Alright, you see the
+              - strong [ref=e575]: Import Data (Gemini→Copilot)
+              - text: section, but your upload status is
+              - strong [ref=e576]: not uploaded
+              - text: . Since we're set for a
+              - strong [ref=e577]: Google Workspace → Microsoft 365
+              - text: migration, let's focus on mapping users next. I'll go ahead and auto-map the users for you.
+          - generic [ref=e582]: What do I do next?
+          - generic [ref=e595]:
+            - img [ref=e597]
+            - generic [ref=e602]:
+              - paragraph [ref=e605]: Okay, I can see that you haven't mapped any users yet. I've opened the user mapping panel for you. You'll need to manually map users from Google Workspace to Microsoft 365 since auto-mapping didn't find any matches. Once that's done, we can proceed with the migration.
+              - generic [ref=e606]:
+                - button "How do I import data?" [ref=e607] [cursor=pointer]
+                - button "What do I do next?" [ref=e608] [cursor=pointer]
+        - generic [ref=e108]:
+          - button "+" [ref=e110] [cursor=pointer]
+          - textbox "Ask me anything or type a command..." [ref=e111]
+          - button "Send" [disabled] [ref=e112]

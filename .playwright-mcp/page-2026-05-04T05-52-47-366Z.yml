@@ -1,0 +1,81 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - img "CloudFuze" [ref=e5] [cursor=pointer]
+    - generic [ref=e7] [cursor=pointer]: CloudFuze
+    - generic [ref=e8]:
+      - generic [ref=e11]: Idle
+      - generic [ref=e12]:
+        - generic [ref=e13]: AD
+        - generic [ref=e14]: Admin User
+        - button "Sign out" [ref=e15] [cursor=pointer]:
+          - img [ref=e16]
+          - text: Sign out
+  - generic [ref=e19]:
+    - generic [ref=e21]:
+      - generic [ref=e23]:
+        - generic "Drag to swap panels" [ref=e24]:
+          - img [ref=e25]
+        - img [ref=e33] [cursor=pointer]
+        - generic [ref=e39] [cursor=pointer]: CloudFuze Migration
+      - generic [ref=e161]:
+        - generic [ref=e162]:
+          - generic [ref=e163]: Choose Migration Direction
+          - generic [ref=e164]: Select the source and destination for your migration.
+        - generic [ref=e165]:
+          - button "Gemini → Copilot Google Workspace to Microsoft 365" [ref=e166] [cursor=pointer]:
+            - generic [ref=e167]:
+              - img [ref=e168]
+              - img [ref=e173]
+              - img [ref=e175]
+            - generic [ref=e180]: Gemini → Copilot
+            - generic [ref=e181]: Google Workspace to Microsoft 365
+          - button "Copilot → Gemini Microsoft 365 to Google Workspace" [ref=e182] [cursor=pointer]:
+            - generic [ref=e183]:
+              - img [ref=e184]
+              - img [ref=e189]
+              - img [ref=e191]
+            - generic [ref=e196]: Copilot → Gemini
+            - generic [ref=e197]: Microsoft 365 to Google Workspace
+        - button "← Back" [ref=e198] [cursor=pointer]
+    - generic [ref=e72]:
+      - generic [ref=e73]:
+        - generic [ref=e74]:
+          - generic "Drag to swap panels" [ref=e75]:
+            - img [ref=e76]
+          - img [ref=e84] [cursor=pointer]
+          - generic [ref=e90] [cursor=pointer]: Migration Agent
+        - generic [ref=e93]: Ready
+      - generic [ref=e94]:
+        - generic [ref=e95]:
+          - generic [ref=e144]:
+            - img [ref=e146]
+            - paragraph [ref=e154]:
+              - text: Okay, I can see that both
+              - strong [ref=e155]: Google Workspace
+              - text: and
+              - strong [ref=e156]: Microsoft 365
+              - text: are connected. The next step is to select the migration direction. Let's go ahead and set the direction from
+              - strong [ref=e157]: Google Workspace to Microsoft 365
+              - text: . I'll do that for you now.
+          - generic [ref=e200]:
+            - img [ref=e202]
+            - generic [ref=e207]:
+              - paragraph [ref=e210]:
+                - text: Okay, I can see that you're at the "Choose Direction" step. Since you have both
+                - strong [ref=e211]: Google Workspace
+                - text: and
+                - strong [ref=e212]: Microsoft 365
+                - text: connected, you should select the direction for your migration. Based on your options, you can choose
+                - strong [ref=e213]: Gemini→Copilot
+                - text: ","
+                - strong [ref=e214]: Copilot→Gemini
+                - text: ", or"
+                - strong [ref=e215]: Claude→Gemini
+                - text: . Go ahead and pick the one that matches your needs!
+              - generic [ref=e216]:
+                - button "What can you help with?" [ref=e217] [cursor=pointer]
+                - button "Show me the options" [ref=e218] [cursor=pointer]
+        - generic [ref=e108]:
+          - button "+" [ref=e110] [cursor=pointer]
+          - textbox "Ask me anything or type a command..." [ref=e111]
+          - button "Send" [disabled] [ref=e112]

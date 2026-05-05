@@ -6,7 +6,7 @@ import { loadHistory } from './conversationHistory.js';
 
 const logger = getLogger('agent:executor');
 
-export async function executeTool(toolName, args, { streamEvent, session, migrationState, migrationLogs, db }) {
+export async function executeTool(toolName, args, { streamEvent, session, migrationState, migrationLogs, db, agentDeps }) {
   const migDir = migrationState?.migDir;
   const appUserId = session?.appUser?._id?.toString() || session?.appUserId?.toString() || null;
 
@@ -222,7 +222,7 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
 
     // ── Destructive tools — executed after agentLoop confirmation ──────────
     case 'start_migration': {
-      const { startMigration } = session._agentDeps ?? {};
+      const { startMigration } = agentDeps ?? session._agentDeps ?? {};
       if (!startMigration) return { error: 'Migration executor not available' };
       const batchId = `batch_${Date.now()}`;
       startMigration({ dryRun: args.dryRun ?? true, batchId, migDir, appUserId }).catch(e => {
@@ -235,7 +235,7 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
     }
 
     case 'retry_failed': {
-      const { retryMigration } = session._agentDeps ?? {};
+      const { retryMigration } = agentDeps ?? session._agentDeps ?? {};
       if (!retryMigration) return { error: 'Retry executor not available' };
       const batchId = session.currentBatchId;
       if (!batchId) return { error: 'No migration batch found to retry' };
