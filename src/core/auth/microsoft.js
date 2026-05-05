@@ -35,7 +35,7 @@ function _createMsalApp(tenantId) {
  */
 export async function getAuthUrl(tenantId, appUserId) {
   const msalApp = _createMsalApp(tenantId);
-  const baseUrl = `http://localhost:${process.env.PORT || 4000}`;
+  const baseUrl = process.env.APP_URL || `http://localhost:${process.env.PORT || 4000}`;
   const state = Buffer.from(JSON.stringify({ appUserId, tenantId })).toString('base64');
   return msalApp.getAuthCodeUrl({
     scopes: DELEGATED_SCOPES,
@@ -60,7 +60,7 @@ export async function acquireTokenByCode(code, stateParam) {
   }
 
   const msalApp = _createMsalApp(tenantId);
-  const baseUrl = `http://localhost:${process.env.PORT || 4000}`;
+  const baseUrl = process.env.APP_URL || `http://localhost:${process.env.PORT || 4000}`;
   const result = await msalApp.acquireTokenByCode({
     scopes: DELEGATED_SCOPES,
     redirectUri: `${baseUrl}/auth/callback`,

@@ -18,7 +18,8 @@ const SCOPES = [
 const _sessions = new Map();
 
 function _createOAuth2Client(appUserId) {
-  const redirectUri = process.env.GOOGLE_OAUTH_REDIRECT_URI || 'http://localhost:4000/auth/google/callback';
+  const redirectUri = process.env.GOOGLE_OAUTH_REDIRECT_URI
+    || `${process.env.APP_URL || `http://localhost:${process.env.PORT || 4000}`}/auth/google/callback`;
   const client = new google.auth.OAuth2(
     process.env.GOOGLE_OAUTH_CLIENT_ID,
     process.env.GOOGLE_OAUTH_CLIENT_SECRET,
