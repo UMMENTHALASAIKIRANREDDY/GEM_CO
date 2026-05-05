@@ -144,8 +144,8 @@ function buildStepContextInstruction(state) {
   const missingGoogle = needsGoogle && !googleAuthed;
   const missingMs = needsMs && !msAuthed;
 
-  // Auth missing — agent must redirect immediately
-  if (migDir && step >= 2 && (missingGoogle || missingMs)) {
+  // Auth missing — agent must redirect (but NOT if migration is running/done)
+  if (migDir && step >= 2 && step < 5 && (missingGoogle || missingMs)) {
     const missing = [missingGoogle && 'Google Workspace', missingMs && 'Microsoft 365'].filter(Boolean).join(' and ');
     return `\n\n[AUTO CONTEXT — AUTH GATE] User is at step ${step} with direction "${migDir}" but ${missing} is NOT connected. You MUST: (1) call navigate_to_step with step=0, (2) tell them which account(s) to connect and why. Be direct: "You need to connect X first." Do not proceed with the current step.`;
   }

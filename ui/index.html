@@ -2560,6 +2560,9 @@ function App(){
   const greetedRef=useRef(false);
   const prevGuideKeyRef=useRef(null);
   const sendToAgentRef=useRef(null);
+  const runMigrationRef=useRef(null);
+  const runC2GMigrationRef=useRef(null);
+  const runCL2GMigrationRef=useRef(null);
   const [agentMigrationTrigger,setAgentMigrationTrigger]=useState(null);
 
   const showToast=useCallback((message,type='success')=>{
@@ -2852,6 +2855,7 @@ function App(){
       if(!res.ok){const d=await res.json();addLog('error',d.error);setLive(false)}
     }catch(err){addLog('error',err.message);setLive(false)}
   };
+  runMigrationRef.current=runMigration;
 
   const triggerAutoMap=useCallback(()=>{
     if(migDir==='gemini-copilot'){
@@ -3015,6 +3019,7 @@ function App(){
       if(!res.ok){const d=await res.json().catch(()=>({}));addLog('error',d.error||`Migration failed (${res.status})`);addAgentMsg('bot',`Migration request failed: ${d.error||res.statusText}`);setC2gLive(false);}
     }catch(err){addLog('error',err.message);addAgentMsg('bot',`Migration request error: ${err.message}`);setC2gLive(false);}
   },[c2gLive,c2gSelectedUsers,c2gMappings,c2gOptions,c2gConfig,addLog,addAgentMsg]);
+  runC2GMigrationRef.current=runC2GMigration;
 
   /* Claude→Gemini migration */
   const runCL2GMigration=useCallback(async(forceLive=false)=>{
@@ -3088,6 +3093,7 @@ function App(){
       if(!res.ok){const d=await res.json().catch(()=>({}));addLog('error',d.error||`Migration failed (${res.status})`);setCl2gLive(false);}
     }catch(err){addLog('error',err.message);setCl2gLive(false);}
   },[cl2gLive,cl2gSelectedUuids,cl2gMappings,cl2gOptions,cl2gConfig,cl2gUploadData,addLog,addAgentMsg]);
+  runCL2GMigrationRef.current=runCL2GMigration;
 
   // When agent triggers start_migration, UI handles the actual execution (prevents double-migration)
   useEffect(()=>{
@@ -3095,10 +3101,10 @@ function App(){
     setAgentMigrationTrigger(null);
     const{migDir:dir,dryRun}=agentMigrationTrigger;
     const forceLive=dryRun===false;
-    if(dir==='gemini-copilot')runMigration(forceLive);
-    else if(dir==='copilot-gemini')runC2GMigration(forceLive);
-    else if(dir==='claude-gemini')runCL2GMigration(forceLive);
-  },[agentMigrationTrigger,runC2GMigration,runCL2GMigration]);
+    if(dir==='gemini-copilot')runMigrationRef.current?.(forceLive);
+    else if(dir==='copilot-gemini')runC2GMigrationRef.current?.(forceLive);
+    else if(dir==='claude-gemini')runCL2GMigrationRef.current?.(forceLive);
+  },[agentMigrationTrigger]);
 
   const handleChangeDirection=useCallback(()=>{
     setMigDir(null);setStep(1);setAgentMode('guide');

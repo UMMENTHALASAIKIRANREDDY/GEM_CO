@@ -237,6 +237,10 @@ function buildAuthGateSection({ migDir, googleAuthed, msAuthed, step }) {
   }
 
   const missing = [missingGoogle && 'Google Workspace', missingMs && 'Microsoft 365'].filter(Boolean).join(' and ');
+  // Do NOT navigate away if migration is running or done — auth token may have expired but migration already started
+  if (step >= 5) {
+    return `⚠️ ${missing} session may have expired but migration is in progress or complete. Do NOT navigate away. Inform the user if they need to reconnect for the next run.`;
+  }
   if (step >= 2) {
     return `🚫 BLOCKED — ${missing} not connected but user is at step ${step}. IMMEDIATELY call navigate_to_step({step: 0}) and tell user to connect ${missing} using the card buttons on the Connect Clouds screen before continuing.`;
   }
