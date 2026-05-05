@@ -607,6 +607,43 @@ export function createG2CRouter(deps) {
     res.json({ ok: true });
   });
 
+  const uploadMemory = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+  router.post('/user-mappings-csv', uploadMemory.single('csv'), async (req, res) => {
+    const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
+    const migDirParam = req.query.migDir || req.body?.migDir || 'gemini-copilot';
+    if (!req.file) return res.status(400).json({ error: 'No CSV file uploaded' });
+
+    try {
+      const text = req.file.buffer.toString('utf8');
+      const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+      const dataLines = lines[0]?.toLowerCase().includes('source') ? lines.slice(1) : lines;
+
+      const mappings = {};
+      for (const line of dataLines) {
+        const [src, dst] = line.split(',').map(s => s?.trim().toLowerCase());
+        if (src && dst) mappings[src] = dst;
+      }
+
+      const count = Object.keys(mappings).length;
+      if (count === 0) return res.status(400).json({ error: 'No valid rows found. CSV must have source_email,dest_email columns.' });
+
+      await db().collection('userMappings').updateOne(
+        { appUserId, migDir: migDirParam },
+        {
+          $set: { mappings, appUserId, migDir: migDirParam, googleEmail, msEmail, updatedAt: new Date() },
+          $setOnInsert: { createdAt: new Date() }
+        },
+        { upsert: true }
+      );
+
+      dbLog.info(`userMappings-csv — ${migDirParam} ${count} mappings from CSV`);
+      res.json({ ok: true, count });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Migration logs (historical)
   router.get('/migration-logs/:batchId', async (req, res) => {
     const wsFilter = getWorkspaceFilter(req);

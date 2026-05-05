@@ -1135,6 +1135,60 @@ const MigrationActionsWidget=({onDryRun,onGoLive})=>(
   </div>
 );
 
+function AgentUploadWidget({widgetType,label,migDir,onDone}){
+  const [dragOver,setDragOver]=React.useState(false);
+  const [uploading,setUploading]=React.useState(false);
+  const [error,setError]=React.useState(null);
+  const fileRef=React.useRef();
+
+  const accept=widgetType==='zip'?'.zip':'.csv';
+  const endpoint=widgetType==='csv'
+    ?`/api/user-mappings-csv?migDir=${migDir||'gemini-copilot'}`
+    :migDir==='claude-gemini'
+      ?'/api/cl2g-upload'
+      :'/api/upload';
+
+  async function handleFile(file){
+    if(!file)return;
+    setUploading(true);setError(null);
+    try{
+      const fd=new FormData();
+      if(widgetType==='zip'){
+        fd.append(migDir==='claude-gemini'?'cl2g_zip':'vault_zip',file);
+      }else{
+        fd.append('csv',file);
+      }
+      const r=await fetch(endpoint,{method:'POST',body:fd});
+      if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error||`Upload failed (${r.status})`);}
+      const result=await r.json();
+      onDone(result);
+    }catch(e){
+      setError(e.message);setUploading(false);
+    }
+  }
+
+  return(
+    <div
+      style={{border:`2px dashed ${dragOver?'#7c5cfc':'#333'}`,borderRadius:8,padding:'16px 20px',textAlign:'center',cursor:'pointer',background:dragOver?'#1a1530':'#111',transition:'all 0.15s',maxWidth:320}}
+      onDragOver={e=>{e.preventDefault();setDragOver(true);}}
+      onDragLeave={()=>setDragOver(false)}
+      onDrop={e=>{e.preventDefault();setDragOver(false);handleFile(e.dataTransfer.files[0]);}}
+      onClick={()=>fileRef.current?.click()}
+    >
+      <input ref={fileRef} type="file" accept={accept} style={{display:'none'}} onChange={e=>handleFile(e.target.files[0])}/>
+      {uploading
+        ?<span style={{color:'#aaa'}}>Uploading…</span>
+        :<>
+            <div style={{fontSize:28,marginBottom:6}}>{widgetType==='zip'?'🗜️':'📋'}</div>
+            <div style={{fontWeight:600,marginBottom:4,color:'#ddd'}}>{label||'Upload file'}</div>
+            <div style={{fontSize:12,color:'#666'}}>Drag & drop or click · {accept.toUpperCase()} only</div>
+          </>
+      }
+      {error&&<div style={{color:'#e05a5a',fontSize:12,marginTop:8}}>{error}</div>}
+    </div>
+  );
+}
+
 const ChatWidget=({type,widgetProps={}})=>{
   if(type==='auth')return<AuthWidget {...(widgetProps.auth||{})}/>;
   if(type==='upload')return<UploadWidget {...(widgetProps.upload||{})}/>;
@@ -1274,7 +1328,7 @@ const VisualizationPanel=({step,googleAuthed,msAuthed,uploadData,googleUsers,msU
 };
 
 /* Agent chat panel */
-const AgentChat=({msgs,typing,input,onInput,onSend,onLogLineClick,onQuickReply,widgetProps={},onShowReports,onClearChat})=>{
+const AgentChat=({msgs,typing,input,onInput,onSend,onLogLineClick,onQuickReply,widgetProps={},onShowReports,onClearChat,onWidgetDone})=>{
   const endRef=useRef(null);
   const [plusOpen,setPlusOpen]=useState(false);
   const plusRef=useRef(null);
@@ -1296,7 +1350,25 @@ const AgentChat=({msgs,typing,input,onInput,onSend,onLogLineClick,onQuickReply,w
             <div style={{fontSize:12,color:C.muted,maxWidth:240}}>Your AI guide for migrating Google Gemini conversations to Microsoft Copilot. Ask me anything or let me guide you through the process.</div>
           </div>
         )}
-        {msgs.filter(m=>!m.shellBlock).map(m=>{
+        {msgs.filter(m=>!m.shellBlock).map((m,i)=>{
+          if(m.role==='widget'){
+            const w=m.content;
+            if(w.done)return(
+              <div key={m.id} className="agent-msg bot">
+                <span style={{color:'#4caf50'}}>✓ {w.widgetType==='zip'?'File uploaded successfully':'Mappings imported successfully'}</span>
+              </div>
+            );
+            return(
+              <div key={m.id} className="agent-msg bot">
+                <AgentUploadWidget
+                  widgetType={w.widgetType}
+                  label={w.label}
+                  migDir={w.migDir}
+                  onDone={(result)=>onWidgetDone&&onWidgetDone(i,w,result)}
+                />
+              </div>
+            );
+          }
           if(m.role==='user')return<UserMsg key={m.id}>{m.content}</UserMsg>;
           return(
             <div key={m.id}>
@@ -3075,6 +3147,10 @@ function App(){
   },[]);
 
   const applyUIEvent=useCallback((evt)=>{
+    if(evt.event==='show_upload_widget'){
+      addAgentMsg('widget',{widgetType:evt.widgetType,label:evt.label,migDir:evt.migDir,done:false});
+      return;
+    }
     if(evt.event==='navigate'&&typeof evt.step==='number'){setStep(evt.step);}
     else if(evt.event==='select_direction'&&evt.direction){setMigDir(evt.direction);if(typeof evt.step==='number')setStep(evt.step);}
     else if(evt.event==='refresh_mapping'){setLeftMode&&typeof setLeftMode==='function'&&setLeftMode('mapping');}
@@ -3413,7 +3489,7 @@ function App(){
                 <span style={{fontSize:12,color:live?'#16a34a':C.muted,fontWeight:500}}>{live?'Migrating':'Ready'}</span>
               </div>
             </div>
-            <AgentChat msgs={agentMsgs} typing={agentTyping} input={agentInput} onInput={setAgentInput} onSend={()=>sendToAgent()} onLogLineClick={handleLogLineClick} onQuickReply={handleAgentQuickReply} widgetProps={widgetProps} onShowReports={()=>setShowReports(true)} onClearChat={()=>setAgentMsgs([])}/>
+            <AgentChat msgs={agentMsgs} typing={agentTyping} input={agentInput} onInput={setAgentInput} onSend={()=>sendToAgent()} onLogLineClick={handleLogLineClick} onQuickReply={handleAgentQuickReply} widgetProps={widgetProps} onShowReports={()=>setShowReports(true)} onClearChat={()=>setAgentMsgs([])} onWidgetDone={(idx,w,result)=>{setAgentMsgs(prev=>prev.map((m,i)=>i===idx?{...m,content:{...m.content,done:true}}:m));const notifyMsg=w.widgetType==='zip'?`Upload complete. ${result.total_users??result.users?.length??0} users loaded.`:`CSV imported. ${result.count??0} mappings loaded.`;sendToAgent(notifyMsg,false);}}/>
           </div>
         );
         return(
