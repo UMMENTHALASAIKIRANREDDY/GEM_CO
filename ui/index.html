@@ -3495,11 +3495,11 @@ function App(){
         return(
           <div ref={containerRef} style={{display:'flex',flex:1,overflow:'hidden'}}>
             <div style={{width:`${splitPct}%`,display:'flex',flexDirection:'column',overflow:'hidden',flexShrink:0}}>
-              {panelSwapped?chatPanel('left'):stepsPanel('left')}
+              {panelSwapped?stepsPanel('left'):chatPanel('left')}
             </div>
             <div ref={dividerRef} className="drag-divider" onMouseDown={handleDividerMouseDown}/>
             <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
-              {panelSwapped?stepsPanel('right'):chatPanel('right')}
+              {panelSwapped?chatPanel('right'):stepsPanel('right')}
             </div>
           </div>
         );
