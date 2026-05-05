@@ -113,7 +113,9 @@ async function ensureCollections() {
 
   // 13. chatHistory — persists agent chat messages per user for cross-device restore
   if (!existing.has('chatHistory')) await _db.createCollection('chatHistory');
-  await _db.collection('chatHistory').createIndex({ appUserId: 1 }, { unique: true });
+  // Drop old unique index if it exists, then create correct non-unique index
+  try { await _db.collection('chatHistory').dropIndex('appUserId_1'); } catch (_) {}
+  await _db.collection('chatHistory').createIndex({ appUserId: 1, timestamp: -1 });
 
   // 14. agentAuditLog — structured per-session agent trace for the monitor UI
   if (!existing.has('agentAuditLog')) await _db.createCollection('agentAuditLog');

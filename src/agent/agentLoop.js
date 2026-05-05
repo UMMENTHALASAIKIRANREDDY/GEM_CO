@@ -190,7 +190,7 @@ function buildStepContextInstruction(state) {
   return `\n\n[AUTO CONTEXT] User just navigated to step ${step} (${migDir}). Tell them exactly what to do next. 1-2 sentences, no questions.`;
 }
 
-export async function runAgentLoop(req, res, { message, migrationState: _migrationState, migrationLogs, isSystemTrigger, db }) {
+export async function runAgentLoop(req, res, { message, migrationState: _migrationState, migrationLogs, isSystemTrigger, db, agentDeps }) {
   let migrationState = _migrationState;
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -205,7 +205,7 @@ export async function runAgentLoop(req, res, { message, migrationState: _migrati
   const streamQuickReplies = (replies) => streamEvent('quick_replies', { replies });
   const streamDone = () => { res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`); res.end(); };
 
-  const toolCtx = { streamEvent, session: req.session, migrationState, migrationLogs, db };
+  const toolCtx = { streamEvent, session: req.session, migrationState, migrationLogs, db, agentDeps };
 
   try {
     // Handle pending confirmation — user replied "Yes, proceed" or "Cancel"

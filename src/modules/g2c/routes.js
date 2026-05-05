@@ -599,8 +599,8 @@ export function createG2CRouter(deps) {
     const { customerName, mappings, selectedUsers } = req.body;
     const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
     await db().collection('userMappings').updateOne(
-      { appUserId, migDir: 'gemini-copilot', batchId: 'latest' },
-      { $set: { customerName, mappings, selectedUsers, appUserId, migDir: 'gemini-copilot', googleEmail, msEmail, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+      { appUserId, migDir: 'gemini-copilot' },
+      { $set: { customerName, mappings, selectedUsers, appUserId, migDir: 'gemini-copilot', googleEmail, msEmail, batchId: 'latest', updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
       { upsert: true }
     );
     dbLog.info(`userMappings.upsert — G2C ${Object.keys(mappings || {}).length} mappings, ${(selectedUsers || []).length} selected`);
@@ -1008,8 +1008,8 @@ export function createG2CRouter(deps) {
     const appUserName = req.session.appUser?.name || req.session.appUser?.email?.split('@')[0] || 'there';
     if (!message) return res.status(400).json({ error: 'message required' });
 
-    // Attach migration executors to session so toolExecutor can fire them
-    req.session._agentDeps = {
+    // Build migration executors as local closures (not stored in session — functions can't be serialized)
+    const agentDeps = {
       startMigration: async ({ dryRun, batchId, migDir: dir, appUserId: uid }) => {
         // Validate preconditions only — UI handles the actual migration trigger and SSE connection
         if (dir === 'gemini-copilot') {
@@ -1063,17 +1063,14 @@ export function createG2CRouter(deps) {
       migrationLogs,
       isSystemTrigger: isSystemTrigger || message === '__step_context__',
       db: db(),
+      agentDeps,
     });
   });
 
-  // ─── Audit routes ─────────────────────────────────────────────────────────────
-  const requireAuditAuth = (req, res, next) => {
-    if (!req.session?.appUser) return res.status(401).json({ error: 'Not logged in' });
-    next();
-  };
+  // ─── Audit routes (internal monitor tool — no auth required) ─────────────────
 
   // GET /audit/sessions — 50 most recent sessions with summary fields
-  router.get('/audit/sessions', requireAuditAuth, async (req, res) => {
+  router.get('/audit/sessions', async (req, res) => {
     try {
       const sessions = await db().collection('agentAuditLog').aggregate([
         { $sort: { ts: -1 } },
@@ -1098,7 +1095,7 @@ export function createG2CRouter(deps) {
   });
 
   // GET /audit/session/:id — all events for a session, sorted ascending
-  router.get('/audit/session/:id', requireAuditAuth, async (req, res) => {
+  router.get('/audit/session/:id', async (req, res) => {
     try {
       const events = await db().collection('agentAuditLog')
         .find({ sessionId: req.params.id })
@@ -1111,7 +1108,7 @@ export function createG2CRouter(deps) {
   });
 
   // GET /audit/stream — SSE fan-out of live audit events
-  router.get('/audit/stream', requireAuditAuth, (req, res) => {
+  router.get('/audit/stream', (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
