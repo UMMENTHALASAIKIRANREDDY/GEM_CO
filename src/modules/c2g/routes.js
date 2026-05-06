@@ -219,7 +219,10 @@ export function createC2GRouter(deps) {
             c2gLog('info', `Processing: ${pair.sourceDisplayName} → ${pair.destUserEmail}`);
             const r = await migrateUserPair(
               { sourceUserId: pair.sourceUserId, sourceDisplayName: pair.sourceDisplayName, destUserEmail: pair.destUserEmail },
-              migOpts
+              migOpts,
+              ({ filesUploaded, convIdx, totalConvs }) => {
+                c2gLog('progress', JSON.stringify({ files: files + filesUploaded, errors, users: results.length, total: migPairs.length, convIdx, totalConvs }));
+              }
             );
             results.push(r);
 

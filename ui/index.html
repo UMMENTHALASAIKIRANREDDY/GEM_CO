@@ -1658,10 +1658,10 @@ const StepC2GOptions=({c2gOptions,setC2gOptions,c2gConfig,setC2gConfig,googleAut
   );
 };
 
-const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c2gLive,onChangeDirection,lastRunWasDry,onStartLive,c2gTotal,c2gFolderName})=>{
-  // Use files uploaded as ring metric — each file uploaded increments by 1% from a 5% baseline.
-  // This avoids jumping to 99% when there's only 1 user (users/total = 1/1 = 100%).
-  const ring=c2gDone?100:c2gLive?Math.min(5+(c2gStats.files||0),95):0;
+const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c2gLive,onChangeDirection,lastRunWasDry,onStartLive,c2gTotal,c2gFolderName,c2gConvProgress})=>{
+  // Per-conversation progress: convIdx/totalConvs gives accurate ring. Falls back to files count.
+  const {convIdx=0,totalConvs=0}=c2gConvProgress||{};
+  const ring=c2gDone?100:totalConvs>0?Math.max(3,Math.min(Math.round((convIdx/totalConvs)*100),99)):c2gLive?Math.min(5+(c2gStats.files||0),95):0;
   return(
     <div className="fade-up">
       {!c2gDone&&!c2gLive&&(
@@ -1688,6 +1688,7 @@ const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c
               <div style={{position:'absolute',textAlign:'center'}}><div style={{fontSize:22,fontWeight:700,color:C.primary}}>{ring}%</div><div style={{fontSize:10,color:C.muted}}>Progress</div></div>
             </div>
           </div>
+          {totalConvs>0&&<div style={{textAlign:'center',fontSize:12,color:C.muted,marginBottom:8}}>Conversation {convIdx} of {totalConvs}</div>}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:16}}>
             {[{label:'Users',val:c2gStats.users,c:'#0129AC'},{label:'Files Uploaded',val:c2gStats.files,c:'#20CC83'},{label:'Errors',val:c2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
               <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
@@ -2538,6 +2539,7 @@ function App(){
   const [c2gSelectedUsers,setC2gSelectedUsers]=useState(()=>new Set());
   const [c2gStats,setC2gStats]=useState(()=>lsGet(LS_PREFS,{}).c2gStats||{users:0,files:0,errors:0});
   const [c2gTotal,setC2gTotal]=useState(0);
+  const [c2gConvProgress,setC2gConvProgress]=useState({convIdx:0,totalConvs:0});
   const [c2gDone,setC2gDone]=useState(()=>lsGet(LS_PREFS,{}).c2gDone||false);
   const [c2gLive,setC2gLive]=useState(false);
   const [c2gOptions,setC2gOptions]=useState(()=>({dryRun:true,fromDate:'',toDate:'',...(lsGet(LS_PREFS,{}).c2gOptions||{})}));
@@ -2973,7 +2975,7 @@ function App(){
       addAgentMsg('bot','⚠️ No user mappings found. Go back to the mapping step and fill in the Google destination emails for each M365 user.');
       return;
     }
-    setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gTotal(0);setC2gLive(true);setStep(4);setLogs([]);
+    setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gTotal(0);setC2gConvProgress({convIdx:0,totalConvs:0});setC2gLive(true);setStep(4);setLogs([]);
     setAgentMode('running');
     addLog('info',isDry?'Starting dry run...':'Starting Copilot → Gemini migration...');
     const curStats={users:0,files:0,errors:0};
@@ -2986,7 +2988,7 @@ function App(){
         if(d.type==='error')curStats.errors++;
         if(d.type==='info'&&d.message?.includes('Processing:'))curStats.users++;
         if(d.type==='total'){try{const p=JSON.parse(d.message);if(p.total)setC2gTotal(p.total);}catch{}}
-        if(d.type==='progress'){try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;if(p.total)setC2gTotal(p.total);}catch{}}
+        if(d.type==='progress'){try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;if(p.total)setC2gTotal(p.total);if(p.convIdx!=null&&p.totalConvs)setC2gConvProgress({convIdx:p.convIdx,totalConvs:p.totalConvs});}catch{}}
         setC2gStats({...curStats});addLog(d.type,d.message||'');
         // Proactive milestone messages
         if(d.type==='done'){
@@ -3463,7 +3465,7 @@ function App(){
                   {/* Copilot → Gemini steps */}
                   {step===2&&migDir==='copilot-gemini'&&<StepC2GMap msUsers={msUsers} googleUsers={googleUsers} c2gMappings={c2gMappings} setC2gMappings={setC2gMappings} c2gSelectedUsers={c2gSelectedUsers} setC2gSelectedUsers={setC2gSelectedUsers} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast}/>}
                   {step===3&&migDir==='copilot-gemini'&&<StepC2GOptions c2gOptions={c2gOptions} setC2gOptions={setC2gOptions} c2gConfig={c2gConfig} setC2gConfig={setC2gConfig} googleAuthed={googleAuthed} msAuthed={msAuthed} onRun={runC2GMigration} onBack={()=>setStep(2)}/>}
-                  {(step===4||step===5)&&migDir==='copilot-gemini'&&<StepC2GMigrate c2gStats={c2gStats} c2gDone={c2gDone} c2gBatchId={null} onRunAnother={()=>{setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(3)} onStart={runC2GMigration} c2gLive={c2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={c2gLastDry} onStartLive={()=>runC2GMigration(true)} c2gTotal={c2gTotal} c2gFolderName={c2gConfig?.folderName}/>}
+                  {(step===4||step===5)&&migDir==='copilot-gemini'&&<StepC2GMigrate c2gStats={c2gStats} c2gDone={c2gDone} c2gBatchId={null} onRunAnother={()=>{setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(3)} onStart={runC2GMigration} c2gLive={c2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={c2gLastDry} onStartLive={()=>runC2GMigration(true)} c2gTotal={c2gTotal} c2gFolderName={c2gConfig?.folderName} c2gConvProgress={c2gConvProgress}/>}
                   {/* Claude → Gemini steps */}
                   {step===2&&migDir==='claude-gemini'&&<StepCL2GUpload cl2gUploadData={cl2gUploadData} setCl2gUploadData={setCl2gUploadData} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast} onUploadComplete={(n)=>{if(agentMode==='guide')addAgentMsg('bot',`Claude export loaded — **${n} user${n!==1?'s':''}** found. I can match them to your Google Workspace accounts automatically.`,{quickReplies:['Auto-map all users now','I\'ll review mappings manually','How does auto-mapping work?']});}}/>}
                   {step===3&&migDir==='claude-gemini'&&<StepCL2GMap cl2gUploadData={cl2gUploadData} googleUsers={googleUsers} cl2gMappings={cl2gMappings} setCl2gMappings={setCl2gMappings} cl2gSelectedUuids={cl2gSelectedUuids} setCl2gSelectedUuids={setCl2gSelectedUuids} onNext={()=>setStep(4)} onBack={()=>setStep(2)} showToast={showToast}/>}

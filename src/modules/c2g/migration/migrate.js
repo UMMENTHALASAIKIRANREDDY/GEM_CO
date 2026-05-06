@@ -634,7 +634,7 @@ export async function migrateUserPair({
   sourceUserId,
   sourceDisplayName,
   destUserEmail,
-}, opts = {}) {
+}, opts = {}, onProgress = null) {
   const result = {
     sourceUserId,
     sourceDisplayName: sourceDisplayName || sourceUserId,
@@ -755,6 +755,7 @@ export async function migrateUserPair({
           webViewLink: docxFile.webViewLink,
         });
         console.log(`[C2G] Conv ${convIdx}/${sessions.size}: uploaded DOCX + ${filesToUpload.length} files`);
+        if (onProgress) onProgress({ filesUploaded: result.filesUploaded, convIdx, totalConvs: sessions.size });
       } catch (err) {
         console.error(`[C2G] Conv ${convIdx} error: ${err.message}`);
         result.errors.push(`Conversation ${convIdx}: ${err.message || String(err)}`);
