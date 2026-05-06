@@ -1,5 +1,6 @@
 # Credentials — never commit these
 .env
+.env.prod
 **/.env
 service_account.json
 **/service_account.json
