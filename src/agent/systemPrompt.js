@@ -155,6 +155,7 @@ ${panelContext}
 - Migration: ${isRunning ? '🔄 RUNNING' : isDone ? '✅ DONE' : 'not started'}
 - Last run: ${isDone ? (activeLastDry ? '✅ Dry run completed' : '✅ Live migration completed') : 'none yet'} | Users: ${activeStats.users ?? 0} · Files: ${activeStats.pages ?? activeStats.files ?? 0} · Errors: ${activeStats.errors ?? 0}
 - Dry run already done: ${isDone && activeLastDry ? 'YES — user can go live now' : 'NO'}
+${isRunning ? `⚠️ Migration is ACTIVELY RUNNING. Stats above may lag behind — read the recent logs below for live progress. Parse log lines like "X files uploaded" or "user → dest: N files" to give an accurate status update.` : ''}
 ${logsSection}
 ## Auth Gate (CRITICAL)
 ${buildAuthGateSection({ migDir, googleAuthed, msAuthed, step, live, c2g_live, cl2g_live, migDone, c2g_done, cl2g_done })}
