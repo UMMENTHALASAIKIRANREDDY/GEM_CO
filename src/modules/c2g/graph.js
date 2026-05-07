@@ -8,9 +8,8 @@ function buildBaseUrl(apiVersion, userId) {
   return `https://graph.microsoft.com/${v}/copilot/users/${encodeURIComponent(userId)}/interactionHistory/getAllEnterpriseInteractions`;
 }
 
-// Fields to request — attachments/links are direct properties; contexts is a navigation property needing $expand
 const DEFAULT_SELECT = "id,sessionId,appClass,interactionType,createdDateTime,body,attachments,links";
-const DEFAULT_EXPAND = "contexts";
+const DEFAULT_EXPAND = "";
 
 function appendQueryParams(url, { top, filter, select, expand }) {
   const u = new URL(url);
