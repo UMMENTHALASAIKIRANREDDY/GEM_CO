@@ -1814,20 +1814,9 @@ const StepC2GOptions=({c2gOptions,setC2gOptions,c2gConfig,setC2gConfig,googleAut
 
 const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c2gLive,onChangeDirection,lastRunWasDry,onStartLive,c2gTotal,folderName='CopilotChats'})=>{
   const ring=c2gDone?100:c2gTotal>0?Math.min(Math.round((c2gStats.users/c2gTotal)*100),99):c2gLive?5:0;
+  if(!c2gDone&&!c2gLive){onBack();return null;}
   return(
     <div className="fade-up">
-      {!c2gDone&&!c2gLive&&(
-        <>
-          <div style={{marginBottom:20}}>
-            <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Ready to Migrate</div>
-            <div style={{fontSize:13,color:C.muted}}>Copilot conversations will be uploaded to Google Drive as DOCX files.</div>
-          </div>
-          <div style={{display:'flex',gap:10}}>
-            <Btn variant="ghost" onClick={onBack}>← Back</Btn>
-            <Btn onClick={onStart} style={{flex:1,justifyContent:'center'}}>Start Migration →</Btn>
-          </div>
-        </>
-      )}
       {!c2gDone&&c2gLive&&(
         <>
           <div style={{marginBottom:20}}>
