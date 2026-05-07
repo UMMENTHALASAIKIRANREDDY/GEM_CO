@@ -13,21 +13,18 @@ const USERS = [
   { name: 'Eve Staging',    email: 'eve@test.com',     password: 'Test@1234', role: 'user'  },
 ];
 
-const DB_NAME = process.env.G2C_DB || 'gemco';
-
 function buildUri() {
   const raw = process.env.MONGO_HOST || process.env.MONGO_URI;
   if (!raw) throw new Error('MONGO_HOST not set in .env');
   const afterScheme = raw.indexOf('://');
   const pathStart = raw.indexOf('/', afterScheme + 3);
   const base = pathStart === -1 ? raw : raw.substring(0, pathStart);
-  return `${base}/${DB_NAME}?authSource=admin`;
+  return `${base}/gemco?authSource=admin`;
 }
 
 const client = new MongoClient(buildUri());
 await client.connect();
-console.log(`Using DB: ${DB_NAME}`);
-const db = client.db(DB_NAME);
+const db = client.db('gemco');
 const col = db.collection('appUsers');
 
 let created = 0, skipped = 0;
