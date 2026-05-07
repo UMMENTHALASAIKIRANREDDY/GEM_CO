@@ -373,6 +373,11 @@ export function createG2CRouter(deps) {
       if (!user_emails || user_emails.length === 0) return res.status(400).json({ error: 'user_emails array required' });
       const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
       const auth = getGoogleOAuth2Client(appUserId);
+      // Force token refresh — restored sessions can have stale access_token,
+      // first export attempt would fail until user disconnect/reconnect.
+      try { await auth.getAccessToken(); } catch (e) {
+        return res.status(401).json({ error: 'Google session expired. Please sign out and sign in again.' });
+      }
       const exporter = new VaultExporter(auth);
       const matter = await exporter.createMatter(`GEM_CO Export ${new Date().toISOString()}`);
       const exportData = await exporter.createExport(matter.matterId, user_emails);
@@ -640,7 +645,7 @@ export function createG2CRouter(deps) {
       );
 
       dbLog.info(`userMappings-csv — ${migDirParam} ${count} mappings from CSV`);
-      res.json({ success: true, count });
+      res.json({ success: true, count, mappings, migDir: migDirParam });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }

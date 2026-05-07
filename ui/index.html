@@ -582,7 +582,7 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
                   </>
                 ):(
                   msUsers.length>0?(
-                    <select defaultValue="" onChange={e=>{e.stopPropagation();if(e.target.value){setMappings(p=>({...p,[u.email]:e.target.value}));setSelectedUsers(p=>{const n=new Set(p);n.add(u.email);return n});}e.target.value=''}}
+                    <select value="" onChange={e=>{e.stopPropagation();const val=e.target.value;if(val){setMappings(p=>({...p,[u.email]:val}));setSelectedUsers(p=>{const n=new Set(p);n.add(u.email);return n});}}}
                       onClick={e=>e.stopPropagation()}
                       style={{border:'none',background:'transparent',fontSize:12,fontFamily:'inherit',color:C.muted,cursor:'pointer',outline:'none',width:'100%',padding:'2px 0'}}>
                       <option value="" disabled>— assign —</option>
@@ -1714,7 +1714,7 @@ const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c
               </div>
             ))}
           </div>
-          {!lastRunWasDry&&<GemSetupInstructions folderName={c2gFolderName||'CopilotChats'}/>}
+          {!lastRunWasDry&&<GemSetupInstructions folderName={c2gFolderName||'CopilotChats'} migDir="copilot-gemini"/>}
           <div style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:12}}>
             {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{flex:'1 1 140px',justifyContent:'center'}}><IcoRocket s={14}/> Start Live Migration</Btn>}
             <Btn variant="ghost" onClick={onBack} style={{flex:'1 1 100px',justifyContent:'center'}}>← Options</Btn>
@@ -2132,15 +2132,16 @@ How to answer my questions:
 
 Document structure: Each conversation starts with "Conversation N: Title" followed by [Human] and [Claude] labeled messages in chronological order.`;
 
-const GemSetupInstructions=({folderName='ClaudeChats'})=>{
+const GemSetupInstructions=({folderName='ClaudeChats',migDir})=>{
   const [copied,setCopied]=useState(false);
   const [open,setOpen]=useState(true);
   const copy=()=>{navigator.clipboard.writeText(GEM_INSTRUCTIONS).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500)}).catch(()=>{})};
+  const sourceLabel=migDir==='copilot-gemini'?'Copilot':migDir==='claude-gemini'?'Claude':(folderName||'').toLowerCase().includes('copilot')?'Copilot':'Claude';
   const steps=[
     {n:1,icon:'🌐',title:'Open Gemini Gems',desc:'Go to gemini.google.com → click Gems in the left sidebar → New Gem'},
     {n:2,icon:'📁',title:'Add Knowledge from Google Drive',desc:`Under Knowledge, click "Add from Google Drive" → navigate to your ${folderName} folder → select it → Insert`},
     {n:3,icon:'📋',title:'Paste the Gem Instructions',desc:'Copy the instructions below and paste them into the Instructions box of the Gem'},
-    {n:4,icon:'💾',title:'Name & Save the Gem',desc:'Give the Gem a name (e.g. "My Claude History") → click Save — the Gem is now ready to use'},
+    {n:4,icon:'💾',title:'Name & Save the Gem',desc:`Give the Gem a name (e.g. "My ${sourceLabel} History") → click Save — the Gem is now ready to use`},
   ];
   return(
     <div style={{border:`1px solid #BFDBFE`,borderRadius:12,background:'#EFF6FF',marginBottom:16,overflow:'hidden'}}>
@@ -2303,7 +2304,7 @@ const StepCL2GMigrate=({cl2gStats,cl2gDone,onRunAnother,onBack,onStart,cl2gLive,
             ))}
           </div>
 
-          {!lastRunWasDry&&<GemSetupInstructions folderName={folderName}/>}
+          {!lastRunWasDry&&<GemSetupInstructions folderName={folderName} migDir="claude-gemini"/>}
 
           <div style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:16}}>
             {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{flex:'1 1 140px',justifyContent:'center'}}><IcoRocket s={14}/> Start Live Migration</Btn>}
@@ -3511,7 +3512,25 @@ function App(){
                 <span style={{fontSize:12,color:live?'#16a34a':C.muted,fontWeight:500}}>{live?'Migrating':'Ready'}</span>
               </div>
             </div>
-            <AgentChat msgs={agentMsgs} typing={agentTyping} input={agentInput} onInput={setAgentInput} onSend={()=>sendToAgent()} onLogLineClick={handleLogLineClick} onQuickReply={handleAgentQuickReply} widgetProps={widgetProps} onShowReports={()=>setShowReports(true)} onClearChat={()=>setAgentMsgs([])} onWidgetDone={(msgId,w,result)=>{setAgentMsgs(prev=>prev.map(m=>m.id===msgId?{...m,content:{...m.content,done:true}}:m));const notifyMsg=w.widgetType==='zip'?`Upload complete. ${result.total_users??result.users?.length??0} users loaded.`:`CSV imported. ${result.count??0} mappings loaded.`;sendToAgent(notifyMsg,false);}}/>
+            <AgentChat msgs={agentMsgs} typing={agentTyping} input={agentInput} onInput={setAgentInput} onSend={()=>sendToAgent()} onLogLineClick={handleLogLineClick} onQuickReply={handleAgentQuickReply} widgetProps={widgetProps} onShowReports={()=>setShowReports(true)} onClearChat={()=>setAgentMsgs([])} onWidgetDone={(msgId,w,result)=>{
+  setAgentMsgs(prev=>prev.map(m=>m.id===msgId?{...m,content:{...m.content,done:true}}:m));
+  // Sync React state with whatever the backend just stored — otherwise migration
+  // reads empty React state and migrates 0 users.
+  if(w.widgetType==='csv'&&result?.mappings){
+    const dir=result.migDir||w.migDir;
+    if(dir==='copilot-gemini')setC2gMappings(result.mappings);
+    else if(dir==='claude-gemini')setCl2gMappings(result.mappings);
+    else setMappings(result.mappings);
+  }else if(w.widgetType==='zip'){
+    if(w.migDir==='claude-gemini'&&result?.users){
+      setCl2gUploadData(result);
+    }else if(result?.users||result?.total_users){
+      setUploadData(result);
+    }
+  }
+  const notifyMsg=w.widgetType==='zip'?`Upload complete. ${result.total_users??result.users?.length??0} users loaded.`:`CSV imported. ${result.count??0} mappings loaded.`;
+  sendToAgent(notifyMsg,false);
+}}/>
           </div>
         );
         return(
