@@ -8,13 +8,23 @@ function buildBaseUrl(apiVersion, userId) {
   return `https://graph.microsoft.com/${v}/copilot/users/${encodeURIComponent(userId)}/interactionHistory/getAllEnterpriseInteractions`;
 }
 
-function appendQueryParams(url, { top, filter }) {
+// Fields to request — attachments/links are direct properties; contexts is a navigation property needing $expand
+const DEFAULT_SELECT = "id,sessionId,appClass,interactionType,createdDateTime,body,attachments,links";
+const DEFAULT_EXPAND = "contexts";
+
+function appendQueryParams(url, { top, filter, select, expand }) {
   const u = new URL(url);
   if (top != null && top > 0) {
     u.searchParams.set("$top", String(top));
   }
   if (filter && String(filter).trim()) {
     u.searchParams.set("$filter", String(filter).trim());
+  }
+  if (select && String(select).trim()) {
+    u.searchParams.set("$select", String(select).trim());
+  }
+  if (expand && String(expand).trim()) {
+    u.searchParams.set("$expand", String(expand).trim());
   }
   return u.toString();
 }
@@ -25,8 +35,14 @@ export async function fetchAllEnterpriseInteractions({
   userId,
   top,
   filter,
+  select,
+  expand,
 }) {
-  let url = appendQueryParams(buildBaseUrl(apiVersion, userId), { top, filter });
+  let url = appendQueryParams(buildBaseUrl(apiVersion, userId), {
+    top, filter,
+    select: select || DEFAULT_SELECT,
+    expand: expand !== undefined ? expand : DEFAULT_EXPAND,
+  });
   const items = [];
 
   while (url) {

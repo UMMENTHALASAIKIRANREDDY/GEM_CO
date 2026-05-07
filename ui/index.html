@@ -780,7 +780,7 @@ const StepMigrate=({stats,done,live,lastRunWasDry,batchId,onStartLive,onRunAnoth
             </div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:20}}>
-            {[{label:'Users',val:stats.users,icon:<IcoUser s={22}/>,color:C.primary},{label:'Pages Created',val:stats.pages,icon:<IcoPage s={22}/>,color:C.success},{label:'Errors',val:stats.errors,icon:<IcoError s={22}/>,color:stats.errors>0?C.error:C.muted},{label:'Flagged Assets',val:stats.flagged,icon:<IcoFlag s={22}/>,color:C.primaryL}].map((s,i)=>(
+            {[{label:'Users',val:stats.users,icon:<IcoUser s={22}/>,color:C.primary},{label:lastRunWasDry?'Conversations':' Pages Created',val:stats.pages,icon:<IcoPage s={22}/>,color:C.success},{label:'Errors',val:stats.errors,icon:<IcoError s={22}/>,color:stats.errors>0?C.error:C.muted},{label:'Flagged Assets',val:stats.flagged,icon:<IcoFlag s={22}/>,color:C.primaryL}].map((s,i)=>(
               <Card key={i} className="scale-in" style={{animationDelay:`${i*80}ms`,textAlign:'center',padding:16}}>
                 <div style={{display:'flex',justifyContent:'center',marginBottom:6,color:s.color}}>{s.icon}</div>
                 <div style={{fontSize:28,fontWeight:700,color:s.color}}>{s.val}</div>
@@ -2119,24 +2119,27 @@ const StepCL2GOptions=({cl2gOptions,setCl2gOptions,cl2gConfig,setCl2gConfig,goog
 /* ═══════════════════════════════════════════ */
 /* ═══  GEM SETUP INSTRUCTIONS PANEL       ═══ */
 /* ═══════════════════════════════════════════ */
-const GEM_INSTRUCTIONS=`You are my personal Claude conversation assistant. The uploaded document(s) contain my complete Claude conversation history, with each conversation clearly labeled by number and title.
+const buildGemInstructions=(src='Claude')=>`You are my personal ${src} conversation assistant. The uploaded document(s) contain my complete ${src} conversation history, with each conversation clearly labeled by number and title.
 
 How to answer my questions:
 1. ALWAYS search the uploaded documents thoroughly before responding.
 2. When I ask about a topic — find all conversations related to it in the document and summarize what was discussed.
-3. When I ask "what did I ask about X?" or "find my conversation about X" — locate it in the document and return the exact Human and Claude message exchanges.
-4. When I ask to continue or follow up on a past conversation — find that conversation in the document, read the full message thread, then continue responding as Claude would, staying consistent with the context and conclusions already reached in that conversation.
+3. When I ask "what did I ask about X?" or "find my conversation about X" — locate it in the document and return the exact Human and ${src} message exchanges.
+4. When I ask to continue or follow up on a past conversation — find that conversation in the document, read the full message thread, then continue responding as ${src} would, staying consistent with the context and conclusions already reached in that conversation.
 5. Answer from the document content directly. Do not rephrase from your own training memory when the topic is in the documents.
 6. If a topic is not found anywhere in the documents, say: "This topic was not in your migrated conversation history." Then answer from general knowledge if helpful.
 7. Never fabricate conversation content that is not in the documents.
 
-Document structure: Each conversation starts with "Conversation N: Title" followed by [Human] and [Claude] labeled messages in chronological order.`;
+Document structure: Each conversation starts with "Conversation N: Title" followed by [Human] and [${src}] labeled messages in chronological order.`;
+const GEM_INSTRUCTIONS=buildGemInstructions();
 
 const GemSetupInstructions=({folderName='ClaudeChats',migDir})=>{
   const [copied,setCopied]=useState(false);
   const [open,setOpen]=useState(true);
-  const copy=()=>{navigator.clipboard.writeText(GEM_INSTRUCTIONS).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500)}).catch(()=>{})};
   const sourceLabel=migDir==='copilot-gemini'?'Copilot':migDir==='claude-gemini'?'Claude':(folderName||'').toLowerCase().includes('copilot')?'Copilot':'Claude';
+  const gemInstructions=buildGemInstructions(sourceLabel);
+  const copy=()=>{navigator.clipboard.writeText(gemInstructions).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500)}).catch(()=>{})};
+
   const steps=[
     {n:1,icon:'🌐',title:'Open Gemini Gems',desc:'Go to gemini.google.com → click Gems in the left sidebar → New Gem'},
     {n:2,icon:'📁',title:'Add Knowledge from Google Drive',desc:`Under Knowledge, click "Add from Google Drive" → navigate to your ${folderName} folder → select it → Insert`},
@@ -2177,7 +2180,7 @@ const GemSetupInstructions=({folderName='ClaudeChats',migDir})=>{
                 {copied?<><IcoDone s={11}/>Copied!</>:<><IcoUpload s={11}/>Copy</>}
               </button>
             </div>
-            <pre style={{margin:0,padding:'12px 14px',fontSize:11,lineHeight:1.6,color:'#1E293B',whiteSpace:'pre-wrap',wordBreak:'break-word',fontFamily:'Consolas,monospace',maxHeight:220,overflowY:'auto'}}>{GEM_INSTRUCTIONS}</pre>
+            <pre style={{margin:0,padding:'12px 14px',fontSize:11,lineHeight:1.6,color:'#1E293B',whiteSpace:'pre-wrap',wordBreak:'break-word',fontFamily:'Consolas,monospace',maxHeight:220,overflowY:'auto'}}>{gemInstructions}</pre>
           </div>
           <div style={{marginTop:10,padding:'8px 12px',background:'#FEF9C3',border:'1px solid #FDE68A',borderRadius:8,fontSize:11,color:'#713F12'}}>
             <strong>Tip:</strong> The migrated folder contains max 3 files per user (All Conversations, Memory, Projects). Add them all to the Gem knowledge for best results.
@@ -2192,7 +2195,9 @@ const GemSetupInstructions=({folderName='ClaudeChats',migDir})=>{
 /* Post-migration inline chat widget */
 const PostMigrationWidget=({migDir})=>{
   const [copied,setCopied]=useState(false);
-  const copy=()=>{navigator.clipboard.writeText(GEM_INSTRUCTIONS).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500)}).catch(()=>{})};
+  const widgetSourceLabel=migDir==='copilot-gemini'?'Copilot':migDir==='claude-gemini'?'Claude':'Claude';
+  const widgetInstructions=buildGemInstructions(widgetSourceLabel);
+  const copy=()=>{navigator.clipboard.writeText(widgetInstructions).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500)}).catch(()=>{})};
   if(migDir==='gemini-copilot'){
     return(
       <div style={{borderRadius:10,border:'1px solid #e2e8f0',padding:'14px 16px',marginTop:8,background:'#f8fafc'}}>
@@ -2239,7 +2244,7 @@ const PostMigrationWidget=({migDir})=>{
             {copied?'✓ Copied':'Copy'}
           </button>
         </div>
-        <pre style={{margin:0,padding:'10px 12px',fontSize:11,lineHeight:1.5,color:'#1E293B',whiteSpace:'pre-wrap',wordBreak:'break-word',fontFamily:'Consolas,monospace',maxHeight:160,overflowY:'auto'}}>{GEM_INSTRUCTIONS}</pre>
+        <pre style={{margin:0,padding:'10px 12px',fontSize:11,lineHeight:1.5,color:'#1E293B',whiteSpace:'pre-wrap',wordBreak:'break-word',fontFamily:'Consolas,monospace',maxHeight:160,overflowY:'auto'}}>{widgetInstructions}</pre>
       </div>
       <div style={{marginTop:8,padding:'7px 10px',background:'#FEF9C3',border:'1px solid #FDE68A',borderRadius:7,fontSize:11,color:'#713F12'}}>
         <strong>Tip:</strong> Add all migrated files (conversations, memory, projects) to the Gem for best results.
@@ -2441,7 +2446,7 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
                       const isRunningBatch=r.status==='running';
                       const live=isRunningBatch&&liveStats&&r._id===liveBatchId;
                       const doneUsers=live?liveStats.users:(isRunningBatch?r.progressUsers:r.totalUsers);
-                      const donePages=live?liveStats.pages:(isRunningBatch?r.progressPages:r.migratedConversations);
+                      const donePages=live?liveStats.pages:(isRunningBatch?r.progressPages:(r.dryRun?r.totalConversations:r.migratedConversations));
                       const doneErrors=live?liveStats.errors:(isRunningBatch?r.progressErrors:r.totalErrors);
                       const totalUsers=r.totalUsers||0;
                       const filesLabel=(r.direction==='c2g'||r.direction==='copilot-gemini'||r.direction==='claude-gemini')?'Files':'Pages';
@@ -2680,7 +2685,7 @@ function App(){
             if(g2cWs&&g2cWs.status==='completed'){
               const r=g2cWs.report?.summary||{};
               setMigDone(true);setLive(false);
-              setStats({users:r.total_users||g2cWs.migratedUsers||0,pages:r.total_pages_created||g2cWs.migratedConversations||0,errors:r.total_errors||g2cWs.failedUsers||0,flagged:0});
+              setStats({users:r.total_users||g2cWs.migratedUsers||0,pages:r.total_pages_created||(g2cWs.dryRun?g2cWs.totalConversations:g2cWs.migratedConversations)||0,errors:r.total_errors||g2cWs.failedUsers||0,flagged:0});
               setCurrentBatchId(g2cWs._id);setLastRunWasDry(!!g2cWs.dryRun);
               // Advance to done step if stuck mid-migration
               setStep(prev=>prev>=5&&prev<7?6:prev);
@@ -2783,7 +2788,7 @@ function App(){
         .then(doc=>{
           if(!doc)return;
           if(doc.status==='completed'&&doc.summary){
-            setStats({users:doc.summary.total_users||0,pages:doc.summary.total_pages_created||0,errors:doc.summary.total_errors||0,flagged:doc.summary.total_visual_assets_flagged||0});
+            setStats({users:doc.summary.total_users||0,pages:doc.dryRun?(doc.totalConversations||doc.summary.total_conversations||0):doc.summary.total_pages_created||0,errors:doc.summary.total_errors||0,flagged:doc.summary.total_visual_assets_flagged||0});
             setLastRunWasDry(doc.dryRun||false);
             setMigDone(true);setStep(6);
           } else if(doc.status==='failed'){
@@ -2836,6 +2841,7 @@ function App(){
         if(d.type==='success'&&d.message.includes('Page created'))curStats.pages++;
         if(d.type==='error')curStats.errors++;
         if(d.type==='info'&&d.message.includes('Processing:'))curStats.users++;
+        if(d.type==='user')curStats.users++;
         if(d.type==='warn'&&d.message.includes('flagged')){const m=d.message.match(/(\d+) conversations flagged/);if(m)curStats.flagged+=parseInt(m[1])}
         setStats({...curStats});addLog(d.type,d.message);
         if(d.type==='done'){
@@ -2843,6 +2849,7 @@ function App(){
           sseRef.current.close();setLive(false);setMigDone(true);setRetrying(false);setStep(6);
           setReportRefreshKey(p=>p+1);
           setAgentMode('done');
+          if(d.message&&d.message.includes('DRY RUN')){const cm=d.message.match(/(\d+)\s+conversations/);if(cm){curStats.pages=parseInt(cm[1]);setStats({...curStats});}}
           const s={...curStats};
           setTimeout(()=>addAgentMsg('bot',
             s.errors>0
