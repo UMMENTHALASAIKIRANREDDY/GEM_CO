@@ -3172,12 +3172,13 @@ function App(){
     if(evt.event==='navigate'&&typeof evt.step==='number'){setStep(evt.step);}
     else if(evt.event==='select_direction'&&evt.direction){setMigDir(evt.direction);if(typeof evt.step==='number')setStep(evt.step);}
     else if(evt.event==='refresh_mapping'){setLeftMode&&typeof setLeftMode==='function'&&setLeftMode('mapping');}
+    else if(evt.event==='trigger_auto_map'){triggerAutoMap&&triggerAutoMap();}
     else if(evt.event==='refresh_reports'){setShowReports&&setShowReports(true);}
     else if(evt.event==='refresh_status'){setReportRefreshKey&&setReportRefreshKey(k=>k+1);}
     else if(evt.event==='migration_started'&&evt.migDir){setAgentMigrationTrigger({migDir:evt.migDir,dryRun:evt.dryRun??true,ts:Date.now()});}
     else if(evt.event==='show_widget'&&evt.widget){/* widget stored inline — handled when text event arrives */}
     else if(evt.event==='set_config'&&evt.config){applyAgentConfig&&applyAgentConfig(evt.config);}
-  },[setStep,setMigDir,setLeftMode,setShowReports,setReportRefreshKey,applyAgentConfig,setAgentMigrationTrigger]);
+  },[setStep,setMigDir,setLeftMode,setShowReports,setReportRefreshKey,applyAgentConfig,setAgentMigrationTrigger,triggerAutoMap,addAgentMsg]);
 
   const sendToAgent=useCallback(async(overrideMsg,isSystem=false)=>{
     const userMsg=overrideMsg||agentInput.trim();

@@ -277,7 +277,7 @@ export async function runAgentLoop(req, res, { message, migrationState: _migrati
     ];
 
     // System trigger gets safe navigation tools so agent can redirect user (e.g. back to connect clouds)
-    const SAFE_TOOLS = AGENT_TOOLS.filter(t => ['navigate_to_step', 'select_direction', 'show_widget', 'show_migration_actions'].includes(t.function?.name));
+    const SAFE_TOOLS = AGENT_TOOLS.filter(t => ['navigate_to_step', 'select_direction', 'show_upload_widget', 'explain_error'].includes(t.function?.name));
 
     logger.info(`[agentLoop] user=${appUserId} msg="${message?.slice(0, 80)}" step=${migrationState?.step} migDir=${migrationState?.migDir}`);
 

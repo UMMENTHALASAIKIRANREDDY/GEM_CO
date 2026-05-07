@@ -181,33 +181,10 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
 
     case 'auto_map_users': {
       if (!migDir) return { error: 'No direction selected' };
-      try {
-        const sourceUsers = await db.collection('cachedUsers')
-          .find({ appUserId, role: 'source', migDir })
-          .toArray();
-        const destUsers = await db.collection('cachedUsers')
-          .find({ appUserId, role: 'dest', migDir })
-          .toArray();
-
-        const destByEmail = new Map(destUsers.map(u => [u.email?.toLowerCase(), u]));
-        const mappings = {};
-        let matched = 0;
-        for (const src of sourceUsers) {
-          const dest = destByEmail.get(src.email?.toLowerCase());
-          if (dest) { mappings[src.email] = dest.email; matched++; }
-        }
-
-        await db.collection('userMappings').updateOne(
-          { appUserId, migDir },
-          { $set: { mappings, updatedAt: new Date() } },
-          { upsert: true }
-        );
-
-        streamEvent('refresh_mapping', {});
-        return { matched, total: sourceUsers.length };
-      } catch (e) {
-        return { error: e.message };
-      }
+      // The UI owns the source-of-truth user lists (Google API, MS Graph, ZIP parse).
+      // Trigger the UI's auto-map button via event; UI reports back via state on next turn.
+      streamEvent('trigger_auto_map', { migDir });
+      return { triggered: true, note: 'Auto-map running in UI. Result will appear in mappings_count on next turn.' };
     }
 
     case 'explain_log': {
@@ -267,14 +244,17 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
     case 'start_migration': {
       const { startMigration } = agentDeps ?? session._agentDeps ?? {};
       if (!startMigration) return { error: 'Migration executor not available' };
+      if (typeof args.dryRun !== 'boolean') {
+        return { error: 'dryRun must be specified explicitly (true for preview, false for live)' };
+      }
+      const dryRun = args.dryRun;
       const batchId = `batch_${Date.now()}`;
-      startMigration({ dryRun: args.dryRun ?? true, batchId, migDir, appUserId }).catch(e => {
+      startMigration({ dryRun, batchId, migDir, appUserId }).catch(e => {
         logger.error(`Background migration failed: ${e.message}`);
       });
       session.currentBatchId = batchId;
-      // Tell the UI to start migration and connect to SSE stream
-      streamEvent('migration_started', { batchId, migDir, dryRun: args.dryRun ?? true });
-      return { started: true, batchId, dryRun: args.dryRun ?? true };
+      streamEvent('migration_started', { batchId, migDir, dryRun });
+      return { started: true, batchId, dryRun };
     }
 
     case 'retry_failed': {

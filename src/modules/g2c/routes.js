@@ -1075,7 +1075,12 @@ export function createG2CRouter(deps) {
       retryMigration: async ({ batchId: retryFromBatchId, appUserId: uid }) => {
         const batchDoc = await db().collection('migrationWorkspaces').findOne({ _id: retryFromBatchId, appUserId: uid });
         if (!batchDoc) return { error: 'Batch not found' };
-        const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: 'gemini-copilot' });
+        // Retry only supports gemini-copilot today; reject other directions explicitly
+        const batchDir = batchDoc.migDir || 'gemini-copilot';
+        if (batchDir !== 'gemini-copilot') {
+          return { error: `Retry not yet supported for ${batchDir} migrations. Run another batch instead.` };
+        }
+        const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: batchDir });
         const uploadDoc = await db().collection('uploads').findOne({ appUserId: uid }, { sort: { uploadTime: -1 } });
         const retryTargets = {};
         for (const u of batchDoc.report?.users || []) {
