@@ -2534,7 +2534,8 @@ function App(){
   const silenceTimer=useRef(null);
   const cl2gLiveRef=useRef(false);
   const [splitPct,setSplitPct]=useState(()=>lsGet(LS_PREFS,{}).splitPct||50);
-  const [panelSwapped,setPanelSwapped]=useState(()=>lsGet(LS_PREFS,{}).panelSwapped||false);
+  // Agent panel always on LEFT by default (force false)
+  const [panelSwapped,setPanelSwapped]=useState(false);
   const [agentMsgs,setAgentMsgs]=useState(()=>lsGet(LS_CHAT,[]));
   const [agentTyping,setAgentTyping]=useState(false);
   const [agentInput,setAgentInput]=useState('');
