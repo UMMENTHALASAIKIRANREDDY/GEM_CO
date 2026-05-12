@@ -10,8 +10,9 @@ export function buildSystemPrompt(migrationState, migrationLogs = [], { isReturn
     c2g_mappings_count = 0, cl2g_upload_users = 0, cl2g_mappings_count = 0,
     c2g_done = false, cl2g_done = false, c2g_live = false, cl2g_live = false,
     c2g_stats = {}, cl2g_stats = {}, c2gLastDry = false, cl2gLastDry = false,
-    uiContext = '', appUserName = '',
+    uiContext = '', appUserName = '', panelSwapped = false,
   } = migrationState;
+  const stepsPanelSide = panelSwapped ? 'left' : 'right';
 
   // Direction-scoped stats
   const activeStats = migDir === 'copilot-gemini' ? c2g_stats
@@ -50,7 +51,7 @@ export function buildSystemPrompt(migrationState, migrationLogs = [], { isReturn
 - Be concise. 1-2 sentences for actions/confirmations. 3-4 sentences max for explanations.
 - If something is working, say so confidently. If there's a problem, name it clearly and say what to do.
 - Explain *why* when it matters: "I'll run a dry run first — it's a safe preview with no data written."
-- Proactively suggest the next step — don't wait to be asked.
+- Proactively tell the user what the next step is — but never navigate there automatically. Let the user click "Continue" or ask you to proceed.
 
 ## Migration Directions
 - **gemini-copilot** → "Google Workspace to Microsoft 365 Copilot". Requires: Google Workspace + Microsoft 365 (both).
@@ -181,11 +182,16 @@ ${buildAuthGateSection({ migDir, googleAuthed, msAuthed, step, live, c2g_live, c
 - If user explicitly says "go live" or "live migration" → use dryRun: false immediately, no questions
 - NEVER say "I recommend dry run first" if user already ran a dry run
 
+### navigate_to_step — CRITICAL RULE
+- **NEVER call navigate_to_step automatically.** Only call it when the user explicitly says "continue", "next step", "proceed", "go to options", "go to step X", or clicks a button that sends such a message.
+- Even if mappings are complete or all prerequisites are met, do NOT auto-advance the panel. The user controls when to proceed.
+- Your job is to INFORM the user what they can do next — not to move them there without asking.
+
 ### Tool call sequence
 1. Direction name mentioned → call select_direction (check auth result before anything else)
 2. "auto map" / "map users" → call auto_map_users immediately
 3. Migration intent (any of the above) → call pre_flight_check FIRST, read blockers, then call start_migration
-4. "show reports" / "show mapping" / "go to step X" → call navigate/show tools immediately
+4. "show reports" / "show mapping" / "go to step X" / "continue" / "next" → call navigate/show tools immediately
 5. "retry" / "retry failed" → call retry_failed (confirm first)
 6. NEVER call start_migration without pre_flight_check
 7. If pre_flight_check returns blockers → tell user exactly what's blocking, do NOT start
@@ -253,7 +259,7 @@ When any tool returns { error: ... }:
 If the user repeats the same question or you've given the same answer 2+ times, change tactics — try a different explanation, suggest a different path, or offer "Contact support". Don't loop.
 
 ## Response Style
-- Address what the user SEES on the left panel — be specific about button names, field labels
+- Address what the user SEES on the right panel (left panel is the chat — right panel shows migration steps) unless panels are swapped
 - If intent is clear → call the tool immediately, do not explain first
 - Keep responses SHORT (1-3 sentences) unless user asks for detail
 - Use **bold** for cloud names, button labels, and key values
@@ -282,7 +288,7 @@ function buildAuthGateSection({ migDir, googleAuthed, msAuthed, step, live, c2g_
   if (step >= 2) {
     return `🚫 BLOCKED — ${missing} not connected but user is at step ${step}. IMMEDIATELY call navigate_to_step({step: 0}) and tell user to connect ${missing} using the card buttons on the Connect Clouds screen before continuing.`;
   }
-  return `⚠️ ${missing} not connected. Tell user to click the ${missing} card on the left panel to connect it. The "Continue →" button is disabled until Google is connected.`;
+  return `⚠️ ${missing} not connected. Tell user to click the ${missing} card on the ${stepsPanelSide} panel to connect it. The "Continue →" button is disabled until Google is connected.`;
 }
 
 function buildPanelContext(state) {
