@@ -212,14 +212,21 @@ export function createC2GRouter(deps) {
           const results = [];
           const reportUsers = [];
 
+          // Get user's delegated MS token for downloading Teams media (asyncgw) attachments
+          const userDelegatedToken = isAuthenticated(appUserId) ? await getValidToken(appUserId).catch(() => null) : null;
+          if (userDelegatedToken) c2gLog('info', 'Delegated MS token available — Teams media attachments will be attempted');
+
           c2gLog('info', `Starting C2G migration for ${migPairs.length} user pair(s)...`);
           c2gLog('total', JSON.stringify({ total: migPairs.length }));
 
           for (const pair of migPairs) {
             c2gLog('info', `Processing: ${pair.sourceDisplayName} → ${pair.destUserEmail}`);
             const r = await migrateUserPair(
-              { sourceUserId: pair.sourceUserId, sourceDisplayName: pair.sourceDisplayName, destUserEmail: pair.destUserEmail },
-              migOpts
+              { sourceUserId: pair.sourceUserId, sourceDisplayName: pair.sourceDisplayName, destUserEmail: pair.destUserEmail, userDelegatedToken },
+              migOpts,
+              ({ filesUploaded, convIdx, totalConvs }) => {
+                c2gLog('progress', JSON.stringify({ files: files + filesUploaded, errors, users: results.length, total: migPairs.length, convIdx, totalConvs }));
+              }
             );
             results.push(r);
 

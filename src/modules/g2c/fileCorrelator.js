@@ -65,16 +65,21 @@ export class FileCorrelator {
       const turnTs = turn.timestamp ? new Date(turn.timestamp) : null;
       const turnLabel = `[${this.ownerEmail}] conv="${conv.title}" turn#${turnIdx} ts=${turn.timestamp || 'none'}`;
 
-      // --- Primary: audit log match within ±60s of this turn ---
+      // --- Primary: audit log match within ±120s of this turn ---
+      // Window widened from 60s — Drive activity logs lag Gemini prompt time
+      // due to async indexing; ±60s missed real attachments.
+      const MATCH_WINDOW_MS = 120_000;
       let matched = [];
       if (turnTs && !isNaN(turnTs) && auditEvents.length > 0) {
         matched = auditEvents.filter(e => {
           const diff = Math.abs(e.accessTime - turnTs);
-          return diff <= 60_000; // 60 seconds
+          return diff <= MATCH_WINDOW_MS;
         });
         if (matched.length > 0) {
           logger.info(`FileCorrelator: ${turnLabel} → audit matched ${matched.length} file(s): ${matched.map(e => e.docTitle).join(', ')}`);
         }
+      } else if (turnTs && auditEvents.length === 0) {
+        logger.warn(`FileCorrelator: ${turnLabel} → turn has hasFileRef=true but audit log returned 0 events. Drive activity API may be disabled or service not tracked for this user.`);
       }
 
       // --- Fallback: fullText Drive search using Gemini labels (PAUSED) ---
@@ -116,7 +121,10 @@ export class FileCorrelator {
       // Resolve full Drive metadata for audit-matched files (they only have docId)
       const files = await Promise.all([...deduped.values()].map(async (e) => {
         const meta = e._meta || await this._getFileMetadata(e.docId);
-        if (!meta) return null;
+        if (!meta) {
+          logger.warn(`FileCorrelator: ${turnLabel} → file ${e.docId} (${e.docTitle || 'unknown'}) returned no metadata — likely deleted or access revoked. Skipping.`);
+          return null;
+        }
         return {
           fileName:    meta.name || e.docTitle || e.docId,
           driveFileId: e.docId,

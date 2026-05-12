@@ -14,7 +14,6 @@ import {
   BorderStyle,
   AlignmentType,
   ExternalHyperlink,
-  PageBreak,
 } from "docx";
 import {
   getServiceAccountAuth,
@@ -55,7 +54,7 @@ async function downloadBinary(url, accessToken) {
             const retry = await fetchWithTimeout(graphUrl, { headers: { Accept: "*/*", Authorization: `Bearer ${accessToken}` } });
             if (retry.ok) {
               const buf = Buffer.from(await retry.arrayBuffer());
-              return buf.length > 0 ? buf : null;
+              if (buf.length > 0) return { buffer: buf, contentType: retry.headers.get("content-type") || "", disposition: retry.headers.get("content-disposition") || "" };
             }
           } catch { /* timeout or network error on retry */ }
         }
@@ -63,7 +62,8 @@ async function downloadBinary(url, accessToken) {
       return null;
     }
     const buf = Buffer.from(await res.arrayBuffer());
-    return buf.length > 0 ? buf : null;
+    if (buf.length === 0) return null;
+    return { buffer: buf, contentType: res.headers.get("content-type") || "", disposition: res.headers.get("content-disposition") || "" };
   } catch {
     return null;
   }
@@ -72,6 +72,15 @@ async function downloadBinary(url, accessToken) {
 function convertToGraphDownloadUrl(url) {
   try {
     const u = new URL(url);
+    // asyncgw URLs wrap a SharePoint URL in their query params — extract it
+    if (u.hostname.includes("asyncgw.teams.microsoft.com") || u.hostname.includes("teams.cdn.office.net")) {
+      const embedded = u.searchParams.get("url") || u.searchParams.get("originalUrl");
+      if (embedded) {
+        console.log(`[Migration] Unwrapping asyncgw URL → ${embedded.slice(0, 80)}`);
+        return convertToGraphDownloadUrl(decodeURIComponent(embedded));
+      }
+      return null;
+    }
     if (u.hostname.includes("sharepoint.com")) {
       const encoded = Buffer.from(url).toString("base64")
         .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -88,9 +97,9 @@ function guessExtension(contentType, url) {
   if (contentType?.includes("webp")) return ".webp";
   if (contentType?.includes("svg")) return ".svg";
   if (contentType?.includes("pdf")) return ".pdf";
-  if (contentType?.includes("word") || contentType?.includes("docx")) return ".docx";
-  if (contentType?.includes("excel") || contentType?.includes("xlsx")) return ".xlsx";
-  if (contentType?.includes("powerpoint") || contentType?.includes("pptx")) return ".pptx";
+  if (contentType?.includes("word") || contentType?.includes("docx") || contentType?.includes("wordprocessingml")) return ".docx";
+  if (contentType?.includes("excel") || contentType?.includes("xlsx") || contentType?.includes("spreadsheetml")) return ".xlsx";
+  if (contentType?.includes("powerpoint") || contentType?.includes("pptx") || contentType?.includes("presentationml")) return ".pptx";
   const urlExt = (url || "").split("?")[0].match(/\.(\w{2,5})$/);
   if (urlExt) return "." + urlExt[1].toLowerCase();
   return ".bin";
@@ -113,24 +122,180 @@ function extractAttachments(interaction) {
   const attachments = [];
   const seen = new Set();
 
-  for (const att of interaction.attachments || []) {
+  const rawAtts = interaction.attachments || [];
+  const rawCtxs = interaction.contexts || [];
+  const rawLinks = interaction.links || [];
+  if (rawAtts.length || rawCtxs.length || rawLinks.length) {
+    console.log(`[Migration] Interaction ${interaction.id?.slice(-8)}: ${rawAtts.length} attachments, ${rawCtxs.length} contexts, ${rawLinks.length} links`);
+    rawAtts.forEach(a => console.log(`[Migration]   att: name="${a.name}" contentType="${a.contentType}" hasContentUrl=${!!a.contentUrl} hasContent=${!!a.content}`));
+  }
+
+  for (const att of rawAtts) {
     const ct = att.contentType || "";
 
-    if (ct === "application/vnd.microsoft.card.adaptive") continue;
+    // Adaptive cards: extract file references from the card body instead of skipping
+    // OneDrive file uploads to Copilot are returned as adaptive cards containing the download URL
+    if (ct === "application/vnd.microsoft.card.adaptive") {
+      if (att.content) {
+        try {
+          const card = typeof att.content === "string" ? JSON.parse(att.content) : att.content;
+          // Walk the card body for Action.OpenUrl, Image sources, and TextBlock with URLs
+          const fileUrls = [];
+          function extractMarkdownLinks(text) {
+            const mdRegex = /\[([^\]]*)\]\((https?:[^)]+)\)/g;
+            let m;
+            while ((m = mdRegex.exec(text)) !== null) {
+              const label = m[1].trim();
+              const url = m[2];
+              // Only include file-like URLs: SharePoint, Graph, asyncgw, or known file extensions.
+              // Numeric labels (e.g. [1]) that point to SharePoint are valid file citations — keep them.
+              // Numeric labels pointing to web search results (bing.com, etc.) will fail the isFileLike check.
+              const isFileLike = url.includes("sharepoint.com") ||
+                url.includes("graph.microsoft.com") ||
+                url.includes("asyncgw.teams.microsoft.com") ||
+                /\.(xlsx|docx|pptx|pdf|csv|txt|zip|py|json|png|jpg|jpeg|gif)(\?|$)/i.test(url);
+              if (!isFileLike) continue;
+              // Use the label as name; for numeric-only labels fall back to the filename from URL
+              const urlFileName = url.split("/").pop()?.split("?")[0] || "";
+              const name = /^\d+$/.test(label)
+                ? (urlFileName && urlFileName.includes(".") ? urlFileName : att.name || "file")
+                : (label || att.name || "file");
+              fileUrls.push({ url, name });
+            }
+            // Bare SharePoint/Graph URLs with a clear file extension only
+            const bareRegex = /https?:\/\/[^\s\])"]+/g;
+            while ((m = bareRegex.exec(text)) !== null) {
+              const u = m[0].replace(/[.,;!?]+$/, "");
+              const isFileLike = (u.includes("sharepoint.com") || u.includes("graph.microsoft.com") ||
+                u.includes("asyncgw.teams.microsoft.com")) &&
+                /\.(xlsx|docx|pptx|pdf|csv|txt|zip|py|json|png|jpg)(\?|$)/i.test(u);
+              if (isFileLike) fileUrls.push({ url: u, name: att.name || "file" });
+            }
+          }
+          function walkCard(el) {
+            if (!el || typeof el !== "object") return;
+            if (el.type === "Action.OpenUrl" && el.url) fileUrls.push({ url: el.url, name: el.title || att.name || "attachment" });
+            if (el.type === "Image" && el.url) fileUrls.push({ url: el.url, name: att.name || "image" });
+            if (el.downloadUrl) fileUrls.push({ url: el.downloadUrl, name: el.name || att.name || "attachment" });
+            if (el["@microsoft.graph.downloadUrl"]) fileUrls.push({ url: el["@microsoft.graph.downloadUrl"], name: el.name || att.name || "attachment" });
+            if (el.webUrl && (el.webUrl.includes("sharepoint.com") || el.webUrl.includes("onedrive"))) fileUrls.push({ url: el.webUrl, name: el.name || att.name || "attachment" });
+            // Extract markdown download links embedded in TextBlock text
+            if ((el.type === "TextBlock" || el.type === "TextRun") && el.text) extractMarkdownLinks(el.text);
+            for (const key of ["body", "actions", "items", "columns", "facts", "inlines"]) {
+              if (Array.isArray(el[key])) el[key].forEach(walkCard);
+            }
+            if (el.column) walkCard(el.column);
+          }
+          walkCard(card);
+          for (const { url, name } of fileUrls) {
+            if (url && !seen.has(url)) {
+              seen.add(url);
+              const isImage = /\.(png|jpg|jpeg|gif|webp|svg|bmp)(\?|$)/i.test(url);
+              console.log(`[Migration] Adaptive card file extracted: "${name}" → ${url.slice(0, 80)}`);
+              attachments.push({ type: isImage ? "image" : "file", url, name, contentType: "" });
+            }
+          }
+          // Also check top-level downloadUrl / file reference on the card itself
+          const topUrl = card.downloadUrl || card["@microsoft.graph.downloadUrl"];
+          if (topUrl && !seen.has(topUrl)) {
+            seen.add(topUrl);
+            console.log(`[Migration] Adaptive card top-level download: "${att.name}" → ${topUrl.slice(0, 80)}`);
+            attachments.push({ type: "file", url: topUrl, name: att.name || "attachment", contentType: "" });
+          }
+          if (fileUrls.length === 0 && !topUrl) {
+            console.log(`[Migration] Adaptive card skipped (no file URLs found): name="${att.name}" content=${JSON.stringify(card).slice(0, 200)}`);
+          }
+        } catch { /* malformed card */ }
+      }
+      continue;
+    }
+
+    // Teams file download info / static viewer
+    if (ct === "application/vnd.microsoft.teams.file.download.info" ||
+        ct === "application/vnd.microsoft.teams.file.staticviewer" ||
+        ct === "application/vnd.microsoft.teams.card.file.consent") {
+      if (att.content) {
+        try {
+          const ref = typeof att.content === "string" ? JSON.parse(att.content) : att.content;
+          const dlUrl = ref.downloadUrl || ref["@microsoft.graph.downloadUrl"] || ref.acceptContext?.uploadInfo?.contentUrl;
+          const name = att.name || ref.fileName || ref.name || "file";
+          if (dlUrl && !seen.has(dlUrl)) {
+            seen.add(dlUrl);
+            console.log(`[Migration] Teams file card: "${name}" → ${dlUrl.slice(0, 80)}`);
+            attachments.push({ type: "file", url: dlUrl, name, contentType: ref.fileType ? `application/${ref.fileType}` : "" });
+          }
+        } catch { /* ignore */ }
+      }
+      // Also handle contentUrl on the attachment itself for consent cards
+      if (att.contentUrl && !seen.has(att.contentUrl)) {
+        seen.add(att.contentUrl);
+        attachments.push({ type: "file", url: att.contentUrl, name: att.name || "file", contentType: "" });
+      }
+      continue;
+    }
+
+    // Reference attachments — direct SharePoint/OneDrive file links (user uploads from OneDrive)
+    if (ct === "reference" || ct === "application/vnd.microsoft.teams.file.reference") {
+      const url = att.contentUrl || "";
+      const name = att.name || "file";
+      if (url && !seen.has(url)) {
+        seen.add(url);
+        console.log(`[Migration] Reference attachment: "${name}" → ${url.slice(0, 80)}`);
+        attachments.push({ type: "file", url, name, contentType: "" });
+      }
+      continue;
+    }
+
+    // Always parse att.content for a Graph/OneDrive URL — even when contentUrl exists,
+    // asyncgw.teams.microsoft.com URLs require delegated tokens and often can't be
+    // downloaded with app-only credentials. The Graph URL from content is preferable.
+    let graphUrlFromContent = null;
+    if (att.content) {
+      try {
+        const ref = typeof att.content === "string" ? JSON.parse(att.content) : att.content;
+        const candidate = ref.downloadUrl || ref["@microsoft.graph.downloadUrl"] || ref.webUrl;
+        if (candidate && (candidate.includes("graph.microsoft.com") || candidate.includes("sharepoint.com"))) {
+          graphUrlFromContent = candidate;
+        }
+      } catch { /* not JSON */ }
+    }
 
     if (att.contentUrl && !seen.has(att.contentUrl)) {
+      const isAsyncGw = att.contentUrl.includes("asyncgw.teams.microsoft.com") ||
+        att.contentUrl.includes("statics.teams.cdn.office.net");
+      // Prefer Graph URL over asyncgw — asyncgw requires delegated tokens
+      const effectiveUrl = (isAsyncGw && graphUrlFromContent) ? graphUrlFromContent : att.contentUrl;
+      if (isAsyncGw && graphUrlFromContent) {
+        console.log(`[Migration] Replaced asyncgw URL with Graph URL for "${att.name}"`);
+      } else if (isAsyncGw) {
+        console.log(`[Migration] asyncgw attachment "${att.name}" — no Graph URL in content, will try delegated token`);
+      }
+      seen.add(effectiveUrl);
       seen.add(att.contentUrl);
       const isImage = ct.startsWith("image/") ||
-        /\.(png|jpg|jpeg|gif|webp|svg|bmp)(\?|$)/i.test(att.contentUrl);
+        /\.(png|jpg|jpeg|gif|webp|svg|bmp)(\?|$)/i.test(effectiveUrl);
       attachments.push({
         type: isImage ? "image" : "file",
-        url: att.contentUrl,
+        url: effectiveUrl,
         name: att.name || att.id || "",
         contentType: ct,
+        isAsyncGw: isAsyncGw && !graphUrlFromContent,
+        asyncGwUrl: isAsyncGw ? att.contentUrl : undefined,
       });
     }
 
-    if (!att.contentUrl && att.content) {
+    if (!att.contentUrl && graphUrlFromContent && !seen.has(graphUrlFromContent)) {
+      seen.add(graphUrlFromContent);
+      try {
+        const ref = typeof att.content === "string" ? JSON.parse(att.content) : att.content;
+        attachments.push({
+          type: "file",
+          url: graphUrlFromContent,
+          name: ref.name || att.name || "attachment",
+          contentType: ref.file?.mimeType || ct || "",
+        });
+      } catch { /* ignore */ }
+    } else if (!att.contentUrl && att.content && !graphUrlFromContent) {
       try {
         const ref = typeof att.content === "string" ? JSON.parse(att.content) : att.content;
         const downloadUrl = ref.downloadUrl || ref["@microsoft.graph.downloadUrl"] || ref.webUrl;
@@ -172,6 +337,7 @@ function extractAttachments(interaction) {
   for (const ctx of interaction.contexts || []) {
     const ctxRef = ctx.contextReference;
     if (!ctxRef) continue;
+    console.log(`[Migration] Context found: "${ctx.displayName || ctxRef.name}" id=${ctxRef.id || ctxRef.driveItemId} @odata.id=${ctxRef["@odata.id"] || ""} webUrl=${ctxRef.webUrl || ""}`);
 
     const url = ctxRef["@odata.id"] || ctxRef.webUrl || ctxRef.url || "";
     const name = ctx.displayName || ctxRef.name || "";
@@ -202,20 +368,20 @@ function extractAttachments(interaction) {
   }
 
   // links[] array
-  for (const link of interaction.links || []) {
+  for (const link of rawLinks) {
     const linkUrl = link.linkUrl || link.url || "";
-    if (linkUrl && !seen.has(linkUrl)) {
-      const isFile = linkUrl.includes("sharepoint.com") ||
-        linkUrl.includes("graph.microsoft.com") ||
-        /\.(pdf|docx|xlsx|pptx|csv|txt|zip|py|json)(\?|$)/i.test(linkUrl);
-      if (isFile) {
-        seen.add(linkUrl);
-        attachments.push({
-          type: "file", url: linkUrl,
-          name: link.displayName || linkUrl.split("/").pop()?.split("?")[0] || "linked-file",
-          contentType: "",
-        });
-      }
+    if (!linkUrl) continue;
+    const isFile = linkUrl.includes("sharepoint.com") ||
+      linkUrl.includes("graph.microsoft.com") ||
+      /\.(pdf|docx|xlsx|pptx|csv|txt|zip|py|json)(\?|$)/i.test(linkUrl);
+    console.log(`[Migration] Link: type=${link.linkType || "?"} file=${isFile} url=${linkUrl.slice(0, 100)}`);
+    if (linkUrl && !seen.has(linkUrl) && isFile) {
+      seen.add(linkUrl);
+      attachments.push({
+        type: "file", url: linkUrl,
+        name: link.displayName || linkUrl.split("/").pop()?.split("?")[0] || "linked-file",
+        contentType: "",
+      });
     }
   }
 
@@ -385,166 +551,122 @@ function textRuns(text, style = {}) {
   return runs;
 }
 
-// ── Build ONE merged DOCX for all conversations ───────────────────────
+// ── Build DOCX with embedded images ──────────────────────────────────
 
-async function buildAllConversationsDocx(sessions, userName, downloadedImages, uploadedFileLinks) {
+async function buildConversationDocx(items, convIdx, userName, downloadedImages, uploadedFileLinks) {
   const children = [];
-  const sessionList = [...sessions]; // array of [sessionId, items]
-  const isChatGPT = sessionList.some(([, items]) =>
-    items.some((i) => i.sessionId?.startsWith("chatgpt-") || i._conversationTitle)
+
+  children.push(
+    new Paragraph({
+      heading: HeadingLevel.TITLE,
+      alignment: AlignmentType.CENTER,
+      children: [new TextRun({ text: `Conversation ${convIdx}`, bold: true, size: 44 })],
+    })
   );
-  const aiLabel = isChatGPT ? "ChatGPT" : "Copilot";
 
-  // ── Cover ────────────────────────────────────────────────────────────
-  children.push(new Paragraph({
-    heading: HeadingLevel.TITLE,
-    alignment: AlignmentType.CENTER,
-    spacing: { after: 120 },
-    children: [new TextRun({ text: `${aiLabel} Chat History`, bold: true, size: 48 })],
-  }));
-  children.push(new Paragraph({
-    alignment: AlignmentType.CENTER,
-    spacing: { after: 80 },
-    children: [new TextRun({ text: userName, size: 28, color: "444444", italics: true })],
-  }));
-  children.push(new Paragraph({
-    alignment: AlignmentType.CENTER,
-    spacing: { after: 500 },
-    children: [new TextRun({
-      text: `${sessionList.length} conversation${sessionList.length !== 1 ? "s" : ""} · Exported ${new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}`,
-      size: 20, color: "888888",
-    })],
-  }));
+  children.push(
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 100 },
+      children: [new TextRun({
+        text: `${userName} — ${items.length} message${items.length === 1 ? "" : "s"}`,
+        size: 24, color: "666666", italics: true,
+      })],
+    })
+  );
 
-  // ── Table of Contents ────────────────────────────────────────────────
-  children.push(new Paragraph({
-    heading: HeadingLevel.HEADING_1,
-    spacing: { before: 200, after: 160 },
-    children: [new TextRun({ text: "CONVERSATION INDEX", bold: true, size: 26, color: "0B5394", allCaps: true })],
-  }));
-
-  for (let i = 0; i < sessionList.length; i++) {
-    const [, items] = sessionList[i];
-    const title = conversationTitle(items);
-    const dateStr = items[0]?.createdDateTime ? formatTimestamp(items[0].createdDateTime) : "";
-    children.push(new Paragraph({
-      spacing: { after: 60 },
-      children: [
-        new TextRun({ text: `${i + 1}.  `, bold: true, size: 20, color: "0B5394" }),
-        new TextRun({ text: title, size: 20, color: "1E3A5F", bold: true }),
-        new TextRun({ text: dateStr ? `\t${dateStr}` : "", size: 18, color: "999999" }),
-        new TextRun({ text: `  (${items.length} msg${items.length !== 1 ? "s" : ""})`, size: 17, color: "AAAAAA" }),
-      ],
-    }));
+  const firstDate = items[0]?.createdDateTime;
+  if (firstDate) {
+    children.push(
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 300 },
+        children: [new TextRun({ text: formatTimestamp(firstDate), size: 20, color: "888888" })],
+      })
+    );
   }
 
-  // Page break before conversations
-  children.push(new Paragraph({ spacing: { before: 400 }, children: [new PageBreak()] }));
+  const isChatGPT = items.some((i) => i.sessionId?.startsWith("chatgpt-") || i._conversationTitle);
 
-  // ── All Conversations ────────────────────────────────────────────────
-  for (let convIdx = 0; convIdx < sessionList.length; convIdx++) {
-    const [, items] = sessionList[convIdx];
-    const title = conversationTitle(items);
-    const firstDate = items[0]?.createdDateTime;
+  for (const item of items) {
+    const isUser = item.interactionType === "userPrompt";
+    const senderLabel = isUser ? "You" : isChatGPT ? "ChatGPT" : "Copilot";
+    const text = extractText(item);
+    const attachments = extractAttachments(item);
 
-    if (convIdx > 0) {
-      children.push(new Paragraph({
-        spacing: { before: 400, after: 400 },
-        border: { top: { style: BorderStyle.SINGLE, size: 6, color: "D1D5DB", space: 1 } },
-        children: [],
-      }));
-    }
+    if (!text && attachments.length === 0) continue;
 
-    children.push(new Paragraph({
-      heading: HeadingLevel.HEADING_1,
-      spacing: { before: 100, after: 60 },
-      children: [new TextRun({ text: `Conversation ${convIdx + 1}: ${title}`, bold: true, size: 30, color: "0B5394" })],
-    }));
-
-    if (firstDate) {
-      children.push(new Paragraph({
-        spacing: { after: 180 },
-        children: [new TextRun({ text: `Date: ${formatTimestamp(firstDate)}`, size: 18, color: "888888", italics: true })],
-      }));
-    }
-
-    for (const item of items) {
-      const isUser = item.interactionType === "userPrompt";
-      const senderLabel = isUser ? "You" : aiLabel;
-      const text = extractText(item);
-      const attachments = extractAttachments(item);
-
-      if (!text && attachments.length === 0) continue;
-
-      children.push(new Paragraph({
+    children.push(
+      new Paragraph({
         spacing: { before: 200, after: 40 },
         children: [
           new TextRun({ text: senderLabel, bold: true, size: 22, color: isUser ? "0B5394" : "38761D" }),
           new TextRun({ text: `    ${formatTimestamp(item.createdDateTime)}`, size: 16, color: "AAAAAA" }),
         ],
-      }));
+      })
+    );
 
-      if (text) {
-        children.push(new Paragraph({
+    if (text) {
+      children.push(
+        new Paragraph({
           spacing: { after: 80 },
           indent: { left: 360 },
           border: { left: { style: BorderStyle.SINGLE, size: 4, color: isUser ? "0B5394" : "38761D", space: 8 } },
           children: textRuns(text, { size: 21, font: "Calibri", color: "333333" }),
-        }));
-      }
+        })
+      );
+    }
 
-      for (const att of attachments) {
-        const imgKey = att.url || att.originalUrl;
-        if (att.type === "image" && downloadedImages.has(imgKey)) {
-          const imgBuf = downloadedImages.get(imgKey);
-          try {
-            children.push(new Paragraph({
+    for (const att of attachments) {
+      if (att.type === "image" && downloadedImages.has(att.url)) {
+        const imgBuf = downloadedImages.get(att.url);
+        try {
+          children.push(
+            new Paragraph({
               spacing: { after: 80 },
               indent: { left: 360 },
-              children: [new ImageRun({
-                data: imgBuf,
-                transformation: { width: 400, height: 300 },
-                type: att.contentType?.includes("png") ? "png" : "jpg",
-              })],
-            }));
-          } catch {
-            children.push(new Paragraph({
+              children: [
+                new ImageRun({
+                  data: imgBuf,
+                  transformation: { width: 400, height: 300 },
+                  type: att.contentType?.includes("png") ? "png" : "jpg",
+                }),
+              ],
+            })
+          );
+        } catch {
+          children.push(
+            new Paragraph({
               indent: { left: 360 },
               children: [new TextRun({ text: `[Image: ${att.name || att.url}]`, italics: true, size: 18, color: "888888" })],
-            }));
-          }
-        } else if (att.type === "file") {
-          const label = att.name || "Attached file";
-          const driveEntry = uploadedFileLinks?.get(att.url);
-          const driveLink = driveEntry?.webViewLink || null;
-          if (driveLink) {
-            children.push(new Paragraph({
-              spacing: { after: 60 },
-              indent: { left: 360 },
-              children: [
-                new TextRun({ text: "📎 ", size: 20 }),
-                new ExternalHyperlink({
-                  link: driveLink,
-                  children: [new TextRun({ text: label, style: "Hyperlink", size: 20, color: "1155CC", underline: {} })],
-                }),
-                new TextRun({ text: "  (Google Drive)", size: 17, color: "16a34a", italics: true }),
-              ],
-            }));
-          } else {
-            children.push(new Paragraph({
-              indent: { left: 360 },
-              children: [new TextRun({ text: `📎 ${label}  (not available)`, size: 18, color: "888888", italics: true })],
-            }));
-          }
+            })
+          );
         }
+      } else if (att.type === "file") {
+        const label = att.name || "Attached file";
+        const driveLink = uploadedFileLinks?.get(att.url);
+        const linkUrl = driveLink || att.url;
+        const prefix = driveLink ? "Google Drive" : "Original";
+        children.push(
+          new Paragraph({
+            spacing: { after: 60 },
+            indent: { left: 360 },
+            children: [
+              new TextRun({ text: `[${prefix}] `, size: 18, bold: true, color: driveLink ? "38761D" : "888888" }),
+              new ExternalHyperlink({
+                link: linkUrl,
+                children: [new TextRun({ text: label, style: "Hyperlink", size: 20, color: "0B5394", underline: {} })],
+              }),
+            ],
+          })
+        );
       }
     }
   }
 
   const doc = new Document({
     creator: "Copilot Migration Tool",
-    title: `${aiLabel} Chat History — ${userName}`,
-    description: `All ${aiLabel} conversations for ${userName}`,
+    title: `Conversation ${convIdx}`,
     styles: { default: { document: { run: { font: "Calibri", size: 22 } } } },
     sections: [{ children }],
   });
@@ -568,7 +690,7 @@ function conversationTitle(items) {
 
 // ── Download all attachments for a conversation ──────────────────────
 
-async function downloadConversationAssets(items, accessToken, sourceUserId) {
+async function downloadConversationAssets(items, accessToken, sourceUserId, userDelegatedToken = null) {
   const downloadedImages = new Map();
   const filesToUpload = [];
   const seen = new Set();
@@ -606,53 +728,113 @@ async function downloadConversationAssets(items, accessToken, sourceUserId) {
         downloadUrl = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(sourceUserId)}/drive/items/${att.driveItemId}/content`;
       }
 
+      // Graph entity URLs from contexts[].contextReference["@odata.id"] are entity endpoints,
+      // not download endpoints — append /content to get the binary.
+      if (downloadUrl &&
+        downloadUrl.includes("graph.microsoft.com") &&
+        !downloadUrl.includes("/content") &&
+        (downloadUrl.includes("/drives/") || downloadUrl.includes("/driveItems/") || downloadUrl.includes("/items/"))) {
+        downloadUrl = downloadUrl.replace(/\/$/, "") + "/content";
+      }
+
+      // asyncgw URLs wrap SharePoint URLs — unwrap first, then convert to Graph
+      if (downloadUrl && (downloadUrl.includes("asyncgw.teams.microsoft.com") || downloadUrl.includes("teams.cdn.office.net"))) {
+        const unwrapped = convertToGraphDownloadUrl(downloadUrl);
+        if (unwrapped) {
+          downloadUrl = unwrapped;
+        }
+        // If no embedded SharePoint URL found, try with delegated token directly
+      }
+
+      // SharePoint webUrls — convert to Graph sharing link for download
+      if (downloadUrl && downloadUrl.includes("sharepoint.com") && !downloadUrl.includes("graph.microsoft.com")) {
+        const graphUrl = convertToGraphDownloadUrl(downloadUrl);
+        if (graphUrl) downloadUrl = graphUrl;
+      }
+
       // For attachments with only a name, search the user's OneDrive
       if (!downloadUrl && att.name && (att.needsContextLookup || att.needsDriveDownload)) {
         downloadUrl = await searchUserDrive(att.name);
         if (downloadUrl) console.log(`[Migration] Found "${att.name}" in OneDrive → downloading`);
       }
 
+      console.log(`[Migration] Resolved: type=${att.type} name="${att.name}" url=${downloadUrl?.slice(0, 80) || "null"}`);
+
+      // For asyncgw URLs that couldn't be replaced with a Graph URL, try delegated token
+      const isAsyncGwUrl = downloadUrl && (downloadUrl.includes("asyncgw.teams.microsoft.com") || downloadUrl.includes("teams.cdn.office.net"));
+      const effectiveToken = (isAsyncGwUrl && userDelegatedToken) ? userDelegatedToken : accessToken;
+      // asyncgwUrl fallback for attachments from the attachments[] path (has att.asyncGwUrl)
+      const asyncGwFallback = (att.isAsyncGw && att.asyncGwUrl) ? att.asyncGwUrl : (isAsyncGwUrl ? downloadUrl : null);
+
       if (att.type === "image" && downloadUrl) {
         try {
-          const buf = await downloadBinary(downloadUrl, accessToken);
-          if (buf) {
+          let result = await downloadBinary(downloadUrl, effectiveToken);
+          if (!result && asyncGwFallback && userDelegatedToken) {
+            result = await downloadBinary(asyncGwFallback, userDelegatedToken);
+          }
+          if (result) {
+            const { buffer: buf, contentType: resCt } = result;
             downloadedImages.set(att.url || downloadUrl, buf);
-            const ext = guessExtension(att.contentType, downloadUrl);
+            const ext = guessExtension(resCt || att.contentType, downloadUrl);
             filesToUpload.push({
               name: att.name || `image${downloadedImages.size}${ext}`,
               buffer: buf, mime: guessMime(ext), type: "image",
               originalUrl: att.url || downloadUrl,
             });
+            console.log(`[Migration] Image downloaded: ${att.name || downloadUrl}`);
+          } else {
+            console.warn(`[Migration] Image download returned empty: ${att.name || downloadUrl}`);
           }
-        } catch { /* skip */ }
+        } catch (e) {
+          console.warn(`[Migration] Image download error for ${att.name}: ${e.message}`);
+        }
       } else if (att.type === "file" && downloadUrl) {
+        console.log(`[Migration] Downloading file: ${att.name} from ${downloadUrl.slice(0, 80)}...`);
         try {
-          const buf = await downloadBinary(downloadUrl, accessToken);
-          if (buf) {
-            const ext = guessExtension(att.contentType, downloadUrl);
-            const name = att.name
-              ? (att.name.includes(".") ? att.name : att.name + ext)
-              : `file_${filesToUpload.length + 1}${ext}`;
+          let result = await downloadBinary(downloadUrl, effectiveToken);
+          if (!result && asyncGwFallback && userDelegatedToken) {
+            console.log(`[Migration] Retrying "${att.name}" with delegated token on asyncgw URL`);
+            result = await downloadBinary(asyncGwFallback, userDelegatedToken);
+          }
+          if (result) {
+            const { buffer: buf, contentType: resCt, disposition } = result;
+            // Prefer filename from Content-Disposition header over the label from the card
+            const rawDispositionName = disposition?.match(/filename\*?=(?:UTF-8'')?["']?([^"';\r\n]+)/i)?.[1]?.trim();
+            const dispositionName = rawDispositionName ? (() => { try { return decodeURIComponent(rawDispositionName); } catch { return rawDispositionName; } })() : null;
+            const ext = guessExtension(resCt || att.contentType, downloadUrl);
+            let name = dispositionName || (att.name && !/^\d+$/.test(att.name) && att.name !== "null" ? att.name : null);
+            if (name) {
+              name = name.includes(".") ? name : name + ext;
+            } else {
+              name = `file_${filesToUpload.length + 1}${ext}`;
+            }
             filesToUpload.push({
-              name, buffer: buf, mime: guessMime(ext), type: "file",
+              name, buffer: buf, mime: resCt || guessMime(ext), type: "file",
               originalUrl: att.url || downloadUrl,
             });
+            console.log(`[Migration] File downloaded: ${name} (${buf.length} bytes)`);
           } else {
-            // Last resort: search OneDrive by file name
+            console.warn(`[Migration] File download returned empty: ${att.name} — trying OneDrive search`);
             const fallbackUrl = await searchUserDrive(att.name);
             if (fallbackUrl) {
-              const buf2 = await downloadBinary(fallbackUrl, accessToken);
-              if (buf2) {
-                const ext = guessExtension(att.contentType, fallbackUrl);
-                const name = att.name?.includes(".") ? att.name : (att.name || "file") + ext;
-                filesToUpload.push({ name, buffer: buf2, mime: guessMime(ext), type: "file", originalUrl: att.url || fallbackUrl });
-                console.log(`[Migration] Downloaded "${name}" via OneDrive search fallback`);
+              const result2 = await downloadBinary(fallbackUrl, accessToken);
+              if (result2) {
+                const { buffer: buf2, contentType: resCt2, disposition: disp2 } = result2;
+                const dispositionName2 = disp2?.match(/filename\*?=(?:UTF-8'')?["']?([^"';\r\n]+)/i)?.[1]?.trim();
+                const ext2 = guessExtension(resCt2 || att.contentType, fallbackUrl);
+                const name2 = dispositionName2 || (att.name?.includes(".") ? att.name : (att.name || "file") + ext2);
+                filesToUpload.push({ name: name2, buffer: buf2, mime: resCt2 || guessMime(ext2), type: "file", originalUrl: att.url || fallbackUrl });
+                console.log(`[Migration] Downloaded "${name2}" via OneDrive search fallback`);
+              } else {
+                console.warn(`[Migration] OneDrive search fallback also failed for "${att.name}"`);
               }
             }
           }
         } catch (e) {
           console.warn(`[Migration] File download error for ${att.name}: ${e.message}`);
         }
+      } else if (!downloadUrl && att.name) {
+        console.warn(`[Migration] No download URL for attachment "${att.name}" — skipping`);
       }
     }
 
@@ -679,7 +861,8 @@ export async function migrateUserPair({
   sourceUserId,
   sourceDisplayName,
   destUserEmail,
-}, opts = {}) {
+  userDelegatedToken,
+}, opts = {}, onProgress = null) {
   const result = {
     sourceUserId,
     sourceDisplayName: sourceDisplayName || sourceUserId,
@@ -747,50 +930,26 @@ export async function migrateUserPair({
     const mainFolder = await createDriveFolder(auth, folderName);
 
     console.log(`[C2G] Processing ${sessions.size} conversation(s) for ${sourceDisplayName}...`);
-
-    // ── Step 1: Download all assets across all conversations ──────────
-    const allDownloadedImages = new Map();
-    const allFilesToUpload = [];
-    const seenAssetNames = new Set();
-    let convCount = 0;
+    let convIdx = 0;
     for (const [, items] of sessions) {
-      convCount++;
-      console.log(`[C2G] Conv ${convCount}/${sessions.size}: downloading assets...`);
+      convIdx++;
       try {
-        const { downloadedImages, filesToUpload } = await downloadConversationAssets(items, accessToken, sourceUserId);
-        for (const [url, buf] of downloadedImages) allDownloadedImages.set(url, buf);
+        const title = conversationTitle(items);
+        const dateStr = items[0]?.createdDateTime
+          ? new Date(items[0].createdDateTime).toISOString().slice(0, 10)
+          : "unknown";
+
+        console.log(`[C2G] Conv ${convIdx}/${sessions.size}: downloading assets...`);
+        const { downloadedImages, filesToUpload } = await downloadConversationAssets(items, accessToken, sourceUserId, userDelegatedToken);
+        console.log(`[C2G] Conv ${convIdx}: ${filesToUpload.length} file(s) to upload, ${downloadedImages.size} image(s)`);
+
+        const convFolder = mainFolder;
+
+        const uploadedFileLinks = new Map();
+
         for (const asset of filesToUpload) {
-          // Deduplicate by name across all conversations
-          let assetName = asset.name;
-          if (seenAssetNames.has(assetName)) {
-            const ext = assetName.includes(".") ? assetName.slice(assetName.lastIndexOf(".")) : "";
-            const base = assetName.slice(0, assetName.length - ext.length);
-            assetName = `${base}_${allFilesToUpload.length + 1}${ext}`;
-          }
-          seenAssetNames.add(assetName);
-          allFilesToUpload.push({ ...asset, name: assetName });
-        }
-      } catch (err) {
-        console.warn(`[C2G] Asset download error for conv ${convCount}: ${err.message}`);
-      }
-    }
-    console.log(`[C2G] Total: ${allFilesToUpload.length} attachment(s), ${allDownloadedImages.size} image(s)`);
-
-    // ── Step 2: Create Attachments/ subfolder and upload files there ──
-    const uploadedFileLinks = new Map(); // originalUrl → { webViewLink, fileName }
-    if (allFilesToUpload.length > 0) {
-      let attachmentsFolder;
-      try {
-        attachmentsFolder = await createDriveFolder(auth, "Attachments", mainFolder.id);
-        console.log(`[C2G] Created Attachments/ subfolder (id=${attachmentsFolder.id})`);
-      } catch (err) {
-        result.errors.push(`Could not create Attachments folder: ${err.message}`);
-      }
-
-      if (attachmentsFolder) {
-        for (const asset of allFilesToUpload) {
           try {
-            const uploaded = await uploadFileToDrive(auth, asset.name, asset.mime, asset.buffer, attachmentsFolder.id);
+            const uploaded = await uploadFileToDrive(auth, asset.name, asset.mime, asset.buffer, convFolder.id);
             result.filesUploaded++;
             result.files.push({
               name: asset.name,
@@ -799,36 +958,38 @@ export async function migrateUserPair({
               webViewLink: uploaded.webViewLink,
             });
             if (asset.originalUrl) {
-              uploadedFileLinks.set(asset.originalUrl, { webViewLink: uploaded.webViewLink, fileName: asset.name });
+              uploadedFileLinks.set(asset.originalUrl, uploaded.webViewLink);
             }
-            console.log(`[C2G] Uploaded attachment: ${asset.name} → Attachments/ (${uploaded.webViewLink})`);
           } catch (uploadErr) {
             result.errors.push(`Asset ${asset.name}: ${uploadErr.message}`);
           }
         }
+
+        const docxBuffer = await buildConversationDocx(items, convIdx, sourceDisplayName || sourceUserId, downloadedImages, uploadedFileLinks);
+        const docxName = `Conversation_${convIdx}_${dateStr}.docx`;
+
+        const docxFile = await uploadFileToDrive(
+          auth, docxName,
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          docxBuffer,
+          convFolder.id
+        );
+
+        result.filesUploaded++;
+        result.files.push({
+          name: docxName,
+          title,
+          driveFileId: docxFile.id,
+          webViewLink: docxFile.webViewLink,
+        });
+        console.log(`[C2G] Conv ${convIdx}/${sessions.size}: uploaded DOCX + ${filesToUpload.length} files`);
+        if (onProgress) onProgress({ filesUploaded: result.filesUploaded, convIdx, totalConvs: sessions.size });
+      } catch (err) {
+        console.error(`[C2G] Conv ${convIdx} error: ${err.message}`);
+        result.errors.push(`Conversation ${convIdx}: ${err.message || String(err)}`);
       }
     }
-
-    // ── Step 3: Build ONE merged DOCX for all conversations ───────────
-    try {
-      const safeName = (sourceDisplayName || sourceUserId)
-        .replace(/[/\\:*?"<>|]/g, "_").replace(/\s+/g, "_").slice(0, 80).trim() || "User";
-      const docxName = `${safeName}_All_Conversations.docx`;
-      const docxBuffer = await buildAllConversationsDocx(sessions, sourceDisplayName || sourceUserId, allDownloadedImages, uploadedFileLinks);
-      const docxFile = await uploadFileToDrive(
-        auth, docxName,
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        docxBuffer, mainFolder.id
-      );
-      result.filesUploaded++;
-      result.files.push({ name: docxName, title: "All Conversations", driveFileId: docxFile.id, webViewLink: docxFile.webViewLink });
-      console.log(`[C2G] Uploaded merged DOCX: ${docxName}`);
-    } catch (err) {
-      console.error(`[C2G] Merged DOCX build error: ${err.message}`);
-      result.errors.push(`Merged DOCX: ${err.message}`);
-    }
-
-    console.log(`[C2G] Done for ${sourceDisplayName}: ${result.filesUploaded} file(s) uploaded, ${result.errors.length} error(s)`);
+    console.log(`[C2G] Done for ${sourceDisplayName}: ${result.filesUploaded} files uploaded, ${result.errors.length} errors`);
   } catch (err) {
     result.errors.push(err.message || String(err));
   }

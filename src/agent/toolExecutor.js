@@ -6,6 +6,37 @@ import { loadHistory } from './conversationHistory.js';
 
 const logger = getLogger('agent:executor');
 
+function checkStepPrerequisites(targetStep, migDir, migrationState) {
+  const {
+    uploadData = null,
+    mappings_count = 0, selected_users_count = 0,
+    c2g_mappings_count = 0, cl2g_mappings_count = 0,
+    cl2g_upload_users = 0,
+  } = migrationState ?? {};
+
+  if (migDir === 'gemini-copilot') {
+    if (targetStep >= 3 && !uploadData)
+      return 'Upload your Google Workspace data first (Step 2 — Import Data).';
+    // Allow if either explicit mappings OR users have been selected
+    if (targetStep >= 4 && mappings_count === 0 && selected_users_count === 0)
+      return 'Map your users first (Step 3 — Map Users). Select at least one user to migrate.';
+  }
+
+  if (migDir === 'copilot-gemini') {
+    if (targetStep >= 3 && c2g_mappings_count === 0)
+      return 'Map your users first (Step 2 — Map Users). At least one mapping is required.';
+  }
+
+  if (migDir === 'claude-gemini') {
+    if (targetStep >= 3 && cl2g_upload_users === 0)
+      return 'Upload your Claude export ZIP first (Step 2 — Upload ZIP).';
+    if (targetStep >= 4 && cl2g_mappings_count === 0)
+      return 'Map your users first (Step 3 — Map Users). At least one mapping is required.';
+  }
+
+  return null; // no blocker
+}
+
 export async function executeTool(toolName, args, { streamEvent, session, migrationState, migrationLogs, db, agentDeps }) {
   const migDir = migrationState?.migDir;
   const appUserId = session?.appUser?._id?.toString() || session?.appUserId?.toString() || null;
@@ -15,6 +46,8 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
     // ── UI event tools ─────────────────────────────────────────────────────
     case 'navigate_to_step': {
       const step = typeof args.step === 'number' ? args.step : parseInt(args.step, 10);
+      const blocker = checkStepPrerequisites(step, migDir, migrationState);
+      if (blocker) return { navigated: false, blocked: true, reason: blocker };
       streamEvent('navigate', { step });
       return { navigated: true, step };
     }
@@ -43,6 +76,16 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
     case 'show_mapping': {
       streamEvent('refresh_mapping', {});
       return { shown: true };
+    }
+
+    case 'show_upload_widget': {
+      const { widgetType = 'zip', label } = args;
+      streamEvent('show_upload_widget', {
+        widgetType,
+        label: label || (widgetType === 'zip' ? 'Upload your export ZIP file' : 'Import user mappings from CSV'),
+        migDir,
+      });
+      return { shown: true, widgetType };
     }
 
     case 'show_post_migration_guide': {
@@ -138,33 +181,10 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
 
     case 'auto_map_users': {
       if (!migDir) return { error: 'No direction selected' };
-      try {
-        const sourceUsers = await db.collection('cachedUsers')
-          .find({ appUserId, role: 'source', migDir })
-          .toArray();
-        const destUsers = await db.collection('cachedUsers')
-          .find({ appUserId, role: 'dest', migDir })
-          .toArray();
-
-        const destByEmail = new Map(destUsers.map(u => [u.email?.toLowerCase(), u]));
-        const mappings = {};
-        let matched = 0;
-        for (const src of sourceUsers) {
-          const dest = destByEmail.get(src.email?.toLowerCase());
-          if (dest) { mappings[src.email] = dest.email; matched++; }
-        }
-
-        await db.collection('userMappings').updateOne(
-          { appUserId, migDir },
-          { $set: { mappings, updatedAt: new Date() } },
-          { upsert: true }
-        );
-
-        streamEvent('refresh_mapping', {});
-        return { matched, total: sourceUsers.length };
-      } catch (e) {
-        return { error: e.message };
-      }
+      // The UI owns the source-of-truth user lists (Google API, MS Graph, ZIP parse).
+      // Trigger the UI's auto-map button via event; UI reports back via state on next turn.
+      streamEvent('trigger_auto_map', { migDir });
+      return { triggered: true, note: 'Auto-map running in UI. Result will appear in mappings_count on next turn.' };
     }
 
     case 'explain_log': {
@@ -224,14 +244,17 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
     case 'start_migration': {
       const { startMigration } = agentDeps ?? session._agentDeps ?? {};
       if (!startMigration) return { error: 'Migration executor not available' };
+      if (typeof args.dryRun !== 'boolean') {
+        return { error: 'dryRun must be specified explicitly (true for preview, false for live)' };
+      }
+      const dryRun = args.dryRun;
       const batchId = `batch_${Date.now()}`;
-      startMigration({ dryRun: args.dryRun ?? true, batchId, migDir, appUserId }).catch(e => {
+      startMigration({ dryRun, batchId, migDir, appUserId }).catch(e => {
         logger.error(`Background migration failed: ${e.message}`);
       });
       session.currentBatchId = batchId;
-      // Tell the UI to start migration and connect to SSE stream
-      streamEvent('migration_started', { batchId, migDir, dryRun: args.dryRun ?? true });
-      return { started: true, batchId, dryRun: args.dryRun ?? true };
+      streamEvent('migration_started', { batchId, migDir, dryRun });
+      return { started: true, batchId, dryRun };
     }
 
     case 'retry_failed': {

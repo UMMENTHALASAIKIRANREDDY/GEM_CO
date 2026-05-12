@@ -1,0 +1,51 @@
+name: Deploy to aitoolsmigration (prod branch)
+
+on:
+  push:
+    branches:
+      - prod
+
+jobs:
+  deploy:
+    name: Deploy to Server
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PROD_SSH_HOST }}
+          port: ${{ secrets.PROD_SSH_PORT }}
+          username: ${{ secrets.PROD_SSH_USER }}
+          password: ${{ secrets.PROD_SSH_PASSWORD }}
+          script: |
+            # Create directory if first deploy
+            if [ ! -d /data/aitoolsmigration ]; then
+              echo "${{ secrets.PROD_SSH_PASSWORD }}" | sudo -S mkdir -p /data/aitoolsmigration
+              echo "${{ secrets.PROD_SSH_PASSWORD }}" | sudo -S chown -R $USER:$USER /data/aitoolsmigration
+              cd /data/aitoolsmigration
+              git clone $(git -C /data/migration-combinations remote get-url origin) . --branch prod
+            fi
+
+            echo "${{ secrets.PROD_SSH_PASSWORD }}" | sudo -S chown -R $USER:$USER /data/aitoolsmigration
+
+            cd /data/aitoolsmigration
+            git config --global --add safe.directory /data/aitoolsmigration
+
+            echo "Pulling latest changes..."
+            git pull origin prod
+
+            echo "Stopping existing containers..."
+            echo "${{ secrets.PROD_SSH_PASSWORD }}" | sudo -S docker compose -f docker-compose.prod.yml down
+
+            echo "Building new image..."
+            echo "${{ secrets.PROD_SSH_PASSWORD }}" | sudo -S docker compose -f docker-compose.prod.yml build --no-cache
+
+            echo "Starting containers..."
+            echo "${{ secrets.PROD_SSH_PASSWORD }}" | sudo -S docker compose -f docker-compose.prod.yml up -d
+
+            echo "Deployment complete!"
+            echo "${{ secrets.PROD_SSH_PASSWORD }}" | sudo -S docker compose -f docker-compose.prod.yml ps

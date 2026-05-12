@@ -133,6 +133,7 @@ function buildStepContextInstruction(state) {
     uploadData = null, mappings_count = 0, c2g_mappings_count = 0,
     cl2g_upload_users = 0, cl2g_mappings_count = 0,
     migDone = false, c2g_done = false, cl2g_done = false,
+    live = false, c2g_live = false, cl2g_live = false,
     lastRunWasDry = false, c2gLastDry = false, cl2gLastDry = false } = state ?? {};
 
   const dryRunDone = (migDir === 'copilot-gemini' ? c2g_done && c2gLastDry
@@ -144,8 +145,10 @@ function buildStepContextInstruction(state) {
   const missingGoogle = needsGoogle && !googleAuthed;
   const missingMs = needsMs && !msAuthed;
 
-  // Auth missing — agent must redirect immediately
-  if (migDir && step >= 2 && (missingGoogle || missingMs)) {
+  // Auth missing — agent must redirect (but NOT if migration is actively running or done)
+  const isRunning = live || c2g_live || cl2g_live;
+  const isDone = migDone || c2g_done || cl2g_done;
+  if (migDir && step >= 2 && !isRunning && !isDone && (missingGoogle || missingMs)) {
     const missing = [missingGoogle && 'Google Workspace', missingMs && 'Microsoft 365'].filter(Boolean).join(' and ');
     return `\n\n[AUTO CONTEXT — AUTH GATE] User is at step ${step} with direction "${migDir}" but ${missing} is NOT connected. You MUST: (1) call navigate_to_step with step=0, (2) tell them which account(s) to connect and why. Be direct: "You need to connect X first." Do not proceed with the current step.`;
   }
@@ -274,7 +277,7 @@ export async function runAgentLoop(req, res, { message, migrationState: _migrati
     ];
 
     // System trigger gets safe navigation tools so agent can redirect user (e.g. back to connect clouds)
-    const SAFE_TOOLS = AGENT_TOOLS.filter(t => ['navigate_to_step', 'select_direction', 'show_widget', 'show_migration_actions'].includes(t.function?.name));
+    const SAFE_TOOLS = AGENT_TOOLS.filter(t => ['navigate_to_step', 'select_direction', 'show_upload_widget', 'explain_error'].includes(t.function?.name));
 
     logger.info(`[agentLoop] user=${appUserId} msg="${message?.slice(0, 80)}" step=${migrationState?.step} migDir=${migrationState?.migDir}`);
 
