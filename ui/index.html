@@ -3462,8 +3462,9 @@ function App(){
                   {/* Step 1: Direction picker */}
                   {step===1&&<StepDirection onSelect={dir=>{
                     setMigDir(dir);
-                    const needsMs=dir==='gemini-copilot'||dir==='copilot-gemini';
-                    const missingGoogle=!googleAuthed;
+                    const needsMs=dir==='gemini-copilot'||dir==='copilot-gemini'||dir==='claude-copilot';
+                    const needsGoogle=dir==='gemini-copilot'||dir==='copilot-gemini'||dir==='claude-gemini';
+                    const missingGoogle=needsGoogle&&!googleAuthed;
                     const missingMs=needsMs&&!msAuthed;
                     if(missingGoogle||missingMs){
                       // Missing required auth — go back to connect clouds, agent will explain
