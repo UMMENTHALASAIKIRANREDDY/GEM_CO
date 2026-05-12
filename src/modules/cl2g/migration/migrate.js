@@ -361,21 +361,47 @@ export async function migrateUserPair({
       });
     }
 
-    // ── File 1: All Conversations merged into ONE DOCX ─────────────────────
+    // ── Split conversations into batches (5000 per file) for memory efficiency ──
+    const BATCH_SIZE = 5000;
     if (filteredConvs.length > 0) {
-      try {
-        const safeName = safeFileName(sourceDisplayName, 'User');
-        const docxName = `${safeName}_All_Conversations.docx`;
-        const buffer = await buildAllConversationsDocx(filteredConvs, sourceDisplayName);
-        const uploaded = await uploadFileToDrive(
-          auth, docxName,
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          buffer, mainFolder.id
-        );
-        result.filesUploaded++;
-        result.files.push({ name: docxName, driveFileId: uploaded.id, webViewLink: uploaded.webViewLink });
-      } catch (err) {
-        result.errors.push(`Conversations DOCX: ${err.message}`);
+      const batches = [];
+      for (let i = 0; i < filteredConvs.length; i += BATCH_SIZE) {
+        batches.push(filteredConvs.slice(i, i + BATCH_SIZE));
+      }
+
+      const safeName = safeFileName(sourceDisplayName, 'User');
+
+      for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
+        const batch = batches[batchIdx];
+        const startIdx = batchIdx * BATCH_SIZE + 1;
+        const endIdx = Math.min((batchIdx + 1) * BATCH_SIZE, filteredConvs.length);
+
+        try {
+          // File naming: single file if only 1 batch, else Part1, Part2, etc.
+          const partLabel = batches.length > 1 ? `_Part${batchIdx + 1}` : '';
+          const docxName = `${safeName}_Conversations${partLabel}.docx`;
+
+          console.log(`[CL2G] Building conversations batch ${batchIdx + 1}/${batches.length} (${startIdx}-${endIdx} of ${filteredConvs.length})...`);
+
+          const buffer = await buildAllConversationsDocx(batch, sourceDisplayName);
+          const uploaded = await uploadFileToDrive(
+            auth, docxName,
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            buffer, mainFolder.id
+          );
+
+          result.filesUploaded++;
+          result.files.push({
+            name: docxName,
+            driveFileId: uploaded.id,
+            webViewLink: uploaded.webViewLink,
+            batchInfo: { part: batchIdx + 1, totalParts: batches.length, conversationRange: [startIdx, endIdx, filteredConvs.length] }
+          });
+
+          console.log(`[CL2G] Uploaded batch: ${docxName}`);
+        } catch (err) {
+          result.errors.push(`Conversations batch ${batchIdx + 1}: ${err.message}`);
+        }
       }
     }
 
