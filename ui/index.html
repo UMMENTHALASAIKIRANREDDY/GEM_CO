@@ -2611,6 +2611,456 @@ const StepCL2GMigrate=({cl2gStats,cl2gDone,onRunAnother,onBack,onStart,cl2gLive,
   );
 };
 
+/* ══════════════════════════════════════════ */
+/* ═══  CLAUDE→COPILOT: UPLOAD ZIP STEP   ═══ */
+/* ══════════════════════════════════════════ */
+const StepCL2CUpload=({cl2cUploadData,setCl2cUploadData,onNext,onBack,showToast,onUploadComplete})=>{
+  const fileRef=useRef(null);
+  const menuRef=useRef(null);
+  const [uploading,setUploading]=useState(false);
+  const [dragOver,setDragOver]=useState(false);
+  const [uploads,setUploads]=useState([]);
+  const [showMenu,setShowMenu]=useState(false);
+
+  const loadUploads=async()=>{
+    try{
+      const r=await fetch('/api/cl2c/uploads');const d=await r.json();
+      const list=Array.isArray(d)?d:[];
+      setUploads(list);
+      if(!cl2cUploadData&&list.length>0){
+        const u=list[0];
+        setCl2cUploadData({uploadId:u._id,users:u.users||[],totalConversations:u.totalConversations||0,totalMemories:u.totalMemories||0,totalProjects:u.totalProjects||0,fileName:u.fileName});
+      }
+    }catch{}
+  };
+  useEffect(()=>{loadUploads()},[]);
+
+  useEffect(()=>{
+    const h=e=>{if(menuRef.current&&!menuRef.current.contains(e.target))setShowMenu(false)};
+    document.addEventListener('mousedown',h);return()=>document.removeEventListener('mousedown',h);
+  },[]);
+
+  const uploadZip=async(file)=>{
+    if(!file||!file.name.toLowerCase().endsWith('.zip')){showToast('Only ZIP files accepted.','error');return}
+    setUploading(true);
+    const fd=new FormData();fd.append('file',file);
+    try{
+      const r=await fetch('/api/cl2c/upload',{method:'POST',body:fd});
+      const text=await r.text();
+      let d;try{d=JSON.parse(text);}catch{throw new Error(`Upload failed (${r.status})`)}
+      if(!r.ok)throw new Error(d.error||'Upload failed');
+      setCl2cUploadData({uploadId:d.uploadId,users:d.users||[],totalConversations:d.totalConversations||0,totalMemories:d.totalMemories||0,totalProjects:d.totalProjects||0,fileName:file.name});
+      if(onUploadComplete)(onUploadComplete((d.users||[]).length));
+      await loadUploads();
+      showToast(`Uploaded — ${d.totalConversations} conversations, ${d.users?.length||0} users found.`);
+    }catch(e){showToast(e.message,'error')}
+    finally{setUploading(false)}
+  };
+
+  const deleteUpload=async(id,e)=>{
+    e.stopPropagation();
+    try{
+      await fetch(`/api/cl2c/uploads/${id}`,{method:'DELETE'});
+      if(cl2cUploadData?.uploadId===id)setCl2cUploadData(null);
+      setUploads(p=>p.filter(u=>u._id!==id));
+      showToast('Upload deleted.');
+    }catch(err){showToast(err.message,'error')}
+  };
+
+  const selectUpload=doc=>{
+    setCl2cUploadData({uploadId:doc._id,users:doc.users||[],totalConversations:doc.totalConversations||0,totalMemories:doc.totalMemories||0,totalProjects:doc.totalProjects||0,fileName:doc.fileName});
+    setShowMenu(false);
+  };
+
+  return(
+    <div className="fade-up">
+      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:20}}>
+        <div>
+          <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Upload Claude Export</div>
+          <div style={{fontSize:13,color:C.muted}}>Download your Claude data export (ZIP) and upload it here.</div>
+        </div>
+        <div ref={menuRef} style={{position:'relative',flexShrink:0}}>
+          <button onClick={()=>{setShowMenu(p=>!p);loadUploads()}} title="Previous uploads"
+            style={{width:36,height:36,borderRadius:8,border:`1px solid ${C.border}`,background:'white',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',color:C.muted,transition:'all .15s'}}
+            onMouseEnter={e=>{e.currentTarget.style.borderColor=C.primary;e.currentTarget.style.color=C.primary}}
+            onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.color=C.muted}}>
+            <IcoMenu s={16}/>
+          </button>
+          {showMenu&&(
+            <div style={{position:'absolute',right:0,top:'calc(100% + 6px)',width:320,background:'white',border:`1px solid ${C.border}`,borderRadius:10,boxShadow:'0 8px 30px rgba(0,0,0,.12)',zIndex:100,overflow:'hidden'}}>
+              <div style={{padding:'10px 14px',borderBottom:`1px solid ${C.bg}`,fontSize:12,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.5}}>Previous Uploads</div>
+              {uploads.length===0
+                ?<div style={{padding:'20px 14px',fontSize:13,color:C.muted,textAlign:'center'}}>No uploads yet</div>
+                :uploads.map((u,i)=>{
+                  const isActive=cl2cUploadData?.uploadId===u._id;
+                  return(
+                    <div key={u._id} onClick={()=>selectUpload(u)}
+                      style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',cursor:'pointer',borderBottom:i<uploads.length-1?`1px solid ${C.bg}`:'none',background:isActive?C.tint:'white',transition:'background .15s'}}
+                      onMouseEnter={e=>{if(!isActive)e.currentTarget.style.background=C.bg}}
+                      onMouseLeave={e=>{e.currentTarget.style.background=isActive?C.tint:'white'}}>
+                      <IcoZip s={20} c={isActive?C.primary:C.primaryL}/>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:12,fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',display:'flex',alignItems:'center',gap:6}}>
+                          <span style={{overflow:'hidden',textOverflow:'ellipsis'}}>{u.fileName}</span>
+                          {isActive&&<span style={{fontSize:10,padding:'1px 6px',borderRadius:10,background:C.primary,color:'white',flexShrink:0}}>active</span>}
+                        </div>
+                        <div style={{fontSize:11,color:C.muted}}>{u.totalConversations} convs · {u.users?.length||0} users · {new Date(u.uploadTime).toLocaleDateString()}</div>
+                      </div>
+                      <button onClick={e=>deleteUpload(u._id,e)} title="Delete"
+                        style={{padding:'4px 6px',border:'none',background:'none',cursor:'pointer',color:C.muted,borderRadius:4,flexShrink:0,display:'flex',alignItems:'center',transition:'all .15s'}}
+                        onMouseEnter={e=>{e.currentTarget.style.background='#FEF2F2';e.currentTarget.style.color=C.error}}
+                        onMouseLeave={e=>{e.currentTarget.style.background='none';e.currentTarget.style.color=C.muted}}>
+                        <IcoTrash s={13}/>
+                      </button>
+                    </div>
+                  );
+                })
+              }
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div onDragOver={e=>{e.preventDefault();setDragOver(true)}} onDragLeave={()=>setDragOver(false)}
+        onDrop={e=>{e.preventDefault();setDragOver(false);const f=e.dataTransfer.files[0];if(f)uploadZip(f)}}
+        onClick={()=>!uploading&&fileRef.current.click()}
+        style={{border:`2px dashed ${dragOver?C.primary:C.border}`,borderRadius:12,padding:'36px',textAlign:'center',cursor:'pointer',background:dragOver?C.tint:'white',transition:'all .2s',marginBottom:16}}>
+        <input ref={fileRef} type="file" accept=".zip" style={{display:'none'}} onChange={e=>{if(e.target.files[0])uploadZip(e.target.files[0]);e.target.value=''}}/>
+        {uploading
+          ?<><Spinner s={28}/><div style={{fontSize:13,color:C.muted,marginTop:10}}>Uploading & parsing ZIP…</div></>
+          :<><IcoZip s={28} c={dragOver?C.primary:C.muted}/><div style={{fontSize:13,color:C.muted,marginTop:8}}>Drag & drop your Claude export ZIP here</div><div style={{fontSize:11,color:C.primaryL,marginTop:4}}>or click to browse</div></>}
+      </div>
+
+      {cl2cUploadData&&(
+        <div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',background:C.tint,borderRadius:8,border:`1px solid ${C.primary}30`,marginBottom:16}}>
+          <IcoZip s={18} c={C.primary}/>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:600,color:C.primary,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{cl2cUploadData.fileName}</div>
+            <div style={{fontSize:11,color:C.muted}}>{cl2cUploadData.totalConversations} conversations · {cl2cUploadData.users?.length||0} users{cl2cUploadData.totalMemories>0?` · ${cl2cUploadData.totalMemories} memory`:''}{cl2cUploadData.totalProjects>0?` · ${cl2cUploadData.totalProjects} project${cl2cUploadData.totalProjects>1?'s':''}`:''}</div>
+          </div>
+          <Check s={16} c={C.success}/>
+        </div>
+      )}
+
+      <div style={{display:'flex',gap:10}}>
+        <Btn variant="ghost" onClick={onBack}>← Back</Btn>
+        <Btn onClick={onNext} disabled={!cl2cUploadData} style={{flex:1,justifyContent:'center'}}>Continue →</Btn>
+      </div>
+    </div>
+  );
+};
+
+/* ═══════════════════════════════════════════ */
+/* ═══  CLAUDE→COPILOT: USER MAPPING STEP  ═══ */
+/* ═══════════════════════════════════════════ */
+const StepCL2CMap=({cl2cUploadData,msUsers,cl2cMappings,setCl2cMappings,cl2cSelectedUuids,setCl2cSelectedUuids,onNext,onBack,showToast})=>{
+  const csvRef=useRef(null);
+  const [search,setSearch]=useState('');
+  const [csvUploading,setCsvUploading]=useState(false);
+  const [csvEmails,setCsvEmails]=useState(null);
+  const users=cl2cUploadData?.users||[];
+
+  useEffect(()=>{
+    fetch('/api/cl2c/user-mappings').then(r=>r.ok?r.json():null).then(doc=>{
+      if(doc?.mappings)setCl2cMappings(prev=>({...prev,...doc.mappings}));
+      if(doc?.csvEmails){
+        setCsvEmails(doc.csvEmails);
+        if(doc.csvEmails.length>0)setCl2cSelectedUuids(new Set(doc.csvEmails.filter(uuid=>doc.mappings?.[uuid])));
+      }
+    }).catch(()=>{});
+  },[]);
+
+  useEffect(()=>{
+    if(!users.length||!msUsers.length)return;
+    const byLocal={};
+    msUsers.forEach(u=>{const em=(u.email||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
+    const m={};const used=new Set();
+    users.forEach(u=>{
+      const existing=(cl2cMappings[u.uuid]||'').toLowerCase();
+      if(existing&&!used.has(existing)){m[u.uuid]=existing;used.add(existing);}
+      else{const loc=(u.email_address||'').toLowerCase().split('@')[0];const dest=byLocal[loc]||'';
+        if(dest&&!used.has(dest)){m[u.uuid]=dest;used.add(dest);}else m[u.uuid]='';}
+    });
+    setCl2cMappings(m);
+    setCl2cSelectedUuids(new Set(Object.entries(m).filter(([,v])=>v).map(([k])=>k)));
+  },[users,msUsers]);
+
+  const persistMappings=(mappings,csv)=>{
+    fetch('/api/cl2c/user-mappings',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({mappings,csvEmails:csv||null})}).catch(()=>{});
+  };
+
+  const handleMappingChange=(uuid,val)=>{
+    const m={...cl2cMappings,[uuid]:val};
+    setCl2cMappings(m);
+    persistMappings(m,csvEmails);
+  };
+
+  const downloadCsv=()=>{
+    const sorted=[...users].sort((a,b)=>{const ma=!!cl2cMappings[a.uuid],mb=!!cl2cMappings[b.uuid];if(ma!==mb)return ma?-1:1;return(a.email_address||'').localeCompare(b.email_address||'')});
+    const rows=sorted.map(u=>`"${u.email_address||''}","${cl2cMappings[u.uuid]||''}"`);
+    const csv='Source User,Destination User\n'+rows.join('\n');
+    const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='cl2c-user-mappings.csv';a.click();
+    showToast('CSV downloaded.');
+  };
+
+  const uploadCsv=file=>{
+    setCsvUploading(true);
+    const r=new FileReader();
+    r.onload=e=>{
+      const lines=e.target.result.split(/\r?\n/).slice(1);
+      const emailToUuid={};
+      users.forEach(u=>{if(u.email_address)emailToUuid[u.email_address.toLowerCase()]=u.uuid});
+      const m={...cl2cMappings};const csvUuids=[];const usedDest=new Set();
+      for(const l of lines){
+        if(!l.trim())continue;
+        const c=parseCsvLine(l);
+        if(c.length>=2&&c[0]){
+          const srcEmail=c[0].trim().toLowerCase();
+          const dstEmail=c[1].trim().toLowerCase();
+          const uuid=emailToUuid[srcEmail];
+          if(uuid&&dstEmail&&!usedDest.has(dstEmail)){m[uuid]=dstEmail;csvUuids.push(uuid);usedDest.add(dstEmail);}
+          else if(uuid&&!dstEmail){m[uuid]='';csvUuids.push(uuid);}
+        }
+      }
+      setCl2cMappings(m);setCsvEmails(csvUuids);
+      setCl2cSelectedUuids(new Set(csvUuids.filter(id=>m[id])));
+      persistMappings(m,csvUuids);
+      setCsvUploading(false);
+      showToast(`CSV uploaded — ${csvUuids.length} user(s) mapped.`);
+    };
+    r.onerror=()=>{setCsvUploading(false);showToast('Failed to read CSV.','error')};
+    r.readAsText(file);
+  };
+
+  const clearCsv=()=>{
+    setCsvEmails(null);
+    const byLocal={};
+    msUsers.forEach(u=>{const em=(u.email||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
+    const m={};const used=new Set();
+    users.forEach(u=>{const loc=(u.email_address||'').toLowerCase().split('@')[0];const dest=byLocal[loc]||'';if(dest&&!used.has(dest)){m[u.uuid]=dest;used.add(dest);}else m[u.uuid]='';});
+    setCl2cMappings(m);
+    setCl2cSelectedUuids(new Set(users.map(u=>u.uuid)));
+    persistMappings(m,null);
+    showToast('CSV cleared — restored auto-mapping.');
+  };
+
+  const displayUsers=csvEmails?users.filter(u=>csvEmails.includes(u.uuid)):users;
+  const filtered=displayUsers.filter(u=>{
+    const q=search.toLowerCase();
+    return (u.full_name||'').toLowerCase().includes(q)||(u.email_address||'').toLowerCase().includes(q)||(cl2cMappings[u.uuid]||'').toLowerCase().includes(q);
+  }).sort((a,b)=>{const ma=!!cl2cMappings[a.uuid],mb=!!cl2cMappings[b.uuid];if(ma!==mb)return ma?-1:1;return (a.email_address||'').localeCompare(b.email_address||'')});
+
+  const toggleUser=uuid=>setCl2cSelectedUuids(p=>{const n=new Set(p);n.has(uuid)?n.delete(uuid):n.add(uuid);return n});
+  const autoMapped=displayUsers.filter(u=>!!cl2cMappings[u.uuid]).length;
+  const unmapped=displayUsers.filter(u=>!cl2cMappings[u.uuid]).length;
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',height:'100%'}} className="fade-up">
+      <div style={{flexShrink:0,marginBottom:12}}>
+        <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:8}}>
+          <div>
+            <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:2}}>User Mapping</div>
+            <div style={{fontSize:13,color:C.muted}}>
+              {csvEmails?<span style={{color:C.primary,fontWeight:500}}>{csvEmails.length} users from CSV</span>
+              :<>Map Claude accounts to Microsoft 365 destination emails.{' '}
+              {autoMapped>0&&<span style={{color:C.success,fontWeight:500}}>{autoMapped} auto-mapped</span>}
+              {unmapped>0&&<span style={{color:C.error}}>{autoMapped>0?' · ':''}{unmapped} need mapping</span>}</>}
+            </div>
+          </div>
+          <div style={{display:'flex',gap:4,flexShrink:0}}>
+            <input ref={csvRef} type="file" accept=".csv" style={{display:'none'}} onChange={e=>{if(e.target.files[0])uploadCsv(e.target.files[0]);e.target.value=''}}/>
+            <button onClick={()=>csvRef.current.click()} disabled={csvUploading} title="Upload CSV"
+              style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.border}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}
+              onMouseEnter={e=>e.currentTarget.style.background=C.bg} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+              {csvUploading?<Spinner s={12}/>:<IcoUpload s={13} c={C.muted}/>}
+            </button>
+            <button onClick={downloadCsv} title="Download CSV"
+              style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.primary}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}
+              onMouseEnter={e=>e.currentTarget.style.background=C.tint} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+              <IcoDownload s={13} c={C.primary}/>
+            </button>
+            {csvEmails&&<button onClick={clearCsv} title="Clear CSV — restore auto-mapping"
+              style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.error}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}
+              onMouseEnter={e=>e.currentTarget.style.background='#FEF2F2'} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+              <IcoTrash s={13}/>
+            </button>}
+          </div>
+        </div>
+        <div style={{fontSize:12,color:C.muted,marginBottom:8}}><span style={{fontWeight:600,color:C.primary}}>{cl2cSelectedUuids.size}</span> of {displayUsers.length} selected</div>
+        <SearchBar value={search} onChange={setSearch} placeholder="Search by name or email..."/>
+      </div>
+      <div style={{flex:1,overflowY:'auto',minHeight:0,background:'white',border:`1px solid ${C.border}`,borderRadius:10}}>
+        <div style={{display:'grid',gridTemplateColumns:'32px 1fr 1fr',padding:'9px 14px',background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.4,position:'sticky',top:0,zIndex:1}}>
+          <input type="checkbox" checked={cl2cSelectedUuids.size>0&&cl2cSelectedUuids.size===displayUsers.length} onChange={()=>{if(cl2cSelectedUuids.size===displayUsers.length)setCl2cSelectedUuids(new Set());else setCl2cSelectedUuids(new Set(displayUsers.map(u=>u.uuid)))}} style={{accentColor:C.primary,width:15,height:15,cursor:'pointer'}}/>
+          <div>Claude Account</div><div>Microsoft 365 Destination</div>
+        </div>
+        {filtered.map((u,i)=>{
+          const mapped=!!cl2cMappings[u.uuid];
+          return(
+            <div key={u.uuid} style={{display:'grid',gridTemplateColumns:'32px 1fr 1fr',alignItems:'center',padding:'9px 14px',borderBottom:i<filtered.length-1?`1px solid ${C.bg}`:'none',background:cl2cSelectedUuids.has(u.uuid)?C.tint:'white',transition:'background .15s',cursor:'pointer'}} onClick={()=>toggleUser(u.uuid)}>
+              <input type="checkbox" checked={cl2cSelectedUuids.has(u.uuid)} onChange={()=>toggleUser(u.uuid)} style={{accentColor:C.primary,width:15,height:15}} onClick={e=>e.stopPropagation()}/>
+              <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}>
+                <Avatar name={u.full_name||u.email_address} email={u.email_address} size={26}/>
+                <div style={{minWidth:0}}>
+                  <div style={{fontSize:12,fontWeight:500,color:C.dark,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{u.full_name||'(no name)'}</div>
+                  <div style={{fontSize:11,color:C.muted,fontFamily:'monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{u.email_address}</div>
+                  {u.conversationCount>0&&<div style={{fontSize:10,color:C.primaryL}}>{u.conversationCount} convs{u.hasMemory?' · memory':''}{u.projectCount>0?` · ${u.projectCount} project${u.projectCount>1?'s':''}`:''}</div>}
+                </div>
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:6,minWidth:0,paddingRight:8}} onClick={e=>e.stopPropagation()}>
+                {mapped?(
+                  <>
+                    <Avatar name={cl2cMappings[u.uuid]} email={cl2cMappings[u.uuid]} size={22}/>
+                    <span style={{fontSize:12,color:C.dark,fontFamily:'monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>{cl2cMappings[u.uuid]}</span>
+                    <button onClick={e=>{e.stopPropagation();handleMappingChange(u.uuid,'')}} title="Clear mapping" style={{flexShrink:0,background:'none',border:'none',cursor:'pointer',color:C.muted,fontSize:14,lineHeight:1,padding:'0 2px'}} onMouseEnter={e=>e.currentTarget.style.color='#ef4444'} onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
+                  </>
+                ):(
+                  msUsers.length>0?(
+                    <select defaultValue="" onChange={e=>{e.stopPropagation();if(e.target.value)handleMappingChange(u.uuid,e.target.value);e.target.value=''}}
+                      onClick={e=>e.stopPropagation()}
+                      style={{border:'none',background:'transparent',fontSize:12,fontFamily:'inherit',color:C.muted,cursor:'pointer',outline:'none',width:'100%',padding:'2px 0'}}>
+                      <option value="" disabled>— assign —</option>
+                      {msUsers.map(g=><option key={g.email||g.id} value={g.email||''}>{g.email||g.name}</option>)}
+                    </select>
+                  ):(
+                    <span style={{color:C.muted,fontSize:13}}>–</span>
+                  )
+                )}
+              </div>
+            </div>
+          );
+        })}
+        {filtered.length===0&&<div style={{textAlign:'center',padding:'24px',fontSize:13,color:C.muted}}>No users found.</div>}
+      </div>
+      {cl2cSelectedUuids.size===0&&<div style={{display:'flex',alignItems:'center',gap:8,padding:'10px 12px',background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:8,fontSize:12,color:'#991B1B',marginBottom:8}}><IcoWarn s={13}/>Select at least one user to continue.</div>}
+      <div style={{flexShrink:0,display:'flex',gap:10,paddingTop:4}}>
+        <Btn variant="ghost" onClick={onBack}>← Back</Btn>
+        <Btn onClick={onNext} disabled={cl2cSelectedUuids.size===0} style={{flex:1,justifyContent:'center'}}>Continue →</Btn>
+      </div>
+    </div>
+  );
+};
+
+/* ═══════════════════════════════════════════ */
+/* ═══  CLAUDE→COPILOT: OPTIONS STEP       ═══ */
+/* ═══════════════════════════════════════════ */
+const StepCL2COptions=({cl2cOptions,setCl2cOptions,cl2cConfig,setCl2cConfig,msAuthed,onRun,onBack})=>{
+  const Chk=({label,checked,onChange,hint})=>(
+    <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer',padding:'8px 0'}}>
+      <input type="checkbox" checked={checked} onChange={onChange} style={{accentColor:C.primary,width:16,height:16}}/>
+      <div><span>{label}</span>{hint&&<div style={{fontSize:11,color:C.muted,marginTop:1}}>{hint}</div>}</div>
+    </label>
+  );
+  return(
+    <div className="fade-up">
+      <div style={{marginBottom:20}}>
+        <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Migration Options</div>
+        <div style={{fontSize:13,color:C.muted}}>Configure and start the Claude → Microsoft 365 Copilot migration.</div>
+      </div>
+      <Field label="Folder Name *">
+        <input type="text" value={cl2cConfig.folderName||''} onChange={e=>setCl2cConfig(p=>({...p,folderName:e.target.value}))} placeholder="ClaudeChats" style={{width:'100%',border:`2px solid ${C.border}`,borderRadius:6,padding:'9px 12px',fontSize:13,outline:'none',transition:'border .2s',boxSizing:'border-box'}} onFocus={e=>e.target.style.borderColor=C.primary} onBlur={e=>e.target.style.borderColor=C.border}/>
+      </Field>
+      <Card style={{marginBottom:16}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:4,color:C.dark}}>Behavior</div>
+        <Chk label="Dry run (preview only — no files uploaded)" hint="Shows what would be migrated without uploading to Microsoft 365" checked={cl2cOptions.dryRun} onChange={e=>setCl2cOptions(p=>({...p,dryRun:e.target.checked}))}/>
+        <Chk label="Include memory" hint="Uploads Claude's memory as a DOCX file" checked={cl2cOptions.includeMemory!==false} onChange={e=>setCl2cOptions(p=>({...p,includeMemory:e.target.checked}))}/>
+        <Chk label="Include projects" hint="Uploads Claude project documents as DOCX files" checked={cl2cOptions.includeProjects!==false} onChange={e=>setCl2cOptions(p=>({...p,includeProjects:e.target.checked}))}/>
+      </Card>
+      <Card style={{marginBottom:20}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+          <div style={{fontSize:13,fontWeight:600,color:C.dark}}>Date Range</div>
+          <span style={{fontSize:11,color:C.primaryL,fontStyle:'italic'}}>Optional — blank = migrate all</span>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+          <Field label="From Date"><Input type="date" value={cl2cOptions.fromDate||''} onChange={e=>setCl2cOptions(p=>({...p,fromDate:e.target.value}))}/></Field>
+          <Field label="To Date"><Input type="date" value={cl2cOptions.toDate||''} onChange={e=>setCl2cOptions(p=>({...p,toDate:e.target.value}))}/></Field>
+        </div>
+        {(cl2cOptions.fromDate||cl2cOptions.toDate)&&<TextBtn onClick={()=>setCl2cOptions(p=>({...p,fromDate:'',toDate:''}))} style={{fontSize:11,marginTop:2,color:C.muted}}>Clear date range</TextBtn>}
+      </Card>
+      {!cl2cOptions.dryRun&&!msAuthed&&(
+        <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 16px',background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:8,fontSize:13,color:'#991B1B',marginBottom:16}}>
+          <IcoWarn s={15}/>Live migration requires Microsoft 365 sign-in (Step 1 — Connect Clouds).
+        </div>
+      )}
+      <div style={{display:'flex',gap:10}}>
+        <Btn variant="ghost" onClick={onBack}>← Back</Btn>
+        <Btn onClick={()=>onRun()} disabled={!cl2cConfig.folderName||(!cl2cOptions.dryRun&&!msAuthed)} style={{flex:1,justifyContent:'center'}}>
+          {cl2cOptions.dryRun?<><IcoSearch s={14}/>Start Dry Run</>:<><IcoRocket s={14}/>Start Migration</>}
+        </Btn>
+      </div>
+    </div>
+  );
+};
+
+/* ═══════════════════════════════════════════ */
+/* ═══  CLAUDE→COPILOT: MIGRATE STEP       ═══ */
+/* ═══════════════════════════════════════════ */
+const StepCL2CMigrate=({cl2cStats,cl2cDone,onRunAnother,onBack,onStart,cl2cLive,onChangeDirection,lastRunWasDry,onStartLive,cl2cTotal,folderName='ClaudeChats'})=>{
+  const ring=cl2cDone?100:cl2cTotal>0?Math.min(Math.round((cl2cStats.users/cl2cTotal)*100),99):cl2cLive?5:0;
+  return(
+    <div className="fade-up">
+      {!cl2cDone&&!cl2cLive&&(
+        <>
+          <div style={{marginBottom:20}}>
+            <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Ready to Migrate</div>
+            <div style={{fontSize:13,color:C.muted}}>Claude conversations will be uploaded to Microsoft 365 Copilot.</div>
+          </div>
+          <div style={{display:'flex',gap:10}}>
+            <Btn variant="ghost" onClick={onBack}>← Back</Btn>
+            <Btn onClick={onStart} style={{flex:1,justifyContent:'center'}}>Start Migration →</Btn>
+          </div>
+        </>
+      )}
+      {!cl2cDone&&cl2cLive&&(
+        <>
+          <div style={{marginBottom:20}}>
+            <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Migration in Progress</div>
+            <div style={{fontSize:13,color:C.muted}}>Claude conversations are being uploaded to Microsoft 365...</div>
+          </div>
+          <div style={{display:'flex',justifyContent:'center',padding:'28px 0 20px'}}>
+            <div style={{position:'relative',display:'inline-flex',alignItems:'center',justifyContent:'center'}}>
+              <Ring pct={ring} size={120} stroke={8} color={C.primary}/>
+              <div style={{position:'absolute',textAlign:'center'}}><div style={{fontSize:22,fontWeight:700,color:C.primary}}>{ring}%</div><div style={{fontSize:10,color:C.muted}}>Progress</div></div>
+            </div>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:16}}>
+            {[{label:'Users',val:cl2cStats.users,c:'#0129AC'},{label:'Files Uploaded',val:cl2cStats.files,c:'#20CC83'},{label:'Errors',val:cl2cStats.errors,c:'#FF1F1F'}].map((e,i)=>(
+              <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
+                <div style={{fontSize:22,fontWeight:700,color:e.c}}>{e.val}</div>
+                <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      {cl2cDone&&(
+        <>
+          <div style={{marginBottom:20,textAlign:'center'}}>
+            <div style={{display:'flex',justifyContent:'center',marginBottom:8,color:C.success}}><IcoDone s={48}/></div>
+            <div style={{fontSize:18,fontWeight:700,color:C.dark,marginBottom:4}}>{lastRunWasDry?'Dry Run Complete!':'Migration Complete!'}</div>
+            <div style={{fontSize:13,color:C.muted}}>{lastRunWasDry?'Preview finished — no files were uploaded.':'Claude conversations have been uploaded to Microsoft 365 Copilot.'}</div>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:20}}>
+            {[{label:'Users Processed',val:cl2cStats.users,c:'#0129AC'},{label:lastRunWasDry?'Files (preview)':'Files Uploaded',val:cl2cStats.files,c:'#20CC83'},{label:'Errors',val:cl2cStats.errors,c:'#FF1F1F'}].map((e,i)=>(
+              <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
+                <div style={{fontSize:22,fontWeight:700,color:e.c}}>{e.val}</div>
+                <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:16}}>
+            {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{flex:'1 1 140px',justifyContent:'center'}}><IcoRocket s={14}/> Start Live Migration</Btn>}
+            <Btn variant="ghost" onClick={onBack} style={{flex:'1 1 100px',justifyContent:'center'}}>← Options</Btn>
+            <Btn variant="ghost" onClick={()=>onRunAnother&&onRunAnother()} style={{flex:'1 1 120px',justifyContent:'center'}}>New Migration</Btn>
+            {onChangeDirection&&<Btn variant="ghost" onClick={onChangeDirection} style={{flex:'1 1 120px',justifyContent:'center'}}>⇄ Change Direction</Btn>}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
 /* ══════════════════════════════ */
 /* ═══     REPORTS PANEL      ═══ */
 /* ══════════════════════════════ */
@@ -3519,6 +3969,17 @@ function App(){
   const [g2gDone,setG2gDone]=useState(()=>lsGet(LS_PREFS,{}).g2gDone||false);
   const [g2gLive,setG2gLive]=useState(false); // never restore live=true (SSE doesn't survive refresh)
   const [g2gLastDry,setG2gLastDry]=useState(()=>lsGet(LS_PREFS,{}).g2gLastDry||false);
+  // CL2C (Claude → Copilot) state
+  const [cl2cUploadData,setCl2cUploadData]=useState(null);
+  const [cl2cMappings,setCl2cMappings]=useState({});
+  const [cl2cSelectedUuids,setCl2cSelectedUuids]=useState(new Set());
+  const [cl2cOptions,setCl2cOptions]=useState({dryRun:true,fromDate:'',toDate:'',includeMemory:true,includeProjects:true});
+  const [cl2cConfig,setCl2cConfig]=useState({folderName:'ClaudeChats'});
+  const [cl2cStats,setCl2cStats]=useState({users:0,files:0,errors:0});
+  const [cl2cTotal,setCl2cTotal]=useState(0);
+  const [cl2cDone,setCl2cDone]=useState(false);
+  const [cl2cLive,setCl2cLive]=useState(false);
+  const [cl2cLastDry,setCl2cLastDry]=useState(false);
   const [chatGLoading,setChatGLoading]=useState(false);
   const [chatMLoading,setChatMLoading]=useState(false);
   const [chatUploading,setChatUploading]=useState(false);
@@ -3532,6 +3993,8 @@ function App(){
   const runC2GMigrationRef=useRef(null);
   const runCL2GMigrationRef=useRef(null);
   const runG2GMigrationRef=useRef(null);
+  const runCL2CMigrationRef=useRef(null);
+  const cl2cLiveRef=useRef(false);
   const [agentMigrationTrigger,setAgentMigrationTrigger]=useState(null);
 
   const showToast=useCallback((message,type='success')=>{
@@ -3599,6 +4062,9 @@ function App(){
         setG2gUploadData(null);setG2gConfig({gemName:'Gemini Conversations',sourceAccountId:'',destAccountId:''});
         setG2gDone(false);setG2gStats({files:0,conversationCount:0,errors:0,users:0});
         setG2gOptions({dryRun:true,fromDate:'',toDate:''});
+        setCl2cUploadData(null);setCl2cMappings({});setCl2cSelectedUuids(new Set());
+        setCl2cDone(false);setCl2cStats({users:0,files:0,errors:0});setCl2cTotal(0);
+        setCl2cOptions({dryRun:true,fromDate:'',toDate:'',includeMemory:true,includeProjects:true});
         setAgentMsgs([]);greetedRef.current=false;prevGuideKeyRef.current=null;
       }
       localStorage.setItem('gem_last_user',uid);
@@ -3641,6 +4107,10 @@ function App(){
             if(ui.cl2gDone!=null) setCl2gDone(!!ui.cl2gDone);
             if(ui.g2gDone!=null) setG2gDone(!!ui.g2gDone);
             if(ui.g2gStats) setG2gStats(ui.g2gStats);
+            if(ui.cl2cDone!=null) setCl2cDone(!!ui.cl2cDone);
+            if(ui.cl2cStats) setCl2cStats(ui.cl2cStats);
+            if(ui.cl2cLastDry!=null) setCl2cLastDry(!!ui.cl2cLastDry);
+            if(ui.cl2cOptions) setCl2cOptions(p=>({...p,...ui.cl2cOptions}));
             if(ui.lastRunWasDry!=null) setLastRunWasDry(!!ui.lastRunWasDry);
             if(ui.c2gLastDry!=null) setC2gLastDry(!!ui.c2gLastDry);
             if(ui.cl2gLastDry!=null) setCl2gLastDry(!!ui.cl2gLastDry);
@@ -3725,6 +4195,18 @@ function App(){
               setG2gDone(false);setG2gLive(false);
               setStep(prev=>prev>=5?5:prev); // back to options so user can restart
             }
+            // CL2C recovery
+            const cl2cWs=dirMap['claude-copilot'];
+            if(cl2cWs&&cl2cWs.status==='completed'){
+              const r=cl2cWs.report?.summary||{};
+              setCl2cDone(true);setCl2cLive(false);cl2cLiveRef.current=false;
+              setCl2cStats({users:r.total_users||cl2cWs.migratedUsers||0,files:r.total_pages_created||0,errors:r.total_errors||0});
+              setCl2cLastDry(!!cl2cWs.dryRun);
+              setStep(prev=>prev>=5&&prev<7?6:prev);
+            } else if(cl2cWs&&cl2cWs.status==='running'){
+              setCl2cDone(false);setCl2cLive(false);cl2cLiveRef.current=false;
+              setStep(prev=>prev>=5?4:prev);
+            }
           }
         }
         // Mark ready AFTER auth state is known — prevents agent greeting from
@@ -3755,10 +4237,10 @@ function App(){
     clearTimeout(window._chatSaveTimer);
     window._chatSaveTimer=setTimeout(()=>{
       // Save chat + current UI position so any device can restore exactly where user left off
-      const uiState={step,migDir,migDone,c2gDone,cl2gDone,g2gDone,stats,c2gStats,cl2gStats,g2gStats,lastRunWasDry,c2gLastDry,cl2gLastDry,g2gLastDry,currentBatchId,options,c2gOptions,cl2gOptions};
+      const uiState={step,migDir,migDone,c2gDone,cl2gDone,g2gDone,cl2cDone,stats,c2gStats,cl2gStats,g2gStats,cl2cStats,lastRunWasDry,c2gLastDry,cl2gLastDry,g2gLastDry,cl2cLastDry,currentBatchId,options,c2gOptions,cl2gOptions,cl2cOptions};
       fetch('/api/chat-history',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:trimmed,uiState})}).catch(()=>{});
     },1500);
-  },[agentMsgs,step,migDir,migDone,c2gDone,cl2gDone,g2gDone,stats,c2gStats,cl2gStats,g2gStats,lastRunWasDry,c2gLastDry,cl2gLastDry,g2gLastDry,currentBatchId,options,c2gOptions,cl2gOptions]);
+  },[agentMsgs,step,migDir,migDone,c2gDone,cl2gDone,g2gDone,cl2cDone,stats,c2gStats,cl2gStats,g2gStats,cl2cStats,lastRunWasDry,c2gLastDry,cl2gLastDry,g2gLastDry,cl2cLastDry,currentBatchId,options,c2gOptions,cl2gOptions,cl2cOptions]);
 
   // Persist mapping cache to localStorage
   useEffect(()=>{lsSet(LS_MAPPING,{...lsGet(LS_MAPPING,{}),g2c:mappings})},[mappings]);
@@ -3783,6 +4265,7 @@ function App(){
   useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),c2gDone,c2gStats,c2gLastDry,c2gOptions,c2gConfig})},[c2gDone,c2gStats,c2gLastDry,c2gOptions,c2gConfig]);
   useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),cl2gDone,cl2gStats,cl2gLastDry,cl2gOptions,cl2gConfig})},[cl2gDone,cl2gStats,cl2gLastDry,cl2gOptions,cl2gConfig]);
   useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),g2gDone,g2gStats,g2gLastDry})},[g2gDone,g2gStats,g2gLastDry]);
+  useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),cl2cDone,cl2cStats,cl2cLastDry,cl2cOptions,cl2cConfig})},[cl2cDone,cl2cStats,cl2cLastDry,cl2cOptions,cl2cConfig]);
 
   // Load users at App level as soon as auth is confirmed — not dependent on Step0 being visible
   useEffect(()=>{
@@ -4193,6 +4676,78 @@ function App(){
   },[g2gLive,g2gUploadData,g2gOptions,g2gConfig,g2gSelectedUsers,addLog,addAgentMsg]);
   runG2GMigrationRef.current=runG2GMigration;
 
+  /* Claude→Copilot migration */
+  const runCL2CMigration=useCallback(async(arg=false)=>{
+    if(cl2cLive)return;
+    const explicitDry=arg && typeof arg==='object' && typeof arg.dryRun==='boolean' ? arg.dryRun : null;
+    const forceLive=arg===true;
+    const isDry=explicitDry!==null?explicitDry:(forceLive?false:cl2cOptions.dryRun);
+    setCl2cOptions(p=>({...p,dryRun:isDry}));
+    setCl2cLastDry(isDry);
+    if(cl2cSelectedUuids.size===0){addAgentMsg('bot','⚠️ No users selected. Go back to the user mapping step and select at least one user.');return;}
+    const keys=[...cl2cSelectedUuids];
+    const pairs=[];
+    keys.forEach(uuid=>{
+      if(cl2cMappings[uuid]){
+        const u=(cl2cUploadData?.users||[]).find(u=>u.uuid===uuid);
+        pairs.push({sourceUuid:uuid,sourceDisplayName:u?.full_name||u?.email_address||uuid,sourceEmail:u?.email_address||'',destEmail:cl2cMappings[uuid]});
+      }
+    });
+    if(!pairs.length){addAgentMsg('bot','⚠️ No user mappings found. Go back and fill in the Microsoft 365 destination emails.');return;}
+    setCl2cDone(false);setCl2cStats({users:0,files:0,errors:0});setCl2cTotal(0);setCl2cLive(true);cl2cLiveRef.current=true;setStep(5);setLogs([]);
+    setAgentMode('running');
+    addLog('info',isDry?'Starting CL2C dry run...':'Starting Claude → Microsoft 365 Copilot migration...');
+    const curStats={users:0,files:0,errors:0};
+    if(sseRef.current)sseRef.current.close();
+    sseRef.current=new EventSource('/api/cl2c/migrate-log');
+    sseRef.current.onmessage=e=>{
+      try{
+        const d=JSON.parse(e.data);
+        if(d.type==='success')curStats.files++;
+        if(d.type==='error'||d.type==='warn')curStats.errors++;
+        if(d.type==='info'&&d.message?.includes('Processing:'))curStats.users++;
+        if(d.type==='total'){try{const p=JSON.parse(d.message);if(p.total)setCl2cTotal(p.total);}catch{}}
+        if(d.type==='progress'){try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;if(p.total)setCl2cTotal(p.total);}catch{}}
+        setCl2cStats({...curStats});addLog(d.type,d.message||'');
+        if(silenceTimer.current){clearTimeout(silenceTimer.current);}
+        if(cl2cLiveRef.current&&d.type!=='done'){
+          silenceTimer.current=setTimeout(()=>{
+            if(cl2cLiveRef.current){
+              addLog('info','Migration complete (connection finalised).');
+              if(sseRef.current){sseRef.current.close();}
+              setCl2cLive(false);cl2cLiveRef.current=false;setCl2cDone(true);setStep(6);
+              setTimeout(()=>setReportRefreshKey(p=>p+1),3000);
+            }
+          },60000);
+        }
+        if(d.type==='done'){
+          if(silenceTimer.current){clearTimeout(silenceTimer.current);}
+          try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;}catch{}
+          setCl2cStats({...curStats});
+          sseRef.current.close();setCl2cLive(false);cl2cLiveRef.current=false;setCl2cDone(true);setStep(6);
+          setTimeout(()=>setReportRefreshKey(p=>p+1),3000);
+          setAgentMode('done');
+          const s2={...curStats};
+          setTimeout(()=>addAgentMsg('bot',
+            s2.errors>0?`Migration finished with **${s2.errors} error${s2.errors!==1?'s':''}**. Check the log for details.`
+            :isDry?`Dry run complete — **${s2.files} file${s2.files!==1?'s':''}** would be uploaded for **${s2.users} user${s2.users!==1?'s':''}**. Ready to go live?`
+            :`All done! **${s2.files} file${s2.files!==1?'s':''}** uploaded to Microsoft 365 Copilot across **${s2.users} user${s2.users!==1?'s':''}**.`,
+            {statusCard:{users:s2.users,files:s2.files,errors:s2.errors,label:isDry?'Dry Run Preview':'Migration Results'},quickReplies:s2.errors>0?['Retry the failed items','Download the full report']:isDry?['Run the live migration now','Download dry run report']:['Download the migration report','Start a new migration']}
+          ),400);
+        }
+      }catch(parseErr){console.error('CL2C SSE parse error',parseErr)}
+    };
+    sseRef.current.onerror=()=>{if(sseRef.current){sseRef.current.close();setCl2cLive(false);}addLog('error','Lost connection to migration log stream.');};
+    const sseReady=new Promise(resolve=>{sseRef.current.onopen=()=>resolve();setTimeout(resolve,1000)});
+    await sseReady;
+    try{
+      const payload={pairs,uploadId:cl2cUploadData?.uploadId,folderName:cl2cConfig.folderName||'ClaudeChats',dryRun:isDry,fromDate:cl2cOptions.fromDate||null,toDate:cl2cOptions.toDate||null,includeMemory:cl2cOptions.includeMemory!==false,includeProjects:cl2cOptions.includeProjects!==false};
+      const res=await fetch('/api/cl2c/migrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      if(!res.ok){const d=await res.json().catch(()=>({}));addLog('error',d.error||`Migration failed (${res.status})`);setCl2cLive(false);}
+    }catch(err){addLog('error',err.message);setCl2cLive(false);}
+  },[cl2cLive,cl2cSelectedUuids,cl2cMappings,cl2cOptions,cl2cConfig,cl2cUploadData,addLog,addAgentMsg]);
+  runCL2CMigrationRef.current=runCL2CMigration;
+
   // When agent triggers start_migration, UI handles the actual execution (prevents double-migration)
   useEffect(()=>{
     if(!agentMigrationTrigger)return;
@@ -4204,6 +4759,7 @@ function App(){
     else if(dir==='copilot-gemini')runC2GMigrationRef.current?.(opts);
     else if(dir==='claude-gemini')runCL2GMigrationRef.current?.(opts);
     else if(dir==='gemini-gemini')runG2GMigrationRef.current?.(opts);
+    else if(dir==='claude-copilot')runCL2CMigrationRef.current?.(opts);
   },[agentMigrationTrigger]);
 
   const handleChangeDirection=useCallback(()=>{
@@ -4214,9 +4770,10 @@ function App(){
     setC2gMappings({});setC2gSelectedUsers(new Set());setC2gDone(false);setC2gStats({users:0,files:0,errors:0});setC2gTotal(0);
     setCl2gUploadData(null);setCl2gMappings({});setCl2gSelectedUuids(new Set());setCl2gDone(false);setCl2gStats({users:0,files:0,errors:0});setCl2gTotal(0);
     setG2gUploadData(null);setG2gConfig({gemName:'Gemini Conversations',sourceAccountId:'',destAccountId:''});setG2gMappings({});setG2gSelectedUsers(new Set());setG2gDone(false);setG2gStats({files:0,conversationCount:0,errors:0,users:0});
+    setCl2cUploadData(null);setCl2cMappings({});setCl2cSelectedUuids(new Set());setCl2cDone(false);setCl2cStats({users:0,files:0,errors:0});setCl2cTotal(0);
     fetch('/api/g2g/session',{method:'DELETE'}).catch(()=>{});
     if(sseRef.current){sseRef.current.close();sseRef.current=null;}
-    setLive(false);setC2gLive(false);setCl2gLive(false);setG2gLive(false);
+    setLive(false);setC2gLive(false);setCl2gLive(false);setG2gLive(false);setCl2cLive(false);
   },[]);
 
   /* Panel drag-to-swap */
@@ -4291,8 +4848,15 @@ function App(){
         if(step===3&&migDir==='copilot-gemini'){return `${sp} panel: Options (Copilot→Gemini). Start Migration visible.`;}
         if(step===4&&migDir==='gemini-copilot'){return `${sp} panel: Options (Gemini→Copilot). Dry run: ${options.dryRun?'ON':'OFF'}.`;}
         if(step===4&&migDir==='claude-gemini'){return `${sp} panel: Options (Claude→Gemini). Dry run: ${cl2gOptions?.dryRun?'ON':'OFF'}.`;}
-        if(live||c2gLive||cl2gLive)return `${sp} panel: Migration in progress.`;
-        if(migDone||c2gDone||cl2gDone)return `${sp} panel: Migration complete. Stats: ${stats?.users||0} users, ${stats?.pages||0} files, ${stats?.errors||0} errors.`;
+        if(step===2&&migDir==='gemini-gemini'){return `${sp} panel: Select Accounts (Gemini→Gemini). Source: ${g2gConfig.sourceAccountId||'not selected'}.`;}
+        if(step===3&&migDir==='gemini-gemini'){const u=g2gSelectedUsers.size;return `${sp} panel: Upload Data (Gemini→Gemini). ${u>0?`${u} users selected`:'No data uploaded'}.`;}
+        if(step===4&&migDir==='gemini-gemini'){return `${sp} panel: Map Users (Gemini→Gemini). ${Object.keys(g2gMappings).length} users mapped.`;}
+        if(step===5&&migDir==='gemini-gemini'){return `${sp} panel: Options (Gemini→Gemini). Dry run: ${g2gOptions?.dryRun?'ON':'OFF'}.`;}
+        if(step===2&&migDir==='claude-copilot'){const u=cl2cUploadData?.users?.length||0;return `${sp} panel: Upload ZIP (Claude→Copilot). ${u>0?`${u} users loaded`:'No ZIP uploaded'}.`;}
+        if(step===3&&migDir==='claude-copilot'){return `${sp} panel: Map Users (Claude→Copilot). ${Object.keys(cl2cMappings).length} users mapped.`;}
+        if(step===4&&migDir==='claude-copilot'){return `${sp} panel: Options (Claude→Copilot). Dry run: ${cl2cOptions?.dryRun?'ON':'OFF'}.`;}
+        if(live||c2gLive||cl2gLive||cl2cLive)return `${sp} panel: Migration in progress.`;
+        if(migDone||c2gDone||cl2gDone||cl2cDone)return `${sp} panel: Migration complete. Stats: ${stats?.users||0} users, ${stats?.pages||0} files, ${stats?.errors||0} errors.`;
         return `${sp} panel: Step ${step}, direction ${migDir||'not selected'}.`;
       })();
       // Build direction-scoped state — only include stats for the active direction to avoid stale cross-direction confusion
@@ -4321,10 +4885,25 @@ function App(){
           cl2g_mappings_count:Object.keys(cl2gMappings).length,
           cl2g_options:{dryRun:cl2gOptions.dryRun},
         }:{}),
+        // G2G (gemini-gemini) fields
+        ...(migDir==='gemini-gemini'?{
+          g2g_done:g2gDone,g2g_live:g2gLive,g2g_stats:g2gStats,g2gLastDry:g2gLastDry,
+          g2g_upload_users:g2gUploadData?.users?.length||g2gSelectedUsers.size||0,
+          g2g_source_account_id:g2gConfig.sourceAccountId||'',
+          g2g_mappings_count:Object.keys(g2gMappings).length||g2gSelectedUsers.size,
+          g2g_options:{dryRun:g2gOptions.dryRun},
+        }:{}),
+        // CL2C (claude-copilot) fields
+        ...(migDir==='claude-copilot'?{
+          cl2c_done:cl2cDone,cl2c_live:cl2cLive,cl2c_stats:cl2cStats,cl2cLastDry:cl2cLastDry,
+          cl2c_upload_users:cl2cUploadData?.users?.length||0,
+          cl2c_mappings_count:Object.keys(cl2cMappings).length,
+          cl2c_options:{dryRun:cl2cOptions.dryRun},
+        }:{}),
       };
       const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({message:userMsg,isSystemTrigger:isSystem,
-          migrationLogs:(live||c2gLive||cl2gLive)?logs.slice(-100).map(l=>`[${l.ts}][${l.type}] ${l.message}`):[],
+          migrationLogs:(live||c2gLive||cl2gLive||cl2cLive)?logs.slice(-100).map(l=>`[${l.ts}][${l.type}] ${l.message}`):[],
           migrationState})});
       if(!res.ok){const err=await res.text();addAgentMsg('bot',`Error ${res.status}: ${err}`);setAgentTyping(false);return;}
       const reader=res.body.getReader();
@@ -4535,7 +5114,7 @@ function App(){
             </div>
             {/* Step content */}
             {(()=>{
-              const isMapStep=(step===3&&migDir==='gemini-copilot')||(step===2&&migDir==='copilot-gemini');
+              const isMapStep=(step===3&&migDir==='gemini-copilot')||(step===2&&migDir==='copilot-gemini')||(step===3&&migDir==='claude-gemini')||(step===3&&migDir==='claude-copilot');
               return(
                 <div style={{flex:1,overflowY:isMapStep?'hidden':'auto',padding:'16px 20px',display:isMapStep?'flex':'block',flexDirection:isMapStep?'column':undefined,minHeight:0}}>
                   {/* Fallback: if step > 1 but no direction chosen, show connect */}
@@ -4578,6 +5157,11 @@ function App(){
                   {step===4&&migDir==='gemini-gemini'&&<StepG2GMap g2gUploadData={g2gUploadData} g2gConfig={g2gConfig} g2gMappings={g2gMappings} setG2gMappings={setG2gMappings} g2gSelectedUsers={g2gSelectedUsers} setG2gSelectedUsers={setG2gSelectedUsers} onNext={()=>setStep(5)} onBack={()=>setStep(3)} showToast={showToast}/>}
                   {step===5&&migDir==='gemini-gemini'&&<StepG2GOptions g2gConfig={g2gConfig} setG2gConfig={setG2gConfig} g2gOptions={g2gOptions} setG2gOptions={setG2gOptions} onRun={()=>{setStep(6);runG2GMigrationRef.current?.()}} onBack={()=>setStep(4)} showToast={showToast}/>}
                   {(step>=6)&&migDir==='gemini-gemini'&&<StepG2GMigrate g2gStats={g2gStats} g2gDone={g2gDone} onRunAnother={()=>{setG2gDone(false);setG2gStats({files:0,conversationCount:0,errors:0,users:0});setG2gOptions(p=>({...p,dryRun:true}));setStep(3);}} onBack={()=>setStep(5)} onStart={runG2GMigration} g2gLive={g2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={g2gLastDry} onStartLive={()=>runG2GMigration(true)} g2gTotal={g2gSelectedUsers.size} folderName={g2gConfig.gemName}/>}
+                  {/* Claude → Copilot steps */}
+                  {step===2&&migDir==='claude-copilot'&&<StepCL2CUpload cl2cUploadData={cl2cUploadData} setCl2cUploadData={setCl2cUploadData} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast} onUploadComplete={(n)=>{if(agentMode==='guide')addAgentMsg('bot',`Claude export loaded — **${n} user${n!==1?'s':''}** found. I can match them to your Microsoft 365 accounts automatically.`,{quickReplies:['Auto-map all users now','I\'ll review mappings manually','How does auto-mapping work?']});}}/>}
+                  {step===3&&migDir==='claude-copilot'&&<StepCL2CMap cl2cUploadData={cl2cUploadData} msUsers={msUsers} cl2cMappings={cl2cMappings} setCl2cMappings={setCl2cMappings} cl2cSelectedUuids={cl2cSelectedUuids} setCl2cSelectedUuids={setCl2cSelectedUuids} onNext={()=>setStep(4)} onBack={()=>setStep(2)} showToast={showToast}/>}
+                  {step===4&&migDir==='claude-copilot'&&<StepCL2COptions cl2cOptions={cl2cOptions} setCl2cOptions={setCl2cOptions} cl2cConfig={cl2cConfig} setCl2cConfig={setCl2cConfig} msAuthed={msAuthed} onRun={runCL2CMigration} onBack={()=>setStep(3)}/>}
+                  {(step===5||step===6)&&migDir==='claude-copilot'&&<StepCL2CMigrate cl2cStats={cl2cStats} cl2cDone={cl2cDone} onRunAnother={()=>{setCl2cDone(false);setCl2cStats({users:0,files:0,errors:0});setCl2cOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(4)} onStart={runCL2CMigration} cl2cLive={cl2cLive} onChangeDirection={handleChangeDirection} lastRunWasDry={cl2cLastDry} onStartLive={()=>runCL2CMigration(true)} cl2cTotal={cl2cTotal} folderName={cl2cConfig.folderName||'ClaudeChats'}/>}
                 </div>
               );
             })()}
@@ -4602,6 +5186,7 @@ function App(){
                     {migDir==='copilot-gemini'&&<><MsIcon/><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg><GoogleIcon/><span style={{fontSize:10,color:C.muted,marginLeft:2}}>Microsoft → Google</span></>}
                     {migDir==='claude-gemini'&&<><ClaudeIcon/><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg><GoogleIcon/><span style={{fontSize:10,color:C.muted,marginLeft:2}}>Claude → Gemini</span></>}
                     {migDir==='gemini-gemini'&&<><GoogleIcon/><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg><GoogleIcon/><span style={{fontSize:10,color:C.muted,marginLeft:2}}>Google → Google</span></>}
+                    {migDir==='claude-copilot'&&<><ClaudeIcon/><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg><MsIcon/><span style={{fontSize:10,color:C.muted,marginLeft:2}}>Claude → Microsoft</span></>}
                   </div>}
                 </div>
               </div>
