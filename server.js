@@ -15,12 +15,14 @@ import bcrypt from 'bcryptjs';
 
 import { getAuthUrl, acquireTokenByCode, isAuthenticated, getValidToken, clearMsToken, clearMsAccount, getMsAccounts, restoreMsSessions } from './src/core/auth/microsoft.js';
 import { getGoogleAuthUrl, acquireGoogleTokenByCode, isGoogleAuthenticated, getGoogleOAuth2Client, clearGoogleToken, clearGoogleAccount, getGoogleAccounts, restoreGoogleSessions } from './src/core/auth/googleOAuth.js';
+import { google } from 'googleapis';
 import { connectMongo, getDb } from './src/db/mongo.js';
 import { getLogger } from './src/utils/logger.js';
 import { createG2CRouter } from './src/modules/g2c/routes.js';
 import { createC2GRouter } from './src/modules/c2g/routes.js';
 import { createCL2GRouter } from './src/modules/cl2g/routes.js';
 import { createCL2CRouter } from './src/modules/cl2c/routes.js';
+import { createG2GRouter } from './src/modules/g2g/routes.js';
 import { runAgentLoop } from './src/agent/agentLoop.js';
 import { auditEmitter } from './src/agent/auditLogger.js';
 
@@ -137,8 +139,12 @@ app.post('/api/logout', (req, res) => {
 
 const PUBLIC_PATHS = ['/api/login', '/api/me', '/api/logout'];
 app.use('/api', (req, res, next) => {
+  console.log(`[/api middleware] ${req.method} ${req.path}, hasUser: ${!!req.session?.appUser}`);
   if (PUBLIC_PATHS.includes(req.path)) return next();
-  if (!req.session?.appUser) return res.status(401).json({ error: 'Not logged in' });
+  if (!req.session?.appUser) {
+    console.log(`[/api middleware] Blocking ${req.path} - no session user`);
+    return res.status(401).json({ error: 'Not logged in' });
+  }
   next();
 });
 app.use('/auth', (req, res, next) => {
@@ -253,6 +259,16 @@ app.post('/auth/logout', (req, res) => {
 app.get('/api/auth/google/accounts', requireAuth, (req, res) => {
   const { appUserId } = getWorkspaceContext(req);
   res.json({ accounts: getGoogleAccounts(appUserId) });
+});
+
+app.get('/api/google/users', (req, res) => {
+  try {
+    console.log('[/api/google/users] Called');
+    res.json({ users: [] });
+  } catch (err) {
+    console.error('[/api/google/users] Error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/api/auth/google/disconnect', requireAuth, (req, res) => {
@@ -498,6 +514,10 @@ app.use('/api/cl2g', cl2gRouter);
 // CL2C router — mounted at /api/cl2c (Claude → Copilot/OneNote)
 const cl2cRouter = createCL2CRouter({ db, isAuthenticated, getValidToken, getCurrentTenantId: () => currentTenantId });
 app.use('/api/cl2c', cl2cRouter);
+
+// G2G router — mounted at /api/g2g (Gemini → Gemini)
+const g2gRouter = createG2GRouter({ db, getGoogleOAuth2Client });
+app.use('/api/g2g', g2gRouter);
 
 // ─── Index bootstrap ──────────────────────────────────────────────────────────
 
