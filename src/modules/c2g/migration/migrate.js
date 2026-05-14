@@ -14,6 +14,7 @@ import {
   BorderStyle,
   AlignmentType,
   ExternalHyperlink,
+  PageBreak,
 } from "docx";
 import {
   getServiceAccountAuth,
@@ -674,6 +675,170 @@ async function buildConversationDocx(items, convIdx, userName, downloadedImages,
   return Packer.toBuffer(doc);
 }
 
+// ── Build merged DOCX for batch of conversations ──────────────────────
+
+async function buildMergedBatchDocx(batchEntries, userName, uploadedFileLinks, startConvIdx) {
+  const children = [];
+
+  // Cover page
+  children.push(
+    new Paragraph({
+      heading: HeadingLevel.TITLE,
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 120 },
+      children: [new TextRun({ text: "Copilot Conversations", bold: true, size: 48 })],
+    })
+  );
+  children.push(
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 80 },
+      children: [new TextRun({ text: userName, size: 28, color: "444444", italics: true })],
+    })
+  );
+  children.push(
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 500 },
+      children: [new TextRun({
+        text: `${batchEntries.length} conversation${batchEntries.length !== 1 ? "s" : ""} · Batch exported ${new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}`,
+        size: 20, color: "888888",
+      })],
+    })
+  );
+
+  // Index
+  children.push(
+    new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      spacing: { before: 200, after: 160 },
+      children: [new TextRun({ text: "CONVERSATION INDEX", bold: true, size: 26, color: "0B5394", allCaps: true })],
+    })
+  );
+
+  for (let i = 0; i < batchEntries.length; i++) {
+    const [, items] = batchEntries[i];
+    const convIdx = startConvIdx + i;
+    const title = conversationTitle(items);
+    const dateStr = items[0]?.createdDateTime
+      ? new Date(items[0].createdDateTime).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+      : "";
+    const msgCount = items.length;
+
+    children.push(
+      new Paragraph({
+        spacing: { after: 60 },
+        children: [
+          new TextRun({ text: `${convIdx}.  `, bold: true, size: 20, color: "0B5394" }),
+          new TextRun({ text: title, size: 20, color: "1E3A5F", bold: true }),
+          new TextRun({ text: dateStr ? `\t${dateStr}` : "", size: 18, color: "999999" }),
+          new TextRun({ text: `  (${msgCount} msg${msgCount !== 1 ? "s" : ""})`, size: 17, color: "AAAAAA" }),
+        ],
+      })
+    );
+  }
+
+  // Page break
+  children.push(new Paragraph({ spacing: { before: 400 }, children: [new PageBreak()] }));
+
+  // Conversations
+  for (let i = 0; i < batchEntries.length; i++) {
+    const [, items] = batchEntries[i];
+    const convIdx = startConvIdx + i;
+    const title = conversationTitle(items);
+
+    if (i > 0) {
+      children.push(
+        new Paragraph({
+          spacing: { before: 400, after: 400 },
+          border: { top: { style: BorderStyle.SINGLE, size: 6, color: "D1D5DB", space: 1 } },
+          children: [],
+        })
+      );
+    }
+
+    children.push(
+      new Paragraph({
+        heading: HeadingLevel.HEADING_1,
+        spacing: { before: 100, after: 60 },
+        children: [new TextRun({ text: `Conversation ${convIdx}: ${title}`, bold: true, size: 30, color: "0B5394" })],
+      })
+    );
+
+    const firstDate = items[0]?.createdDateTime;
+    if (firstDate) {
+      children.push(
+        new Paragraph({
+          spacing: { after: 180 },
+          children: [new TextRun({ text: `Date: ${formatTimestamp(firstDate)}`, size: 18, color: "888888", italics: true })],
+        })
+      );
+    }
+
+    // Messages
+    for (const item of items) {
+      const isUser = item.interactionType === "userPrompt";
+      const senderLabel = isUser ? "You" : "Copilot";
+      const text = extractText(item);
+      const attachments = extractAttachments(item);
+
+      if (!text && attachments.length === 0) continue;
+
+      children.push(
+        new Paragraph({
+          spacing: { before: 200, after: 40 },
+          children: [
+            new TextRun({ text: senderLabel, bold: true, size: 22, color: isUser ? "0B5394" : "38761D" }),
+            new TextRun({ text: `    ${formatTimestamp(item.createdDateTime)}`, size: 16, color: "AAAAAA" }),
+          ],
+        })
+      );
+
+      if (text) {
+        children.push(
+          new Paragraph({
+            spacing: { after: 80 },
+            indent: { left: 360 },
+            border: { left: { style: BorderStyle.SINGLE, size: 4, color: isUser ? "0B5394" : "38761D", space: 8 } },
+            children: textRuns(text, { size: 21, font: "Calibri", color: "333333" }),
+          })
+        );
+      }
+
+      for (const att of attachments) {
+        if (att.type === "file") {
+          const label = att.name || "Attached file";
+          const driveLink = uploadedFileLinks?.get(att.url);
+          const linkUrl = driveLink || att.url;
+          const prefix = driveLink ? "Google Drive" : "Original";
+          children.push(
+            new Paragraph({
+              spacing: { after: 60 },
+              indent: { left: 360 },
+              children: [
+                new TextRun({ text: `[${prefix}] `, size: 18, bold: true, color: driveLink ? "38761D" : "888888" }),
+                new ExternalHyperlink({
+                  link: linkUrl,
+                  children: [new TextRun({ text: label, style: "Hyperlink", size: 20, color: "0B5394", underline: {} })],
+                }),
+              ],
+            })
+          );
+        }
+      }
+    }
+  }
+
+  const doc = new Document({
+    creator: "Copilot Migration Tool",
+    title: "Copilot Conversations Batch",
+    styles: { default: { document: { run: { font: "Calibri", size: 22 } } } },
+    sections: [{ children }],
+  });
+
+  return Packer.toBuffer(doc);
+}
+
 // ── Conversation title ───────────────────────────────────────────────
 
 function conversationTitle(items) {
@@ -929,66 +1094,89 @@ export async function migrateUserPair({
     const auth = getServiceAccountAuth(destUserEmail);
     const mainFolder = await createDriveFolder(auth, folderName);
 
-    console.log(`[C2G] Processing ${sessions.size} conversation(s) for ${sourceDisplayName}...`);
-    let convIdx = 0;
-    for (const [, items] of sessions) {
-      convIdx++;
+    // ── Split conversations into batches (100 per file) for memory efficiency ──
+    const BATCH_SIZE = 100;
+    const sessionArray = Array.from(sessions.entries());
+    const batches = [];
+    for (let i = 0; i < sessionArray.length; i += BATCH_SIZE) {
+      batches.push(sessionArray.slice(i, i + BATCH_SIZE));
+    }
+
+    console.log(`[C2G] Processing ${sessions.size} conversation(s) in ${batches.length} batch(es) for ${sourceDisplayName}...`);
+
+    let totalConvIdx = 0;
+    for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
+      const batch = batches[batchIdx];
+      const startConvNum = batchIdx * BATCH_SIZE + 1;
+      const endConvNum = Math.min((batchIdx + 1) * BATCH_SIZE, sessions.size);
+
       try {
-        const title = conversationTitle(items);
-        const dateStr = items[0]?.createdDateTime
-          ? new Date(items[0].createdDateTime).toISOString().slice(0, 10)
-          : "unknown";
-
-        console.log(`[C2G] Conv ${convIdx}/${sessions.size}: downloading assets...`);
-        const { downloadedImages, filesToUpload } = await downloadConversationAssets(items, accessToken, sourceUserId, userDelegatedToken);
-        console.log(`[C2G] Conv ${convIdx}: ${filesToUpload.length} file(s) to upload, ${downloadedImages.size} image(s)`);
-
-        const convFolder = mainFolder;
-
+        // Download assets + build DOCX for all conversations in this batch
         const uploadedFileLinks = new Map();
+        let batchDocxChildren = [];
+        const batchTitle = `Copilot Conversations Batch ${batchIdx + 1}`;
 
-        for (const asset of filesToUpload) {
-          try {
-            const uploaded = await uploadFileToDrive(auth, asset.name, asset.mime, asset.buffer, convFolder.id);
-            result.filesUploaded++;
-            result.files.push({
-              name: asset.name,
-              title: `${asset.type === "image" ? "Image" : "File"}: ${asset.name}`,
-              driveFileId: uploaded.id,
-              webViewLink: uploaded.webViewLink,
-            });
-            if (asset.originalUrl) {
-              uploadedFileLinks.set(asset.originalUrl, uploaded.webViewLink);
+        for (let i = 0; i < batch.length; i++) {
+          totalConvIdx++;
+          const [, items] = batch[i];
+          const convIdx = totalConvIdx;
+          const title = conversationTitle(items);
+          const dateStr = items[0]?.createdDateTime
+            ? new Date(items[0].createdDateTime).toISOString().slice(0, 10)
+            : "unknown";
+
+          console.log(`[C2G] Batch ${batchIdx + 1}/${batches.length}, Conv ${i + 1}/${batch.length} (overall ${convIdx}/${sessions.size}): downloading assets...`);
+          const { downloadedImages, filesToUpload } = await downloadConversationAssets(items, accessToken, sourceUserId, userDelegatedToken);
+
+          // Upload attachments
+          for (const asset of filesToUpload) {
+            try {
+              const uploaded = await uploadFileToDrive(auth, asset.name, asset.mime, asset.buffer, mainFolder.id);
+              result.filesUploaded++;
+              result.files.push({
+                name: asset.name,
+                title: `${asset.type === "image" ? "Image" : "File"}: ${asset.name}`,
+                driveFileId: uploaded.id,
+                webViewLink: uploaded.webViewLink,
+              });
+              if (asset.originalUrl) {
+                uploadedFileLinks.set(asset.originalUrl, uploaded.webViewLink);
+              }
+            } catch (uploadErr) {
+              result.errors.push(`Asset ${asset.name}: ${uploadErr.message}`);
             }
-          } catch (uploadErr) {
-            result.errors.push(`Asset ${asset.name}: ${uploadErr.message}`);
           }
         }
 
-        const docxBuffer = await buildConversationDocx(items, convIdx, sourceDisplayName || sourceUserId, downloadedImages, uploadedFileLinks);
-        const docxName = `Conversation_${convIdx}_${dateStr}.docx`;
+        // Build merged DOCX for entire batch
+        const docxBuffer = await buildMergedBatchDocx(batch, sourceDisplayName || sourceUserId, uploadedFileLinks, startConvNum);
+        const partLabel = batches.length > 1 ? `_Part${batchIdx + 1}` : '';
+        const docxName = `${sourceDisplayName}_Copilot_Conversations${partLabel}.docx`;
 
         const docxFile = await uploadFileToDrive(
           auth, docxName,
           "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
           docxBuffer,
-          convFolder.id
+          mainFolder.id
         );
 
         result.filesUploaded++;
         result.files.push({
           name: docxName,
-          title,
+          title: batchTitle,
           driveFileId: docxFile.id,
           webViewLink: docxFile.webViewLink,
+          batchInfo: { part: batchIdx + 1, totalParts: batches.length, conversationRange: [startConvNum, endConvNum, sessions.size] }
         });
-        console.log(`[C2G] Conv ${convIdx}/${sessions.size}: uploaded DOCX + ${filesToUpload.length} files`);
-        if (onProgress) onProgress({ filesUploaded: result.filesUploaded, convIdx, totalConvs: sessions.size });
+
+        console.log(`[C2G] Batch ${batchIdx + 1}/${batches.length}: uploaded merged DOCX (conversations ${startConvNum}-${endConvNum})`);
+        if (onProgress) onProgress({ filesUploaded: result.filesUploaded, convIdx: totalConvIdx, totalConvs: sessions.size });
       } catch (err) {
-        console.error(`[C2G] Conv ${convIdx} error: ${err.message}`);
-        result.errors.push(`Conversation ${convIdx}: ${err.message || String(err)}`);
+        console.error(`[C2G] Batch ${batchIdx + 1} error: ${err.message}`);
+        result.errors.push(`Batch ${batchIdx + 1}: ${err.message || String(err)}`);
       }
     }
+
     console.log(`[C2G] Done for ${sourceDisplayName}: ${result.filesUploaded} files uploaded, ${result.errors.length} errors`);
   } catch (err) {
     result.errors.push(err.message || String(err));

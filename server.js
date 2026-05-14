@@ -13,17 +13,22 @@ import { fileURLToPath } from 'url';
 import session from 'express-session';
 import bcrypt from 'bcryptjs';
 
-import { getAuthUrl, acquireTokenByCode, isAuthenticated, getValidToken, clearMsToken, restoreMsSessions } from './src/core/auth/microsoft.js';
-import { getGoogleAuthUrl, acquireGoogleTokenByCode, isGoogleAuthenticated, getGoogleOAuth2Client, clearGoogleToken, restoreGoogleSessions } from './src/core/auth/googleOAuth.js';
+import { getAuthUrl, acquireTokenByCode, isAuthenticated, getValidToken, clearMsToken, clearMsAccount, getMsAccounts, restoreMsSessions } from './src/core/auth/microsoft.js';
+import { getGoogleAuthUrl, acquireGoogleTokenByCode, isGoogleAuthenticated, getGoogleOAuth2Client, clearGoogleToken, clearGoogleAccount, getGoogleAccounts, restoreGoogleSessions } from './src/core/auth/googleOAuth.js';
+import { google } from 'googleapis';
 import { connectMongo, getDb } from './src/db/mongo.js';
 import { getLogger } from './src/utils/logger.js';
 import { createG2CRouter } from './src/modules/g2c/routes.js';
 import { createC2GRouter } from './src/modules/c2g/routes.js';
 import { createCL2GRouter } from './src/modules/cl2g/routes.js';
+import { createCL2CRouter } from './src/modules/cl2c/routes.js';
+import { createG2GRouter } from './src/modules/g2g/routes.js';
+import { runAgentLoop } from './src/agent/agentLoop.js';
+import { auditEmitter } from './src/agent/auditLogger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4000;
 
 const dbLog = getLogger('db:ops');
 function db() { return getDb(); }
@@ -132,10 +137,14 @@ app.post('/api/logout', (req, res) => {
 
 // ─── Auth gates ───────────────────────────────────────────────────────────────
 
-const PUBLIC_PATHS = ['/api/login', '/api/me', '/api/logout', '/audit/sessions', '/audit/stream'];
+const PUBLIC_PATHS = ['/api/login', '/api/me', '/api/logout'];
 app.use('/api', (req, res, next) => {
+  console.log(`[/api middleware] ${req.method} ${req.path}, hasUser: ${!!req.session?.appUser}`);
   if (PUBLIC_PATHS.includes(req.path)) return next();
-  if (!req.session?.appUser) return res.status(401).json({ error: 'Not logged in' });
+  if (!req.session?.appUser) {
+    console.log(`[/api middleware] Blocking ${req.path} - no session user`);
+    return res.status(401).json({ error: 'Not logged in' });
+  }
   next();
 });
 app.use('/auth', (req, res, next) => {
@@ -163,15 +172,16 @@ app.get('/auth/callback', async (req, res) => {
     if (!code) return res.status(400).send('No authorization code received');
     const msResult = await acquireTokenByCode(code, state);
     const msEmail = msResult.email || msResult?.account?.username || null;
+    const msAlready = !!msResult.alreadyConnected;
     if (msEmail) {
       req.session.msEmail = msEmail;
       await new Promise((resolve, reject) => req.session.save(err => err ? reject(err) : resolve()));
     }
     dbLog.info(`authSessions.upsert — ${msEmail} (microsoft)`);
     res.send(`<html><body>
-      <h2 style="font-family:Segoe UI,sans-serif;color:#107c10">✓ Signed in successfully!</h2>
+      <h2 style="font-family:Segoe UI,sans-serif;color:#107c10">${msAlready ? '⚠ Account already connected' : '✓ Signed in successfully!'}</h2>
       <p style="font-family:Segoe UI,sans-serif;color:#605e5c">You can close this window.</p>
-      <script>if (window.opener) { window.opener.postMessage({ type: 'auth-success' }, '*'); } setTimeout(() => window.close(), 1500);</script>
+      <script>if (window.opener) { window.opener.postMessage({ type: 'auth-success', alreadyConnected: ${msAlready} }, '*'); } setTimeout(() => window.close(), 1500);</script>
     </body></html>`);
   } catch (err) { res.send(`<html><body><h2>Auth error</h2><p>${err.message}</p><script>window.close();</script></body></html>`); }
 });
@@ -193,7 +203,8 @@ app.get('/auth/status', (req, res) => {
 app.get('/auth/google/login', (req, res) => {
   try {
     const appUserId = req.session.appUser?._id?.toString();
-    res.redirect(getGoogleAuthUrl(appUserId));
+    const { url } = getGoogleAuthUrl(appUserId);
+    res.redirect(url);
   } catch (err) { res.status(500).send(`Google auth error: ${err.message}`); }
 });
 
@@ -202,16 +213,16 @@ app.get('/auth/google/callback', async (req, res) => {
     const { code, error, state } = req.query;
     if (error) return res.send(`<html><body><h2>Auth failed</h2><p>${error}</p><script>window.close();</script></body></html>`);
     if (!code) return res.status(400).send('No authorization code received');
-    const { email } = await acquireGoogleTokenByCode(code, state);
+    const { email, alreadyConnected: gAlready } = await acquireGoogleTokenByCode(code, state);
     if (email) {
       req.session.googleEmail = email;
       await new Promise((resolve, reject) => req.session.save(err => err ? reject(err) : resolve()));
     }
     dbLog.info(`authSessions.upsert — ${email} (google)`);
     res.send(`<html><body>
-      <h2 style="font-family:Segoe UI,sans-serif;color:#107c10">✓ Google signed in!</h2>
+      <h2 style="font-family:Segoe UI,sans-serif;color:#107c10">${gAlready ? '⚠ Account already connected' : '✓ Google signed in!'}</h2>
       <p style="font-family:Segoe UI,sans-serif;color:#605e5c">You can close this window.</p>
-      <script>if (window.opener) { window.opener.postMessage({ type: 'google-auth-success' }, '*'); } setTimeout(() => window.close(), 1500);</script>
+      <script>if (window.opener) { window.opener.postMessage({ type: 'google-auth-success', alreadyConnected: ${!!gAlready} }, '*'); } setTimeout(() => window.close(), 1500);</script>
     </body></html>`);
   } catch (err) { res.send(`<html><body><h2>Auth error</h2><p>${err.message}</p><script>window.close();</script></body></html>`); }
 });
@@ -223,8 +234,16 @@ app.get('/auth/google/status', (req, res) => {
 
 app.post('/auth/google/logout', (req, res) => {
   const { appUserId } = getWorkspaceContext(req);
-  clearGoogleToken(appUserId);
-  delete req.session.googleEmail;
+  const accountId = req.query.accountId || req.body?.accountId || null;
+  if (accountId) {
+    clearGoogleAccount(appUserId, accountId);
+    const remaining = getGoogleAccounts(appUserId);
+    if (!remaining.length) delete req.session.googleEmail;
+    else req.session.googleEmail = remaining[0].email || req.session.googleEmail;
+  } else {
+    clearGoogleToken(appUserId);
+    delete req.session.googleEmail;
+  }
   res.json({ ok: true });
 });
 
@@ -237,17 +256,53 @@ app.post('/auth/logout', (req, res) => {
 
 // ─── Auth disconnect ──────────────────────────────────────────────────────────
 
+app.get('/api/auth/google/accounts', requireAuth, (req, res) => {
+  const { appUserId } = getWorkspaceContext(req);
+  res.json({ accounts: getGoogleAccounts(appUserId) });
+});
+
+app.get('/api/google/users', (req, res) => {
+  try {
+    console.log('[/api/google/users] Called');
+    res.json({ users: [] });
+  } catch (err) {
+    console.error('[/api/google/users] Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/auth/google/disconnect', requireAuth, (req, res) => {
   const { appUserId } = getWorkspaceContext(req);
-  clearGoogleToken(appUserId);
-  delete req.session.googleEmail;
+  const { accountId } = req.body || {};
+  if (accountId) {
+    clearGoogleAccount(appUserId, accountId);
+    const remaining = getGoogleAccounts(appUserId);
+    if (!remaining.length) delete req.session.googleEmail;
+    else req.session.googleEmail = remaining[0].email || req.session.googleEmail;
+  } else {
+    clearGoogleToken(appUserId);
+    delete req.session.googleEmail;
+  }
   res.json({ success: true });
+});
+
+app.get('/api/auth/ms/accounts', requireAuth, (req, res) => {
+  const { appUserId } = getWorkspaceContext(req);
+  res.json({ accounts: getMsAccounts(appUserId) });
 });
 
 app.post('/api/auth/ms/disconnect', requireAuth, (req, res) => {
   const { appUserId } = getWorkspaceContext(req);
-  clearMsToken(appUserId);
-  delete req.session.msEmail;
+  const { accountId } = req.body || {};
+  if (accountId) {
+    clearMsAccount(appUserId, accountId);
+    const remaining = getMsAccounts(appUserId);
+    if (!remaining.length) delete req.session.msEmail;
+    else req.session.msEmail = remaining[0].email || req.session.msEmail;
+  } else {
+    clearMsToken(appUserId);
+    delete req.session.msEmail;
+  }
   res.json({ success: true });
 });
 
@@ -312,6 +367,16 @@ app.post('/api/chat-history', requireAuth, async (req, res) => {
     await db().collection('chatHistory').updateOne({ appUserId }, { $set: update }, { upsert: true });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Agent SSE chat endpoint ──────────────────────────────────────────────────
+app.post('/api/chat', requireAuth, async (req, res) => {
+  try {
+    const { message, migrationState, migrationLogs, isSystemTrigger } = req.body;
+    await runAgentLoop(req, res, { message, migrationState, migrationLogs, isSystemTrigger, db: db() });
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+  }
 });
 
 // All migration runs for current user (all directions)
@@ -379,6 +444,48 @@ app.post('/api/users', requireAuth, async (req, res) => {
   }
 });
 
+// ─── Agent audit routes ───────────────────────────────────────────────────────
+
+// List recent agent sessions (distinct sessionIds, most recent first)
+app.get('/audit/sessions', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 20;
+    const sessions = await db().collection('agentAuditLog').aggregate([
+      { $sort: { ts: -1 } },
+      { $group: { _id: '$sessionId', lastTs: { $first: '$ts' }, firstTs: { $last: '$ts' }, eventCount: { $sum: 1 }, appUserId: { $first: '$appUserId' } } },
+      { $sort: { lastTs: -1 } },
+      { $limit: limit },
+      { $project: { sessionId: '$_id', lastTs: 1, firstTs: 1, eventCount: 1, appUserId: 1, _id: 0 } }
+    ]).toArray();
+    res.json(sessions);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Get all events for a specific session
+app.get('/audit/session/:id', async (req, res) => {
+  try {
+    const events = await db().collection('agentAuditLog')
+      .find({ sessionId: req.params.id })
+      .sort({ ts: 1 })
+      .toArray();
+    res.json(events);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// SSE stream of live audit events
+app.get('/audit/stream', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const onEvent = (event) => {
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
+  auditEmitter.on('event', onEvent);
+  req.on('close', () => auditEmitter.off('event', onEvent));
+});
+
 // ─── Mount module routers ─────────────────────────────────────────────────────
 
 // G2C router — all paths are relative to /api (kept identical to original server.js paths)
@@ -403,6 +510,14 @@ app.use('/api/c2g', c2gRouter);
 // CL2G router — mounted at /api/cl2g (Claude → Gemini; self-contained)
 const cl2gRouter = createCL2GRouter({ db });
 app.use('/api/cl2g', cl2gRouter);
+
+// CL2C router — mounted at /api/cl2c (Claude → Copilot/OneNote)
+const cl2cRouter = createCL2CRouter({ db, isAuthenticated, getValidToken, getCurrentTenantId: () => currentTenantId });
+app.use('/api/cl2c', cl2cRouter);
+
+// G2G router — mounted at /api/g2g (Gemini → Gemini)
+const g2gRouter = createG2GRouter({ db, getGoogleOAuth2Client });
+app.use('/api/g2g', g2gRouter);
 
 // ─── Index bootstrap ──────────────────────────────────────────────────────────
 

@@ -307,7 +307,7 @@ export function createG2CRouter(deps) {
         if (users.length > 0) {
           const ops = users.map(u => ({
             updateOne: {
-              filter: { email: u.email, source: 'google', appUserId, googleEmail, msEmail },
+              filter: { email: u.email, source: 'google', appUserId },
               update: { $set: { appUserId, googleEmail, msEmail, displayName: u.name, discoveredAt: new Date() } },
               upsert: true
             }
@@ -350,7 +350,7 @@ export function createG2CRouter(deps) {
         if (users.length > 0) {
           const ops = users.map(u => ({
             updateOne: {
-              filter: { email: u.mail || u.userPrincipalName, source: 'microsoft', appUserId, googleEmail, msEmail },
+              filter: { email: u.mail || u.userPrincipalName, source: 'microsoft', appUserId },
               update: { $set: { appUserId, googleEmail, msEmail, displayName: u.displayName, tenantId: req.query.tenant_id || null, discoveredAt: new Date() } },
               upsert: true
             }
@@ -508,14 +508,10 @@ export function createG2CRouter(deps) {
   });
 
   router.get('/reports/aggregate', async (req, res) => {
-    const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
+    const { appUserId } = getWorkspaceContext(req);
     if (!appUserId) return res.json({ totalBatches: 0, totalUsers: 0, totalPages: 0, totalErrors: 0, liveBatches: 0, dryRunBatches: 0 });
-    const orClauses = [];
-    if (googleEmail && msEmail) orClauses.push({ appUserId, googleEmail, msEmail });
-    if (googleEmail)            orClauses.push({ appUserId, googleEmail, msEmail: { $exists: false } });
-    orClauses.push({ appUserId, googleEmail: { $exists: false } });
     const pipeline = [
-      { $match: { status: 'completed', $or: orClauses } },
+      { $match: { status: 'completed', appUserId } },
       { $group: { _id: null, totalBatches: { $sum: 1 }, totalUsers: { $sum: '$totalUsers' }, totalPages: { $sum: '$migratedConversations' }, totalErrors: { $sum: { $ifNull: ['$report.summary.total_errors', 0] } }, liveBatches: { $sum: { $cond: [{ $ne: ['$dryRun', true] }, 1, 0] } }, dryRunBatches: { $sum: { $cond: [{ $eq: ['$dryRun', true] }, 1, 0] } } } }
     ];
     const [agg] = await db().collection('migrationWorkspaces').aggregate(pipeline).toArray();
@@ -540,7 +536,7 @@ export function createG2CRouter(deps) {
     const doc = await db().collection('migrationWorkspaces').findOne({ _id: req.params.id, appUserId });
     if (!doc) return res.status(404).json({ error: 'Batch not found' });
     const users = doc.report?.users || [];
-    const isC2G = doc.direction === 'c2g';
+    const isC2G = doc.migDir === 'copilot-gemini';
     const customerName = doc.customerName || 'Gemini';
     const destFor = (email, destEmail) => isC2G ? (destEmail || '') : `${email}/OneDrive/Notebooks/${customerName}/${customerName} Conversations`;
     const header = isC2G ? 'Source Email,Destination Email,Status,Files Uploaded,Conversations,Errors,Error Message' : 'Email,Destination Path,Status,Pages Created,Conversations,Errors,Error Message';
@@ -601,11 +597,11 @@ export function createG2CRouter(deps) {
   });
 
   router.post('/user-mappings', async (req, res) => {
-    const { customerName, mappings, selectedUsers } = req.body;
+    const { customerName, mappings, selectedUsers, csvEmails } = req.body;
     const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
     await db().collection('userMappings').updateOne(
       { appUserId, migDir: 'gemini-copilot' },
-      { $set: { customerName, mappings, selectedUsers, appUserId, migDir: 'gemini-copilot', googleEmail, msEmail, batchId: 'latest', updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+      { $set: { customerName, mappings, selectedUsers, csvEmails: csvEmails ?? null, appUserId, migDir: 'gemini-copilot', googleEmail, msEmail, batchId: 'latest', updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
       { upsert: true }
     );
     dbLog.info(`userMappings.upsert — G2C ${Object.keys(mappings || {}).length} mappings, ${(selectedUsers || []).length} selected`);
@@ -809,7 +805,9 @@ export function createG2CRouter(deps) {
             }
           }
 
+          let oneNoteBlocked = false;
           for (const conv of enrichedConversations) {
+            if (oneNoteBlocked) break;
             try {
               let convWithResponses = skip_ai_response ? conv : await generator.generate(conv, skip_followups);
 
@@ -852,9 +850,17 @@ export function createG2CRouter(deps) {
               pagesCreated++;
               emit('success', `  Page created: ${conv.title?.slice(0, 60)}`);
             } catch (err) {
-              errors.push({ conversation: conv.title, error: err.message });
-              dbLog.error(`Page creation failed for "${conv.title}" → ${err.message}`);
-              emit('error', `  Failed: ${conv.title?.slice(0, 40)} — ${err.message}`);
+              if (err.message.startsWith('ONENOTE_NOT_PROVISIONED:')) {
+                oneNoteBlocked = true;
+                const cleanMsg = err.message.replace(/^ONENOTE_NOT_PROVISIONED:[^\s]+ — /, '');
+                errors.push({ conversation: conv.title, error: cleanMsg });
+                dbLog.error(`OneNote not provisioned for ${m365Email} — skipping remaining conversations`);
+                emit('error', `  OneNote not provisioned for ${m365Email} — ${cleanMsg}`);
+              } else {
+                errors.push({ conversation: conv.title, error: err.message });
+                dbLog.error(`Page creation failed for "${conv.title}" → ${err.message}`);
+                emit('error', `  Failed: ${conv.title?.slice(0, 40)} — ${err.message}`);
+              }
             }
           }
 

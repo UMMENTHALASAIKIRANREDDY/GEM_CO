@@ -40,14 +40,31 @@ async function ensureCollections() {
   const _db = getDb();
   const existing = new Set(await _db.listCollections().toArray().then(cs => cs.map(c => c.name)));
 
-  // 1. authSessions — OAuth tokens per user+provider
+  // 1. authSessions — OAuth tokens per user+provider+accountId (multi-account)
   if (!existing.has('authSessions')) await _db.createCollection('authSessions');
-  await _db.collection('authSessions').createIndex({ appUserId: 1, provider: 1 }, { unique: true });
+  try { await _db.collection('authSessions').dropIndex('appUserId_1_provider_1'); } catch {}
+  await _db.collection('authSessions').createIndex(
+    { appUserId: 1, provider: 1, accountId: 1 },
+    { unique: true, partialFilterExpression: { accountId: { $type: 'string' } } }
+  );
 
   // 2. cloudMembers
   if (!existing.has('cloudMembers')) await _db.createCollection('cloudMembers');
   try { await _db.collection('cloudMembers').dropIndex('email_1_source_1'); } catch {}
-  await _db.collection('cloudMembers').createIndex({ appUserId: 1, googleEmail: 1, msEmail: 1, email: 1, source: 1 }, { unique: true });
+  try { await _db.collection('cloudMembers').dropIndex('appUserId_1_googleEmail_1_msEmail_1_email_1_source_1'); } catch {}
+  try { await _db.collection('cloudMembers').dropIndex('appUserId_1_email_1_source_1'); } catch {}
+  // Deduplicate: keep only the most recently discovered doc per (appUserId, email, source)
+  try {
+    const dupes = await _db.collection('cloudMembers').aggregate([
+      { $group: { _id: { appUserId: '$appUserId', email: '$email', source: '$source' }, ids: { $push: '$_id' }, count: { $sum: 1 } } },
+      { $match: { count: { $gt: 1 } } }
+    ]).toArray();
+    for (const d of dupes) {
+      const [, ...toDelete] = d.ids; // keep first, delete rest
+      await _db.collection('cloudMembers').deleteMany({ _id: { $in: toDelete } });
+    }
+  } catch {}
+  await _db.collection('cloudMembers').createIndex({ appUserId: 1, email: 1, source: 1 }, { unique: true });
 
   // 3. uploads
   if (!existing.has('uploads')) await _db.createCollection('uploads');
@@ -111,16 +128,20 @@ async function ensureCollections() {
   if (!existing.has('cl2gUploads')) await _db.createCollection('cl2gUploads');
   await _db.collection('cl2gUploads').createIndex({ appUserId: 1, uploadTime: -1 });
 
-  // 13. chatHistory — persists agent chat messages per user for cross-device restore
+  // 13. cl2cUploads — Claude export ZIP uploads for CL2C migrations
+  if (!existing.has('cl2cUploads')) await _db.createCollection('cl2cUploads');
+  await _db.collection('cl2cUploads').createIndex({ appUserId: 1, uploadTime: -1 });
+
+  // 14. chatHistory — persists agent chat messages per user for cross-device restore
   if (!existing.has('chatHistory')) await _db.createCollection('chatHistory');
   // Drop old unique index if it exists, then create correct non-unique index
   try { await _db.collection('chatHistory').dropIndex('appUserId_1'); } catch (_) {}
   await _db.collection('chatHistory').createIndex({ appUserId: 1, timestamp: -1 });
 
-  // 14. agentAuditLog — structured per-session agent trace for the monitor UI
+  // 15. agentAuditLog — structured per-session agent trace for the monitor UI
   if (!existing.has('agentAuditLog')) await _db.createCollection('agentAuditLog');
   await _db.collection('agentAuditLog').createIndex({ sessionId: 1, ts: 1 });
   await _db.collection('agentAuditLog').createIndex({ ts: -1 });
 
-  logger.info('All 16 collections verified with indexes (multi-tenant scoped)');
+  logger.info('All 15 collections verified with indexes (multi-tenant scoped)');
 }
