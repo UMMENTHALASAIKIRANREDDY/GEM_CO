@@ -326,7 +326,21 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
                   notebookName: cl2cFolder,
                   sectionName: `${cl2cFolder} Conversations`,
                 }, appUserId);
-                const appInfo = await deployer.deployAgent();
+                const existingDeployment = await db().collection('agentDeployments').findOne({
+                  appUserId: appUserId, tenantId,
+                });
+
+                let appInfo;
+                if (existingDeployment?.catalogId) {
+                  const updateResult = await deployer.updateAgent(existingDeployment.catalogId);
+                  if (!updateResult.updated) {
+                    appInfo = await deployer.deployAgent();
+                  } else {
+                    appInfo = { id: existingDeployment.catalogId, alreadyExisted: true, installInstructions: '' };
+                  }
+                } else {
+                  appInfo = await deployer.deployAgent();
+                }
                 if (appInfo.alreadyExisted) {
                   cl2cLog('info', `Claude Conversation Agent already exists in catalog for tenant ${tenantId} — skipping publish`);
                 } else {

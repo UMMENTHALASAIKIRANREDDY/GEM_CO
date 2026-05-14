@@ -72,6 +72,34 @@ export class AgentDeployer {
     };
   }
 
+  async updateAgent(catalogId) {
+    logger.info(`Updating agent in catalog: ${catalogId}`);
+    const zipBuffer = this._buildAppPackage();
+    const headers = await this._headers();
+
+    const response = await fetch(
+      `${GRAPH_V1}/appCatalogs/teamsApps/${catalogId}/appDefinitions`,
+      {
+        method: 'POST',
+        headers: {
+          ...headers,
+          'Content-Type': 'application/zip',
+          'requiresReview': 'false',
+        },
+        body: zipBuffer,
+      }
+    );
+
+    if (!response.ok) {
+      const body = await response.text();
+      logger.warn(`Agent update failed: ${response.status} — ${body.slice(0, 200)}`);
+      return { updated: false };
+    }
+
+    logger.info(`Agent updated in catalog: ${catalogId}`);
+    return { updated: true };
+  }
+
   /**
    * Check if "Gemini Conversation Agent" already exists in the org catalog.
    * Returns the app object if found, null otherwise.
@@ -93,28 +121,37 @@ export class AgentDeployer {
   }
 
   _buildInstructions() {
-    return `You are the ${this.agentName}. You help users search and recall their AI conversations that were migrated from ${this.sourceLabel} to Microsoft 365.
+    return `You are the ${this.agentName}. You help users browse and recall their AI conversations that were migrated from ${this.sourceLabel} to Microsoft 365.
 
-Where to find conversations:
-- OneNote: "${this.notebookName}" notebook → "${this.sectionName}" section — each page is one complete conversation thread
-- OneDrive: "${this.driveFolder}" folder — contains migrated documents (.docx, .xlsx, .pptx)
+WHEN THE USER OPENS YOU (new conversation starts):
+- Immediately list all pages from the "${this.sectionName}" section in the "${this.notebookName}" OneNote notebook.
+- Format the list as a numbered list. Each item: conversation title, date (formatted as "Mon DD, YYYY"), and message count if available.
+- End the list with: "Type a number or title to load that conversation into our chat."
+- If the section has no pages, say: "No migrated conversations found in ${this.notebookName}. Migration may not have run yet."
 
-Each OneNote page contains:
-- A title and date (in the page metadata)
-- One or more prompts the user originally asked in ${this.sourceLabel}
-- The original ${this.sourceLabel} response for each prompt
-- A footer with the migration date
+WHEN THE USER PICKS A CONVERSATION (types a number, title, or partial title):
+- Find the matching OneNote page from the "${this.sectionName}" section.
+- Read the full content of that page.
+- Output the complete conversation transcript into the chat — every message, labeled [YOU] and [${this.sourceLabel.toUpperCase()}], in order.
+- After the transcript, say: "You're now in the context of this conversation. Ask me anything about it."
+- Do NOT link to OneNote. Do NOT summarize. Output the full text so the user has complete context.
 
-How to answer:
-- Search the user's OneNote "${this.sectionName}" section for relevant content.
-- Match the user's query against page titles, prompt text, and response content.
-- Treat each OneNote page as one complete, self-contained conversation thread. Never mix content across pages unless the user explicitly asks to compare.
-- For follow-up questions ("What was the number they mentioned?" / "What did it say about that?") — stay in the same page from the previous turn. Do not re-search unless the user changes topic.
-- When quoting, identify whether the text came from the user's original prompt or the ${this.sourceLabel} response.
-- Always cite the conversation title and date.
-- If nothing matches, suggest the user check their "${this.notebookName}" notebook in OneNote directly.
+WHEN THE USER ASKS QUESTIONS AFTER LOADING A CONVERSATION:
+- Answer using only the transcript content that was just loaded into the chat.
+- Never make up information. If the answer isn't in the transcript, say so.
+- If the user wants to go back to the list, show it again.
 
-Never make up information. Only answer based on the actual migrated conversation data.`;
+SEARCHING:
+- If the user asks to search (e.g. "find conversations about pricing"), search the "${this.sectionName}" section in OneNote and list matching pages.
+
+NEVER:
+- Make up conversation content.
+- Mix content from different conversations.
+- Open OneNote links. Always load content directly into this chat.`;
+  }
+
+  _buildWelcomeMessage() {
+    return `Hi! I'm your ${this.agentName}. I have access to all your conversations migrated from ${this.sourceLabel}.\n\nLet me pull up your conversation list from OneNote now...`;
   }
 
   /**
@@ -133,6 +170,7 @@ Never make up information. Only answer based on the actual migrated conversation
       "name": this.agentName,
       "description": `Search and review migrated ${this.customerName} ${this.sourceLabel} conversations. Ask questions about past chats and get instant answers grounded in your conversation history.`,
       "instructions": this._buildInstructions(),
+      "welcome_message": this._buildWelcomeMessage(),
       "capabilities": [
         {
           "name": "OneDriveAndSharePoint"
@@ -140,20 +178,20 @@ Never make up information. Only answer based on the actual migrated conversation
       ],
       "conversation_starters": [
         {
-          "title": "My Conversations",
-          "text": `Show me all my migrated conversations from the "${this.sectionName}" section`
+          "title": "Show My Conversations",
+          "text": "List all my migrated conversations"
         },
         {
           "title": "Search by Topic",
-          "text": "What did I discuss about marketing in my Gemini conversations?"
+          "text": "Find conversations about pricing"
         },
         {
-          "title": "Find a Conversation",
-          "text": "Find my conversation about data analysis"
+          "title": "Load a Conversation",
+          "text": "Load conversation number 1 into this chat"
         },
         {
-          "title": "Compare Responses",
-          "text": "Show the Gemini response vs Copilot response for my last conversation"
+          "title": "Search Recent",
+          "text": "Show my most recent migrated conversation"
         }
       ],
       "disclaimer": {
@@ -172,7 +210,7 @@ Never make up information. Only answer based on the actual migrated conversation
     const appManifest = {
       "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.19/MicrosoftTeams.schema.json",
       "manifestVersion": "1.19",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "id": this.appId,
       "developer": {
         "name": "CloudFuze",
