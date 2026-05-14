@@ -44,6 +44,34 @@ export const COMBINATIONS = {
     isLive: (state) => !!state.cl2g_live,
     isDone: (state) => !!state.cl2g_done,
   },
+  'gemini-gemini': {
+    label: 'Google Workspace → Google Workspace',
+    auth: ['google'],
+    hasUpload: true,
+    steps: ['Connect', 'Direction', 'Select Accounts', 'Upload Data', 'Map Users', 'Options', 'Migration'],
+    authCheck: (state) => {
+      const blockers = [];
+      if (!state.googleAuthed) blockers.push('Google Workspace not connected');
+      return blockers;
+    },
+    mappingsCount: (state) => state.g2g_mappings_count ?? 0,
+    isLive: (state) => !!state.g2g_live,
+    isDone: (state) => !!state.g2g_done,
+  },
+  'claude-copilot': {
+    label: 'Claude (Anthropic) → Microsoft 365 Copilot',
+    auth: ['microsoft'],
+    hasUpload: true,
+    steps: ['Connect', 'Direction', 'Upload ZIP', 'Map Users', 'Options', 'Migration'],
+    authCheck: (state) => {
+      const blockers = [];
+      if (!state.msAuthed) blockers.push('Microsoft 365 not connected');
+      return blockers;
+    },
+    mappingsCount: (state) => state.cl2c_mappings_count ?? 0,
+    isLive: (state) => !!state.cl2c_live,
+    isDone: (state) => !!state.cl2c_done,
+  },
 };
 
 export function getCombo(migDir) {

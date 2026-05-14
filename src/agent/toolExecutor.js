@@ -12,6 +12,8 @@ function checkStepPrerequisites(targetStep, migDir, migrationState) {
     mappings_count = 0, selected_users_count = 0,
     c2g_mappings_count = 0, cl2g_mappings_count = 0,
     cl2g_upload_users = 0,
+    g2g_source_account_id = '', g2g_upload_users = 0, g2g_mappings_count = 0,
+    cl2c_upload_users = 0, cl2c_mappings_count = 0,
   } = migrationState ?? {};
 
   if (migDir === 'gemini-copilot') {
@@ -31,6 +33,22 @@ function checkStepPrerequisites(targetStep, migDir, migrationState) {
     if (targetStep >= 3 && cl2g_upload_users === 0)
       return 'Upload your Claude export ZIP first (Step 2 — Upload ZIP).';
     if (targetStep >= 4 && cl2g_mappings_count === 0)
+      return 'Map your users first (Step 3 — Map Users). At least one mapping is required.';
+  }
+
+  if (migDir === 'gemini-gemini') {
+    if (targetStep >= 3 && !g2g_source_account_id)
+      return 'Select your source Google account first (Step 2 — Select Accounts).';
+    if (targetStep >= 4 && g2g_upload_users === 0)
+      return 'Upload your Google Vault data first (Step 3 — Upload Data).';
+    if (targetStep >= 5 && g2g_mappings_count === 0)
+      return 'Map your users first (Step 4 — Map Users). At least one mapping is required.';
+  }
+
+  if (migDir === 'claude-copilot') {
+    if (targetStep >= 3 && cl2c_upload_users === 0)
+      return 'Upload your Claude export ZIP first (Step 2 — Upload ZIP).';
+    if (targetStep >= 4 && cl2c_mappings_count === 0)
       return 'Map your users first (Step 3 — Map Users). At least one mapping is required.';
   }
 
@@ -55,8 +73,10 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
     case 'select_direction': {
       const dir = args.migDir;
       const { googleAuthed = false, msAuthed = false } = migrationState ?? {};
-      const missingGoogle = !googleAuthed; // all directions need Google
-      const missingMs = (dir === 'gemini-copilot' || dir === 'copilot-gemini') && !msAuthed;
+      const needsGoogle = dir !== 'claude-copilot'; // all except CL2C need Google
+      const needsMs = dir === 'gemini-copilot' || dir === 'copilot-gemini' || dir === 'claude-copilot';
+      const missingGoogle = needsGoogle && !googleAuthed;
+      const missingMs = needsMs && !msAuthed;
 
       // Set direction first so UI shows the right context
       streamEvent('select_direction', { direction: dir, step: missingGoogle || missingMs ? 0 : 2 });
@@ -131,11 +151,15 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
 
     case 'get_migration_status': {
       const dir = migrationState.migDir;
-      const isRunning = migrationState.live || migrationState.c2g_live || migrationState.cl2g_live;
-      const isDone = migrationState.migDone || migrationState.c2g_done || migrationState.cl2g_done;
+      const isRunning = migrationState.live || migrationState.c2g_live || migrationState.cl2g_live
+        || migrationState.g2g_live || migrationState.cl2c_live;
+      const isDone = migrationState.migDone || migrationState.c2g_done || migrationState.cl2g_done
+        || migrationState.g2g_done || migrationState.cl2c_done;
       // Pick direction-specific stats
       const activeStats = dir === 'copilot-gemini' ? migrationState.c2g_stats
         : dir === 'claude-gemini' ? migrationState.cl2g_stats
+        : dir === 'gemini-gemini' ? migrationState.g2g_stats
+        : dir === 'claude-copilot' ? migrationState.cl2c_stats
         : migrationState.stats;
       const currentBatchId = migrationState.currentBatchId;
       const logTail = migrationLogs?.slice(-20) ?? [];
@@ -168,6 +192,12 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
         }
         if (migDir === 'claude-gemini' && (migrationState.cl2g_upload_users ?? 0) === 0) {
           blockers.push('No ZIP uploaded yet');
+        }
+        if (migDir === 'gemini-gemini' && (migrationState.g2g_upload_users ?? 0) === 0) {
+          blockers.push('No Google Vault data uploaded yet (Step 3 — Upload Data).');
+        }
+        if (migDir === 'claude-copilot' && (migrationState.cl2c_upload_users ?? 0) === 0) {
+          blockers.push('No Claude export ZIP uploaded yet (Step 2 — Upload ZIP).');
         }
         if (effectiveMappings === 0) blockers.push('No users mapped');
         if (combo.isLive(migrationState)) blockers.push('Migration already running');

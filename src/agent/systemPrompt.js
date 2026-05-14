@@ -11,22 +11,28 @@ export function buildSystemPrompt(migrationState, migrationLogs = [], { isReturn
     c2g_done = false, cl2g_done = false, c2g_live = false, cl2g_live = false,
     c2g_stats = {}, cl2g_stats = {}, c2gLastDry = false, cl2gLastDry = false,
     uiContext = '', appUserName = '', panelSwapped = false,
+    g2g_upload_users = 0, g2g_mappings_count = 0, g2g_live = false, g2g_done = false, g2g_stats = {}, g2gLastDry = false,
+    cl2c_upload_users = 0, cl2c_mappings_count = 0, cl2c_live = false, cl2c_done = false, cl2c_stats = {}, cl2cLastDry = false,
   } = migrationState;
   const stepsPanelSide = panelSwapped ? 'left' : 'right';
 
   // Direction-scoped stats
   const activeStats = migDir === 'copilot-gemini' ? c2g_stats
     : migDir === 'claude-gemini' ? cl2g_stats
+    : migDir === 'gemini-gemini' ? g2g_stats
+    : migDir === 'claude-copilot' ? cl2c_stats
     : stats;
   const activeLastDry = migDir === 'copilot-gemini' ? c2gLastDry
     : migDir === 'claude-gemini' ? cl2gLastDry
+    : migDir === 'gemini-gemini' ? g2gLastDry
+    : migDir === 'claude-copilot' ? cl2cLastDry
     : lastRunWasDry;
 
   const combo = COMBINATIONS[migDir];
   const dirLabel = combo?.label ?? 'not selected';
   const effectiveMappings = combo?.mappingsCount(migrationState) ?? 0;
-  const isRunning = live || c2g_live || cl2g_live;
-  const isDone = migDone || c2g_done || cl2g_done;
+  const isRunning = live || c2g_live || cl2g_live || g2g_live || cl2c_live;
+  const isDone = migDone || c2g_done || cl2g_done || g2g_done || cl2c_done;
 
   const panelContext = uiContext || buildPanelContext(migrationState);
 
@@ -62,7 +68,9 @@ export function buildSystemPrompt(migrationState, migrationLogs = [], { isReturn
 - "Claude", "Anthropic", "claude.ai", "Claude AI", "claude to google", "claude to gemini" → migDir = "claude-gemini"
 - "Gemini to Copilot", "Google to Microsoft", "G2C", "google to microsoft" → migDir = "gemini-copilot"
 - "Copilot to Gemini", "Microsoft to Google", "C2G" → migDir = "copilot-gemini"
-- NEVER map "Claude" to any direction other than "claude-gemini"
+- "Gemini to Gemini", "Google to Google", "G2G", "workspace to workspace" → migDir = "gemini-gemini"
+- "Claude to Copilot", "Claude to Teams", "Claude to Microsoft", "CL2C", "Claude to OneNote" → migDir = "claude-copilot"
+- NEVER map "Claude" to any direction other than "claude-gemini" or "claude-copilot"
 
 ## Full UI Map — What the User Sees
 
@@ -150,6 +158,42 @@ export function buildSystemPrompt(migrationState, migrationLogs = [], { isReturn
 ### Panel: "Migration Running / Done" — CL2G (step=5+, migDir=claude-gemini)
 - Same stats layout as G2C migration panel
 
+### Panel: "Select Accounts" — G2G (step=2, migDir=gemini-gemini)
+- Two dropdowns: Source Google Account, Destination Google Account
+- Cannot select same account for both
+- "Continue →" disabled if source === destination or either blank
+
+### Panel: "Upload Data" — G2G (step=3, migDir=gemini-gemini)
+- Upload Google Vault ZIP file
+- Shows user list after upload with conversation counts
+- "Continue →" enabled when ZIP loaded
+
+### Panel: "Map Users" — G2G (step=4, migDir=gemini-gemini)
+- Maps source Google users → destination Google emails
+- Auto-map, Continue, Back buttons
+
+### Panel: "Migration Options" — G2G (step=5, migDir=gemini-gemini)
+- Folder name (default: Gemini Conversations), dry run checkbox, date range
+
+### Panel: "Migration Running / Done" — G2G (step=6+, migDir=gemini-gemini)
+- Progress ring, stats: Users, Files, Errors
+- ⚠️ G2G uses step=6 (running) and step=7 (done).
+
+### Panel: "Upload ZIP" — CL2C (step=2, migDir=claude-copilot)
+- Upload Claude export ZIP (same flow as CL2G)
+- Shows user list after upload
+
+### Panel: "Map Users" — CL2C (step=3, migDir=claude-copilot)
+- Maps Claude users → Microsoft 365 emails
+- Auto-map, Continue, Back buttons
+
+### Panel: "Migration Options" — CL2C (step=4, migDir=claude-copilot)
+- Folder name (default: ClaudeChats), dry run, date range
+- Checkboxes: Include Memory, Include Projects
+
+### Panel: "Migration Running / Done" — CL2C (step=5+, migDir=claude-copilot)
+- Progress stats: Users, Files, Errors
+
 ## What the user sees RIGHT NOW
 ${panelContext}
 
@@ -164,7 +208,7 @@ ${panelContext}
 ${isRunning ? `⚠️ Migration is ACTIVELY RUNNING. Stats above may lag behind — read the recent logs below for live progress. Parse log lines like "X files uploaded" or "user → dest: N files" to give an accurate status update.` : ''}
 ${logsSection}
 ## Auth Gate (CRITICAL)
-${buildAuthGateSection({ migDir, googleAuthed, msAuthed, step, live, c2g_live, cl2g_live, migDone, c2g_done, cl2g_done })}
+${buildAuthGateSection({ migDir, googleAuthed, msAuthed, step, live, c2g_live, cl2g_live, g2g_live, cl2c_live, migDone, c2g_done, cl2g_done, g2g_done, cl2c_done })}
 
 ## Tool Rules — follow exactly, no exceptions
 
@@ -267,11 +311,12 @@ If the user repeats the same question or you've given the same answer 2+ times, 
 - "I'll" is fine when explaining an action ("I'll run a dry run first"). The "never start with I" rule applies to robotic openers like "I am here to help" — vary your openers, but don't twist sentences awkwardly to avoid "I'll"`;
 }
 
-function buildAuthGateSection({ migDir, googleAuthed, msAuthed, step, live, c2g_live, cl2g_live, migDone, c2g_done, cl2g_done }) {
+function buildAuthGateSection({ migDir, googleAuthed, msAuthed, step, live, c2g_live, cl2g_live, g2g_live, cl2c_live, migDone, c2g_done, cl2g_done, g2g_done, cl2c_done }) {
   if (!migDir) return 'No direction selected — auth gate not applicable yet.';
 
-  const needsMs = migDir === 'gemini-copilot' || migDir === 'copilot-gemini';
-  const missingGoogle = !googleAuthed;
+  const needsMs = migDir === 'gemini-copilot' || migDir === 'copilot-gemini' || migDir === 'claude-copilot';
+  const needsGoogle = migDir !== 'claude-copilot';
+  const missingGoogle = needsGoogle && !googleAuthed;
   const missingMs = needsMs && !msAuthed;
 
   if (!missingGoogle && !missingMs) {
@@ -280,8 +325,8 @@ function buildAuthGateSection({ migDir, googleAuthed, msAuthed, step, live, c2g_
 
   const missing = [missingGoogle && 'Google Workspace', missingMs && 'Microsoft 365'].filter(Boolean).join(' and ');
   // Do NOT navigate away if migration is actively running or already done
-  const isRunning = live || c2g_live || cl2g_live;
-  const isDone = migDone || c2g_done || cl2g_done;
+  const isRunning = live || c2g_live || cl2g_live || (g2g_live ?? false) || (cl2c_live ?? false);
+  const isDone = migDone || c2g_done || cl2g_done || (g2g_done ?? false) || (cl2c_done ?? false);
   if (isRunning || isDone) {
     return `⚠️ ${missing} session may have expired but migration is in progress or complete. Do NOT navigate away. Inform the user if they need to reconnect for the next run.`;
   }
@@ -355,6 +400,23 @@ function buildPanelContext(state) {
   - Main button: "Start Dry Run" or "Start Migration"`;
     return `PANEL: Migration (C2G) ${c2g_live ? 'RUNNING 🔄' : c2g_done ? 'COMPLETE ✅' : 'status unknown'}
   - Stats: ${c2g_stats.users ?? 0} users · ${c2g_stats.files ?? 0} files · ${c2g_stats.errors ?? 0} errors`;
+  }
+
+  if (migDir === 'gemini-gemini') {
+    if (step <= 1) return `PANEL: Connect/Direction for Gemini→Gemini. Google: ${googleAuthed ? '✅' : '✗'}.`;
+    if (step === 2) return `PANEL: "Select Accounts" (G2G)\n  - Source account: ${state.g2g_source_account || 'not selected'}\n  - Dest account: ${state.g2g_dest_account || 'not selected'}`;
+    if (step === 3) return `PANEL: "Upload Data" (G2G)\n  - ${state.g2g_upload_users > 0 ? `✅ ${state.g2g_upload_users} users loaded` : '⬜ No Vault ZIP uploaded yet'}`;
+    if (step === 4) return `PANEL: "Map Users" (G2G)\n  - ${state.g2g_mappings_count ?? 0} users mapped\n  - "Continue →": ${(state.g2g_mappings_count ?? 0) > 0 ? 'ENABLED' : 'DISABLED'}`;
+    if (step === 5) return `PANEL: "Migration Options" (G2G)\n  - Folder name, dry run, date range`;
+    return `PANEL: Migration (G2G) ${state.g2g_live ? 'RUNNING 🔄' : state.g2g_done ? 'COMPLETE ✅' : 'status unknown'}\n  - Stats: ${(state.g2g_stats ?? {}).users ?? 0} users · ${(state.g2g_stats ?? {}).files ?? 0} files · ${(state.g2g_stats ?? {}).errors ?? 0} errors`;
+  }
+
+  if (migDir === 'claude-copilot') {
+    if (step <= 1) return `PANEL: Connect/Direction for Claude→Copilot. MS365: ${msAuthed ? '✅' : '✗'}. (Google NOT required for this direction.)`;
+    if (step === 2) return `PANEL: "Upload Claude ZIP" (CL2C)\n  - ${state.cl2c_upload_users > 0 ? `✅ ${state.cl2c_upload_users} users loaded` : '⬜ No ZIP uploaded yet'}\n  - "Continue →": ${(state.cl2c_upload_users ?? 0) > 0 ? 'ENABLED' : 'DISABLED until ZIP uploaded'}`;
+    if (step === 3) return `PANEL: "Map Users" (CL2C)\n  - ${state.cl2c_mappings_count ?? 0} users mapped\n  - "Continue →": ${(state.cl2c_mappings_count ?? 0) > 0 ? 'ENABLED' : 'DISABLED'}`;
+    if (step === 4) return `PANEL: "Migration Options" (CL2C)\n  - Folder name, dry run, date range, Include Memory, Include Projects`;
+    return `PANEL: Migration (CL2C) ${state.cl2c_live ? 'RUNNING 🔄' : state.cl2c_done ? 'COMPLETE ✅' : 'status unknown'}\n  - Stats: ${(state.cl2c_stats ?? {}).users ?? 0} users · ${(state.cl2c_stats ?? {}).files ?? 0} files · ${(state.cl2c_stats ?? {}).errors ?? 0} errors`;
   }
 
   if (migDir === 'claude-gemini') {

@@ -140,14 +140,14 @@ function buildStepContextInstruction(state) {
     : migDir === 'claude-gemini' ? cl2g_done && cl2gLastDry
     : migDone && lastRunWasDry);
 
-  const needsGoogle = migDir && (migDir === 'gemini-copilot' || migDir === 'copilot-gemini' || migDir === 'claude-gemini');
-  const needsMs = migDir && (migDir === 'gemini-copilot' || migDir === 'copilot-gemini');
+  const needsGoogle = migDir && migDir !== 'claude-copilot';
+  const needsMs = migDir && (migDir === 'gemini-copilot' || migDir === 'copilot-gemini' || migDir === 'claude-copilot');
   const missingGoogle = needsGoogle && !googleAuthed;
   const missingMs = needsMs && !msAuthed;
 
   // Auth missing — agent must redirect (but NOT if migration is actively running or done)
-  const isRunning = live || c2g_live || cl2g_live;
-  const isDone = migDone || c2g_done || cl2g_done;
+  const isRunning = live || c2g_live || cl2g_live || (state.g2g_live ?? false) || (state.cl2c_live ?? false);
+  const isDone = migDone || c2g_done || cl2g_done || (state.g2g_done ?? false) || (state.cl2c_done ?? false);
   if (migDir && step >= 2 && !isRunning && !isDone && (missingGoogle || missingMs)) {
     const missing = [missingGoogle && 'Google Workspace', missingMs && 'Microsoft 365'].filter(Boolean).join(' and ');
     return `\n\n[AUTO CONTEXT — AUTH GATE] User is at step ${step} with direction "${migDir}" but ${missing} is NOT connected. You MUST: (1) call navigate_to_step with step=0, (2) tell them which account(s) to connect and why. Be direct: "You need to connect X first." Do not proceed with the current step.`;
@@ -188,6 +188,35 @@ function buildStepContextInstruction(state) {
       return `\n\n[AUTO CONTEXT] Map Users (CL2G) — ${cl2g_mappings_count} mapped. Tell them mappings look good and they can click "Continue →" when ready. DO NOT call navigate_to_step — let the user click the button themselves.`;
     }
     if (step === 4) return `\n\n[AUTO CONTEXT] Options (CL2G). ${dryRunDone ? 'Dry run done — offer live migration.' : 'Recommend dry run — safe preview first.'}`;
+  }
+
+  if (migDir === 'gemini-gemini') {
+    const { g2g_upload_users = 0, g2g_mappings_count = 0, g2g_done = false, g2gLastDry = false } = state;
+    const dryRunDone = g2g_done && g2gLastDry;
+    if (step === 2) return `\n\n[AUTO CONTEXT] G2G: Select source and destination Google accounts. Tell user to pick two different accounts and click "Continue →". DO NOT call navigate_to_step.`;
+    if (step === 3) {
+      if (g2g_upload_users === 0) return `\n\n[BLOCKER] G2G: No Vault ZIP uploaded. Tell user to upload their Google Vault export ZIP. Without this there's nothing to migrate.`;
+      return `\n\n[AUTO CONTEXT] G2G: Vault ZIP loaded — ${g2g_upload_users} users. They can click "Continue →" to map users. DO NOT call navigate_to_step.`;
+    }
+    if (step === 4) {
+      if (g2g_mappings_count === 0) return `\n\n[BLOCKER] G2G: 0 users mapped. Auto-map will match source→dest by email. Offer auto-map.`;
+      return `\n\n[AUTO CONTEXT] G2G: ${g2g_mappings_count} users mapped. They can click "Continue →". DO NOT call navigate_to_step.`;
+    }
+    if (step === 5) return `\n\n[AUTO CONTEXT] G2G Options. ${dryRunDone ? 'Dry run done — offer live run.' : 'Recommend dry run first.'}`;
+  }
+
+  if (migDir === 'claude-copilot') {
+    const { cl2c_upload_users = 0, cl2c_mappings_count = 0, cl2c_done = false, cl2cLastDry = false } = state;
+    const dryRunDone = cl2c_done && cl2cLastDry;
+    if (step === 2) {
+      if (cl2c_upload_users === 0) return `\n\n[BLOCKER] CL2C: No Claude ZIP uploaded. Tell user: go to claude.ai → Settings → Export Data, download ZIP, upload here.`;
+      return `\n\n[AUTO CONTEXT] CL2C: ZIP loaded — ${cl2c_upload_users} users. Click "Continue →" to map users. DO NOT call navigate_to_step.`;
+    }
+    if (step === 3) {
+      if (cl2c_mappings_count === 0) return `\n\n[BLOCKER] CL2C: 0 users mapped. Each Claude user needs a Microsoft 365 destination email. Auto-map by email. Offer it.`;
+      return `\n\n[AUTO CONTEXT] CL2C: ${cl2c_mappings_count} users mapped. Click "Continue →". DO NOT call navigate_to_step.`;
+    }
+    if (step === 4) return `\n\n[AUTO CONTEXT] CL2C Options. ${dryRunDone ? 'Dry run done — offer live run.' : 'Recommend dry run first.'}`;
   }
 
   return `\n\n[AUTO CONTEXT] User just navigated to step ${step} (${migDir}). Tell them exactly what to do next. 1-2 sentences, no questions.`;
