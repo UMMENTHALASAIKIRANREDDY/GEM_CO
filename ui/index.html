@@ -166,6 +166,13 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
   const loadGoogleAccounts=async()=>{try{const r=await fetch('/api/auth/google/accounts');if(r.ok){const d=await r.json();if(d.accounts)setGoogleAccounts(d.accounts)}}catch(e){}};
   const loadMsUsers=async()=>{setLgM(true);setErrM('');try{const r=await fetch('/api/ms/users');if(r.status===401){setMsAuthed(false);setLgM(false);return}const d=await r.json();if(d.users)setMsUsers(d.users);else setErrM(d.error||'Failed to load users')}catch(e){setErrM(e.message)}setLgM(false)};
 
+  // Track the signed-in MS admin email separately (different from msUsers[0] which is just the first user in the tenant).
+  const [msAdminEmail,setMsAdminEmail]=useState(null);
+  useEffect(()=>{
+    if(!msAuthed){setMsAdminEmail(null);return;}
+    fetch('/auth/status').then(r=>r.ok?r.json():null).then(d=>{if(d?.msEmail)setMsAdminEmail(d.msEmail)}).catch(()=>{});
+  },[msAuthed]);
+
   useEffect(()=>{if(googleAuthed){loadGoogleUsers();loadGoogleAccounts();}else{setGoogleUsers([]);}},[googleAuthed]);
   useEffect(()=>{if(msAuthed)loadMsUsers();else setMsUsers([])},[msAuthed]);
 
@@ -179,19 +186,25 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
   const logoutGoogle=async()=>{await fetch('/auth/google/logout',{method:'POST'});setGoogleAuthed(false);setGoogleUsers([]);setGoogleAccounts([])};
   const logoutMs=async()=>{await fetch('/auth/logout',{method:'POST'});setMsAuthed(false);setMsUsers([])};
 
-  // Per-account Google disconnect — removes only the chosen accountId, not all Google accounts.
+  // Per-account disconnect — handles both Google and Microsoft.
   // Pending state drives a styled confirmation modal (no browser confirm()).
-  const [pendingDisconnect,setPendingDisconnect]=useState(null); // { accountId, email }
-  const requestDisconnect=(accountId,email)=>setPendingDisconnect({accountId,email});
+  const [pendingDisconnect,setPendingDisconnect]=useState(null); // { provider, accountId?, email, label }
+  const requestDisconnect=(provider,accountId,email,label)=>setPendingDisconnect({provider,accountId,email,label:label||email||'this account'});
   const cancelDisconnect=()=>setPendingDisconnect(null);
   const confirmDisconnect=async()=>{
     const target=pendingDisconnect;
     setPendingDisconnect(null);
-    if(!target?.accountId)return;
-    await fetch(`/auth/google/logout?accountId=${encodeURIComponent(target.accountId)}`,{method:'POST'});
-    const remaining=(googleAccounts||[]).filter(a=>a.accountId!==target.accountId);
-    setGoogleAccounts(remaining);
-    if(remaining.length===0){setGoogleAuthed(false);setGoogleUsers([]);}else{loadGoogleAccounts();loadGoogleUsers();}
+    if(!target)return;
+    if(target.provider==='google'){
+      if(!target.accountId)return;
+      await fetch(`/auth/google/logout?accountId=${encodeURIComponent(target.accountId)}`,{method:'POST'});
+      const remaining=(googleAccounts||[]).filter(a=>a.accountId!==target.accountId);
+      setGoogleAccounts(remaining);
+      if(remaining.length===0){setGoogleAuthed(false);setGoogleUsers([]);}else{loadGoogleAccounts();loadGoogleUsers();}
+    }else if(target.provider==='microsoft'){
+      await fetch('/auth/logout',{method:'POST'});
+      setMsAuthed(false);setMsUsers([]);
+    }
   };
 
   // Convert raw OAuth/API errors into human-friendly text + a flag indicating reconnect can fix it.
@@ -221,8 +234,10 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
   };
 
   // Expanded row state + per-account users cache for the Manage Clouds dropdown.
+  // expandedAccountId can be a Google accountId OR the literal 'ms' for the single Microsoft row.
   const [expandedAccountId,setExpandedAccountId]=useState(null);
   const [accountUsersMap,setAccountUsersMap]=useState({}); // accountId → { loading, users: [], total: 0 }
+  const toggleMsUsers=()=>setExpandedAccountId(p=>p==='ms'?null:'ms');
   const toggleAccountUsers=async(accountId)=>{
     if(expandedAccountId===accountId){setExpandedAccountId(null);return;}
     setExpandedAccountId(accountId);
@@ -388,7 +403,7 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
                       </div>
                       <div style={{fontSize:12,color:'#16a34a',fontWeight:500}}>Admin</div>
                       <div style={{textAlign:'center'}}>
-                        <button onClick={()=>requestDisconnect(acc.accountId,acc.email)} title={`Disconnect ${acc.email}`} style={{background:'none',border:'none',cursor:'pointer',color:C.error,fontSize:16,padding:'4px 6px',borderRadius:4,transition:'background .15s'}} onMouseEnter={e=>e.currentTarget.style.background='#FEF2F2'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}><IcoTrash s={14}/></button>
+                        <button onClick={()=>requestDisconnect('google',acc.accountId,acc.email)} title={`Disconnect ${acc.email}`} style={{background:'none',border:'none',cursor:'pointer',color:C.error,fontSize:16,padding:'4px 6px',borderRadius:4,transition:'background .15s'}} onMouseEnter={e=>e.currentTarget.style.background='#FEF2F2'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}><IcoTrash s={14}/></button>
                       </div>
                     </div>
                     {isExp&&(
@@ -432,19 +447,57 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
               })}
 
               {/* Microsoft Account */}
-              {msAuthed&&(
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 120px 60px',gap:16,padding:'14px 16px',alignItems:'center'}}>
-                  <div style={{display:'flex',alignItems:'center',gap:12}}>
-                    <MsIcon s={28}/>
-                    <div style={{fontWeight:500,fontSize:13}}>Microsoft 365</div>
+              {msAuthed&&(()=>{
+                const isExp=expandedAccountId==='ms';
+                const msDisplay=msAdminEmail||'Microsoft 365';
+                return(
+                  <div>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 120px 60px',gap:16,padding:'14px 16px',alignItems:'center',background:isExp?C.tint:'transparent',transition:'background .15s'}}>
+                      <div style={{display:'flex',alignItems:'center',gap:8}}>
+                        <button onClick={toggleMsUsers} title={isExp?'Hide users':'Show users'} style={{background:'none',border:'none',cursor:'pointer',color:C.muted,padding:0,display:'flex',alignItems:'center'}} onMouseEnter={e=>e.currentTarget.style.color=C.primary} onMouseLeave={e=>e.currentTarget.style.color=C.muted}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{transition:'transform .2s',transform:isExp?'rotate(90deg)':'rotate(0)'}}><polyline points="9 18 15 12 9 6"/></svg>
+                        </button>
+                        <MsIcon s={28}/>
+                        <div style={{fontWeight:500,fontSize:13}}>Microsoft 365</div>
+                      </div>
+                      <div style={{display:'flex',alignItems:'center',gap:8,fontSize:13,color:C.dark}}>
+                        <span>{msDisplay}</span>
+                        {msUsers?.length>0&&<span style={{fontSize:11,padding:'2px 6px',borderRadius:10,background:C.tint,color:C.primary,fontWeight:600}}>{msUsers.length} users</span>}
+                      </div>
+                      <div style={{fontSize:12,color:'#16a34a',fontWeight:500}}>Admin</div>
+                      <div style={{textAlign:'center'}}>
+                        <button onClick={()=>requestDisconnect('microsoft',null,msDisplay,'Microsoft 365 ('+msDisplay+')')} title="Disconnect Microsoft 365" style={{background:'none',border:'none',cursor:'pointer',color:C.error,fontSize:16,padding:'4px 6px',borderRadius:4,transition:'background .15s'}} onMouseEnter={e=>e.currentTarget.style.background='#FEF2F2'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}><IcoTrash s={14}/></button>
+                      </div>
+                    </div>
+                    {isExp&&(
+                      <div style={{padding:'8px 16px 16px 48px',background:'#FAFBFD'}}>
+                        {(!msUsers||msUsers.length===0)?(
+                          <div style={{display:'flex',alignItems:'center',gap:8,fontSize:12,color:C.muted,padding:'8px 0'}}><Spinner s={12}/> Loading users...</div>
+                        ):(
+                          <>
+                            <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>Users in tenant — {msUsers.length} total</div>
+                            <div style={{maxHeight:240,overflowY:'auto',border:`1px solid ${C.border}`,borderRadius:6,background:'white'}}>
+                              {msUsers.map((u,i)=>{
+                                const em=u.mail||u.userPrincipalName||'';
+                                const nm=u.displayName||em;
+                                return(
+                                  <div key={em+i} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',borderBottom:i<msUsers.length-1?`1px solid ${C.bg}`:'none',fontSize:12}}>
+                                    <div style={{width:24,height:24,borderRadius:'50%',background:avatarColor(em||nm),color:'white',display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:600,flexShrink:0}}>{(nm||em).slice(0,2).toUpperCase()}</div>
+                                    <div style={{flex:1,minWidth:0}}>
+                                      <div style={{fontWeight:500,color:C.dark,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{nm}</div>
+                                      <div style={{fontSize:10,color:C.muted,fontFamily:'monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{em}</div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
-                  <div style={{fontSize:13,color:C.dark}}>Microsoft 365</div>
-                  <div style={{fontSize:12,color:'#16a34a',fontWeight:500}}>Admin</div>
-                  <div style={{textAlign:'center'}}>
-                    <button onClick={logoutMs} style={{background:'none',border:'none',cursor:'pointer',color:C.error,fontSize:16,padding:0}}><IcoTrash s={14}/></button>
-                  </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
           ):(
             <div style={{padding:'24px',textAlign:'center',background:C.bg,borderRadius:8,color:C.muted,fontSize:12}}>No cloud accounts connected</div>
