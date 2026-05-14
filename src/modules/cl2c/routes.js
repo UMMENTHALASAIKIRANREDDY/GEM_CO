@@ -320,15 +320,16 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
               if (!tenantId) {
                 cl2cLog('warn', 'Could not determine tenant ID — agent deployment skipped.');
               } else {
+                const existingDeployment = await db().collection('agentDeployments').findOne({
+                  appUserId: appUserId, tenantId, agentName: 'Claude Conversation Agent',
+                });
                 const deployer = new AgentDeployer(cl2cFolder, tenantId, {
                   agentName: 'Claude Conversation Agent',
                   sourceLabel: 'Claude',
                   notebookName: cl2cFolder,
                   sectionName: `${cl2cFolder} Conversations`,
+                  appId: existingDeployment?.appId || undefined, // reuse stored GUID
                 }, appUserId);
-                const existingDeployment = await db().collection('agentDeployments').findOne({
-                  appUserId: appUserId, tenantId, agentName: 'Claude Conversation Agent',
-                });
 
                 let appInfo;
                 if (existingDeployment?.catalogId) {
@@ -350,7 +351,7 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
                 // Key by tenantId so each domain gets its own deployment record
                 await db().collection('agentDeployments').updateOne(
                   { appUserId, tenantId, agentName: 'Claude Conversation Agent' },
-                  { $set: { batchId, msEmail, catalogId: appInfo.id, deployedAt: new Date() } },
+                  { $set: { batchId, msEmail, catalogId: appInfo.id, appId: deployer.appId, deployedAt: new Date() } },
                   { upsert: true }
                 ).catch(() => {});
               }

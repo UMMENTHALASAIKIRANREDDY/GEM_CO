@@ -30,7 +30,7 @@ export class AgentDeployer {
     this.appUserId = appUserId;
     this.agentName = options.agentName || 'Gemini Conversation Agent';
     this.sourceLabel = options.sourceLabel || 'Gemini';
-    this.appId = this._generateGuid();
+    this.appId = options.appId || this._generateGuid(); // reuse stored GUID on updates
     this.notebookName = options.notebookName || customerName;
     this.sectionName = options.sectionName || `${customerName} Conversations`;
     this.driveFolder = options.driveFolder || 'Migrated from Google Drive';
@@ -169,7 +169,6 @@ NEVER:
       "name": this.agentName,
       "description": `Search and review migrated ${this.customerName} ${this.sourceLabel} conversations. Ask questions about past chats and get instant answers grounded in your conversation history.`,
       "instructions": this._buildInstructions(),
-      "welcome_message": this._buildWelcomeMessage(),
       "capabilities": [
         {
           "name": "OneDriveAndSharePoint"

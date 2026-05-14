@@ -6,12 +6,10 @@ function getAgentManifest(deployer) {
   return JSON.parse(zip.readAsText('declarativeAgent.json'));
 }
 
-test('declarativeAgent.json has welcome_message', () => {
+test('declarativeAgent.json has no welcome_message (not supported in schema v1.5)', () => {
   const deployer = new AgentDeployer('Acme', 'tenant-abc', {}, null);
   const manifest = getAgentManifest(deployer);
-  expect(manifest.welcome_message).toBeDefined();
-  expect(typeof manifest.welcome_message).toBe('string');
-  expect(manifest.welcome_message.length).toBeGreaterThan(10);
+  expect(manifest.welcome_message).toBeUndefined();
 });
 
 test('instructions tell agent to list conversations on open', () => {
