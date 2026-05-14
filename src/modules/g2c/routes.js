@@ -373,6 +373,11 @@ export function createG2CRouter(deps) {
       if (!user_emails || user_emails.length === 0) return res.status(400).json({ error: 'user_emails array required' });
       const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
       const auth = getGoogleOAuth2Client(appUserId);
+      // Force token refresh — restored sessions can have stale access_token,
+      // first export attempt would fail until user disconnect/reconnect.
+      try { await auth.getAccessToken(); } catch (e) {
+        return res.status(401).json({ error: 'Google session expired. Please sign out and sign in again.' });
+      }
       const exporter = new VaultExporter(auth);
       const matter = await exporter.createMatter(`GEM_CO Export ${new Date().toISOString()}`);
       const exportData = await exporter.createExport(matter.matterId, user_emails);
@@ -640,7 +645,7 @@ export function createG2CRouter(deps) {
       );
 
       dbLog.info(`userMappings-csv — ${migDirParam} ${count} mappings from CSV`);
-      res.json({ success: true, count });
+      res.json({ success: true, count, mappings, migDir: migDirParam });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
@@ -1075,7 +1080,12 @@ export function createG2CRouter(deps) {
       retryMigration: async ({ batchId: retryFromBatchId, appUserId: uid }) => {
         const batchDoc = await db().collection('migrationWorkspaces').findOne({ _id: retryFromBatchId, appUserId: uid });
         if (!batchDoc) return { error: 'Batch not found' };
-        const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: 'gemini-copilot' });
+        // Retry only supports gemini-copilot today; reject other directions explicitly
+        const batchDir = batchDoc.migDir || 'gemini-copilot';
+        if (batchDir !== 'gemini-copilot') {
+          return { error: `Retry not yet supported for ${batchDir} migrations. Run another batch instead.` };
+        }
+        const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: batchDir });
         const uploadDoc = await db().collection('uploads').findOne({ appUserId: uid }, { sort: { uploadTime: -1 } });
         const retryTargets = {};
         for (const u of batchDoc.report?.users || []) {

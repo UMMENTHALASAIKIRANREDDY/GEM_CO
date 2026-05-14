@@ -582,7 +582,7 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
                   </>
                 ):(
                   msUsers.length>0?(
-                    <select defaultValue="" onChange={e=>{e.stopPropagation();if(e.target.value){setMappings(p=>({...p,[u.email]:e.target.value}));setSelectedUsers(p=>{const n=new Set(p);n.add(u.email);return n});}e.target.value=''}}
+                    <select value="" onChange={e=>{e.stopPropagation();const val=e.target.value;if(val){setMappings(p=>({...p,[u.email]:val}));setSelectedUsers(p=>{const n=new Set(p);n.add(u.email);return n});}}}
                       onClick={e=>e.stopPropagation()}
                       style={{border:'none',background:'transparent',fontSize:12,fontFamily:'inherit',color:C.muted,cursor:'pointer',outline:'none',width:'100%',padding:'2px 0'}}>
                       <option value="" disabled>— assign —</option>
@@ -780,7 +780,7 @@ const StepMigrate=({stats,done,live,lastRunWasDry,batchId,onStartLive,onRunAnoth
             </div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:20}}>
-            {[{label:'Users',val:stats.users,icon:<IcoUser s={22}/>,color:C.primary},{label:'Pages Created',val:stats.pages,icon:<IcoPage s={22}/>,color:C.success},{label:'Errors',val:stats.errors,icon:<IcoError s={22}/>,color:stats.errors>0?C.error:C.muted},{label:'Flagged Assets',val:stats.flagged,icon:<IcoFlag s={22}/>,color:C.primaryL}].map((s,i)=>(
+            {[{label:'Users',val:stats.users,icon:<IcoUser s={22}/>,color:C.primary},{label:lastRunWasDry?'Conversations':' Pages Created',val:stats.pages,icon:<IcoPage s={22}/>,color:C.success},{label:'Errors',val:stats.errors,icon:<IcoError s={22}/>,color:stats.errors>0?C.error:C.muted},{label:'Flagged Assets',val:stats.flagged,icon:<IcoFlag s={22}/>,color:C.primaryL}].map((s,i)=>(
               <Card key={i} className="scale-in" style={{animationDelay:`${i*80}ms`,textAlign:'center',padding:16}}>
                 <div style={{display:'flex',justifyContent:'center',marginBottom:6,color:s.color}}>{s.icon}</div>
                 <div style={{fontSize:28,fontWeight:700,color:s.color}}>{s.val}</div>
@@ -1714,7 +1714,7 @@ const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c
               </div>
             ))}
           </div>
-          {!lastRunWasDry&&<GemSetupInstructions folderName={c2gFolderName||'CopilotChats'}/>}
+          {!lastRunWasDry&&<GemSetupInstructions folderName={c2gFolderName||'CopilotChats'} migDir="copilot-gemini"/>}
           <div style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:12}}>
             {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{flex:'1 1 140px',justifyContent:'center'}}><IcoRocket s={14}/> Start Live Migration</Btn>}
             <Btn variant="ghost" onClick={onBack} style={{flex:'1 1 100px',justifyContent:'center'}}>← Options</Btn>
@@ -2119,28 +2119,32 @@ const StepCL2GOptions=({cl2gOptions,setCl2gOptions,cl2gConfig,setCl2gConfig,goog
 /* ═══════════════════════════════════════════ */
 /* ═══  GEM SETUP INSTRUCTIONS PANEL       ═══ */
 /* ═══════════════════════════════════════════ */
-const GEM_INSTRUCTIONS=`You are my personal Claude conversation assistant. The uploaded document(s) contain my complete Claude conversation history, with each conversation clearly labeled by number and title.
+const buildGemInstructions=(src='Claude')=>`You are my personal ${src} conversation assistant. The uploaded document(s) contain my complete ${src} conversation history, with each conversation clearly labeled by number and title.
 
 How to answer my questions:
 1. ALWAYS search the uploaded documents thoroughly before responding.
 2. When I ask about a topic — find all conversations related to it in the document and summarize what was discussed.
-3. When I ask "what did I ask about X?" or "find my conversation about X" — locate it in the document and return the exact Human and Claude message exchanges.
-4. When I ask to continue or follow up on a past conversation — find that conversation in the document, read the full message thread, then continue responding as Claude would, staying consistent with the context and conclusions already reached in that conversation.
+3. When I ask "what did I ask about X?" or "find my conversation about X" — locate it in the document and return the exact Human and ${src} message exchanges.
+4. When I ask to continue or follow up on a past conversation — find that conversation in the document, read the full message thread, then continue responding as ${src} would, staying consistent with the context and conclusions already reached in that conversation.
 5. Answer from the document content directly. Do not rephrase from your own training memory when the topic is in the documents.
 6. If a topic is not found anywhere in the documents, say: "This topic was not in your migrated conversation history." Then answer from general knowledge if helpful.
 7. Never fabricate conversation content that is not in the documents.
 
-Document structure: Each conversation starts with "Conversation N: Title" followed by [Human] and [Claude] labeled messages in chronological order.`;
+Document structure: Each conversation starts with "Conversation N: Title" followed by [Human] and [${src}] labeled messages in chronological order.`;
+const GEM_INSTRUCTIONS=buildGemInstructions();
 
-const GemSetupInstructions=({folderName='ClaudeChats'})=>{
+const GemSetupInstructions=({folderName='ClaudeChats',migDir})=>{
   const [copied,setCopied]=useState(false);
   const [open,setOpen]=useState(true);
-  const copy=()=>{navigator.clipboard.writeText(GEM_INSTRUCTIONS).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500)}).catch(()=>{})};
+  const sourceLabel=migDir==='copilot-gemini'?'Copilot':migDir==='claude-gemini'?'Claude':(folderName||'').toLowerCase().includes('copilot')?'Copilot':'Claude';
+  const gemInstructions=buildGemInstructions(sourceLabel);
+  const copy=()=>{navigator.clipboard.writeText(gemInstructions).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500)}).catch(()=>{})};
+
   const steps=[
     {n:1,icon:'🌐',title:'Open Gemini Gems',desc:'Go to gemini.google.com → click Gems in the left sidebar → New Gem'},
     {n:2,icon:'📁',title:'Add Knowledge from Google Drive',desc:`Under Knowledge, click "Add from Google Drive" → navigate to your ${folderName} folder → select it → Insert`},
     {n:3,icon:'📋',title:'Paste the Gem Instructions',desc:'Copy the instructions below and paste them into the Instructions box of the Gem'},
-    {n:4,icon:'💾',title:'Name & Save the Gem',desc:'Give the Gem a name (e.g. "My Claude History") → click Save — the Gem is now ready to use'},
+    {n:4,icon:'💾',title:'Name & Save the Gem',desc:`Give the Gem a name (e.g. "My ${sourceLabel} History") → click Save — the Gem is now ready to use`},
   ];
   return(
     <div style={{border:`1px solid #BFDBFE`,borderRadius:12,background:'#EFF6FF',marginBottom:16,overflow:'hidden'}}>
@@ -2176,7 +2180,7 @@ const GemSetupInstructions=({folderName='ClaudeChats'})=>{
                 {copied?<><IcoDone s={11}/>Copied!</>:<><IcoUpload s={11}/>Copy</>}
               </button>
             </div>
-            <pre style={{margin:0,padding:'12px 14px',fontSize:11,lineHeight:1.6,color:'#1E293B',whiteSpace:'pre-wrap',wordBreak:'break-word',fontFamily:'Consolas,monospace',maxHeight:220,overflowY:'auto'}}>{GEM_INSTRUCTIONS}</pre>
+            <pre style={{margin:0,padding:'12px 14px',fontSize:11,lineHeight:1.6,color:'#1E293B',whiteSpace:'pre-wrap',wordBreak:'break-word',fontFamily:'Consolas,monospace',maxHeight:220,overflowY:'auto'}}>{gemInstructions}</pre>
           </div>
           <div style={{marginTop:10,padding:'8px 12px',background:'#FEF9C3',border:'1px solid #FDE68A',borderRadius:8,fontSize:11,color:'#713F12'}}>
             <strong>Tip:</strong> The migrated folder contains max 3 files per user (All Conversations, Memory, Projects). Add them all to the Gem knowledge for best results.
@@ -2191,7 +2195,9 @@ const GemSetupInstructions=({folderName='ClaudeChats'})=>{
 /* Post-migration inline chat widget */
 const PostMigrationWidget=({migDir})=>{
   const [copied,setCopied]=useState(false);
-  const copy=()=>{navigator.clipboard.writeText(GEM_INSTRUCTIONS).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500)}).catch(()=>{})};
+  const widgetSourceLabel=migDir==='copilot-gemini'?'Copilot':migDir==='claude-gemini'?'Claude':'Claude';
+  const widgetInstructions=buildGemInstructions(widgetSourceLabel);
+  const copy=()=>{navigator.clipboard.writeText(widgetInstructions).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500)}).catch(()=>{})};
   if(migDir==='gemini-copilot'){
     return(
       <div style={{borderRadius:10,border:'1px solid #e2e8f0',padding:'14px 16px',marginTop:8,background:'#f8fafc'}}>
@@ -2238,7 +2244,7 @@ const PostMigrationWidget=({migDir})=>{
             {copied?'✓ Copied':'Copy'}
           </button>
         </div>
-        <pre style={{margin:0,padding:'10px 12px',fontSize:11,lineHeight:1.5,color:'#1E293B',whiteSpace:'pre-wrap',wordBreak:'break-word',fontFamily:'Consolas,monospace',maxHeight:160,overflowY:'auto'}}>{GEM_INSTRUCTIONS}</pre>
+        <pre style={{margin:0,padding:'10px 12px',fontSize:11,lineHeight:1.5,color:'#1E293B',whiteSpace:'pre-wrap',wordBreak:'break-word',fontFamily:'Consolas,monospace',maxHeight:160,overflowY:'auto'}}>{widgetInstructions}</pre>
       </div>
       <div style={{marginTop:8,padding:'7px 10px',background:'#FEF9C3',border:'1px solid #FDE68A',borderRadius:7,fontSize:11,color:'#713F12'}}>
         <strong>Tip:</strong> Add all migrated files (conversations, memory, projects) to the Gem for best results.
@@ -2303,7 +2309,7 @@ const StepCL2GMigrate=({cl2gStats,cl2gDone,onRunAnother,onBack,onStart,cl2gLive,
             ))}
           </div>
 
-          {!lastRunWasDry&&<GemSetupInstructions folderName={folderName}/>}
+          {!lastRunWasDry&&<GemSetupInstructions folderName={folderName} migDir="claude-gemini"/>}
 
           <div style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:16}}>
             {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{flex:'1 1 140px',justifyContent:'center'}}><IcoRocket s={14}/> Start Live Migration</Btn>}
@@ -2440,7 +2446,7 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
                       const isRunningBatch=r.status==='running';
                       const live=isRunningBatch&&liveStats&&r._id===liveBatchId;
                       const doneUsers=live?liveStats.users:(isRunningBatch?r.progressUsers:r.totalUsers);
-                      const donePages=live?liveStats.pages:(isRunningBatch?r.progressPages:r.migratedConversations);
+                      const donePages=live?liveStats.pages:(isRunningBatch?r.progressPages:(r.dryRun?r.totalConversations:r.migratedConversations));
                       const doneErrors=live?liveStats.errors:(isRunningBatch?r.progressErrors:r.totalErrors);
                       const totalUsers=r.totalUsers||0;
                       const filesLabel=(r.direction==='c2g'||r.direction==='copilot-gemini'||r.direction==='claude-gemini')?'Files':'Pages';
@@ -2500,6 +2506,9 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
 function App(){
   // Read stored userId synchronously so state initializers use the right scoped keys
   const [step,setStep]=useState(()=>lsGet(LS_PREFS,{}).step||0);
+  // Track initial values so DB restore doesn't clobber navigation the user made before init fetch returned
+  const initStepRef=useRef(lsGet(LS_PREFS,{}).step||0);
+  const initMigDirRef=useRef(lsGet(LS_PREFS,{}).migDir||null);
   const [uploadData,setUploadData]=useState(()=>{const c=lsGet(LS_UPLOAD,null);return c?.uploadId?c:null});
   const [config,setConfig]=useState(()=>({filePath:'GeminiChats',tenantId:'807d6772-847c-40e2-9bec-e2c930b3a42e',...(lsGet(LS_PREFS,{}).config||{})}));
   const [mappings,setMappings]=useState(()=>lsGet(LS_MAPPING,{}).g2c||{});
@@ -2638,8 +2647,9 @@ function App(){
           // recentWorkspaces recovery below may further update done/stats state
           const ui=initData.uiState;
           if(ui){
-            if(typeof ui.step==='number') setStep(ui.step);
-            if(ui.migDir) setMigDir(ui.migDir);
+            // Only restore step/migDir if user hasn't navigated since page load (race condition guard)
+            if(typeof ui.step==='number') setStep(prev=>prev===initStepRef.current?ui.step:prev);
+            if(ui.migDir) setMigDir(prev=>prev===initMigDirRef.current?ui.migDir:prev);
             if(ui.stats) setStats(ui.stats);
             if(ui.c2gStats) setC2gStats(ui.c2gStats);
             if(ui.cl2gStats) setCl2gStats(ui.cl2gStats);
@@ -2679,7 +2689,7 @@ function App(){
             if(g2cWs&&g2cWs.status==='completed'){
               const r=g2cWs.report?.summary||{};
               setMigDone(true);setLive(false);
-              setStats({users:r.total_users||g2cWs.migratedUsers||0,pages:r.total_pages_created||g2cWs.migratedConversations||0,errors:r.total_errors||g2cWs.failedUsers||0,flagged:0});
+              setStats({users:r.total_users||g2cWs.migratedUsers||0,pages:r.total_pages_created||(g2cWs.dryRun?g2cWs.totalConversations:g2cWs.migratedConversations)||0,errors:r.total_errors||g2cWs.failedUsers||0,flagged:0});
               setCurrentBatchId(g2cWs._id);setLastRunWasDry(!!g2cWs.dryRun);
               // Advance to done step if stuck mid-migration
               setStep(prev=>prev>=5&&prev<7?6:prev);
@@ -2782,7 +2792,7 @@ function App(){
         .then(doc=>{
           if(!doc)return;
           if(doc.status==='completed'&&doc.summary){
-            setStats({users:doc.summary.total_users||0,pages:doc.summary.total_pages_created||0,errors:doc.summary.total_errors||0,flagged:doc.summary.total_visual_assets_flagged||0});
+            setStats({users:doc.summary.total_users||0,pages:doc.dryRun?(doc.totalConversations||doc.summary.total_conversations||0):doc.summary.total_pages_created||0,errors:doc.summary.total_errors||0,flagged:doc.summary.total_visual_assets_flagged||0});
             setLastRunWasDry(doc.dryRun||false);
             setMigDone(true);setStep(6);
           } else if(doc.status==='failed'){
@@ -2813,11 +2823,14 @@ function App(){
     setTimeout(()=>setStep(3),400);
   };
 
-  const runMigration=async(forceLive=false)=>{
-    const isDry=forceLive===true?false:options.dryRun;
+  const runMigration=async(arg=false)=>{
+    // arg can be: boolean (legacy forceLive) or {dryRun: bool} (explicit from agent)
+    const explicitDry=arg && typeof arg==='object' && typeof arg.dryRun==='boolean' ? arg.dryRun : null;
+    const forceLive=arg===true;
+    const isDry=explicitDry!==null?explicitDry:(forceLive?false:options.dryRun);
     setLastRunWasDry(isDry);
-    // If running live after dry-run, update options too
-    if(forceLive)setOptions(p=>({...p,dryRun:false}));
+    // Sync UI checkbox with effective decision
+    setOptions(p=>({...p,dryRun:isDry}));
     setStep(5);setMigDone(false);setStats({users:0,pages:0,errors:0,flagged:0});setLogs([]);
     addLog('info',isDry?'Starting dry run...':'Starting live migration...');
     setAgentMode('running');
@@ -2832,6 +2845,7 @@ function App(){
         if(d.type==='success'&&d.message.includes('Page created'))curStats.pages++;
         if(d.type==='error')curStats.errors++;
         if(d.type==='info'&&d.message.includes('Processing:'))curStats.users++;
+        if(d.type==='user')curStats.users++;
         if(d.type==='warn'&&d.message.includes('flagged')){const m=d.message.match(/(\d+) conversations flagged/);if(m)curStats.flagged+=parseInt(m[1])}
         setStats({...curStats});addLog(d.type,d.message);
         if(d.type==='done'){
@@ -2839,6 +2853,7 @@ function App(){
           sseRef.current.close();setLive(false);setMigDone(true);setRetrying(false);setStep(6);
           setReportRefreshKey(p=>p+1);
           setAgentMode('done');
+          if(d.message&&d.message.includes('DRY RUN')){const cm=d.message.match(/(\d+)\s+conversations/);if(cm){curStats.pages=parseInt(cm[1]);setStats({...curStats});}}
           const s={...curStats};
           setTimeout(()=>addAgentMsg('bot',
             s.errors>0
@@ -2872,7 +2887,7 @@ function App(){
       setMappings(newMappings);
       const mapped=Object.values(newMappings).filter(Boolean).length;
       const total=(uploadData?.users||[]).length;
-      addAgentMsg('bot',`Auto-mapped **${mapped}** of **${total}** users by email match.${mapped<total?` **${total-mapped}** have no match — fill them in on the left.`:' All users mapped!'}`);
+      addAgentMsg('bot',`Auto-mapped **${mapped}** of **${total}** users by email match.${mapped<total?` **${total-mapped}** have no match — fill them in on the right.`:' All users mapped!'}`);
     } else if(migDir==='copilot-gemini'){
       const newMappings={...c2gMappings};
       msUsers.forEach(u=>{
@@ -2882,7 +2897,7 @@ function App(){
       setC2gMappings(newMappings);
       const mapped=Object.values(newMappings).filter(Boolean).length;
       const total=msUsers.length;
-      addAgentMsg('bot',`Auto-mapped **${mapped}** of **${total}** users.${mapped<total?` **${total-mapped}** unmatched — fill in on the left.`:' All mapped!'}`);
+      addAgentMsg('bot',`Auto-mapped **${mapped}** of **${total}** users.${mapped<total?` **${total-mapped}** unmatched — fill in on the right.`:' All mapped!'}`);
     } else if(migDir==='claude-gemini'){
       const newMappings={...cl2gMappings};
       (cl2gUploadData?.users||[]).forEach(u=>{
@@ -2892,7 +2907,7 @@ function App(){
       setCl2gMappings(newMappings);
       const mapped=Object.values(newMappings).filter(Boolean).length;
       const total=(cl2gUploadData?.users||[]).length;
-      addAgentMsg('bot',`Auto-mapped **${mapped}** of **${total}** users.${mapped<total?` **${total-mapped}** unmatched — fill in on the left.`:' All mapped!'}`);
+      addAgentMsg('bot',`Auto-mapped **${mapped}** of **${total}** users.${mapped<total?` **${total-mapped}** unmatched — fill in on the right.`:' All mapped!'}`);
     }
   },[migDir,mappings,uploadData,msUsers,googleUsers,c2gMappings,cl2gMappings,cl2gUploadData,setMappings,setC2gMappings,setCl2gMappings,addAgentMsg]);
 
@@ -2963,10 +2978,12 @@ function App(){
   },[appUser]);
 
   /* Copilot→Gemini migration */
-  const runC2GMigration=useCallback(async(forceLive=false)=>{
+  const runC2GMigration=useCallback(async(arg=false)=>{
     if(c2gLive)return;
-    const isDry=forceLive===true?false:c2gOptions.dryRun;
-    if(forceLive)setC2gOptions(p=>({...p,dryRun:false}));
+    const explicitDry=arg && typeof arg==='object' && typeof arg.dryRun==='boolean' ? arg.dryRun : null;
+    const forceLive=arg===true;
+    const isDry=explicitDry!==null?explicitDry:(forceLive?false:c2gOptions.dryRun);
+    setC2gOptions(p=>({...p,dryRun:isDry}));
     setC2gLastDry(isDry);
     const keys=c2gSelectedUsers.size>0?[...c2gSelectedUsers]:Object.keys(c2gMappings);
     const pairs=[];
@@ -3026,10 +3043,12 @@ function App(){
   runC2GMigrationRef.current=runC2GMigration;
 
   /* Claude→Gemini migration */
-  const runCL2GMigration=useCallback(async(forceLive=false)=>{
+  const runCL2GMigration=useCallback(async(arg=false)=>{
     if(cl2gLive)return;
-    const isDry=forceLive===true?false:cl2gOptions.dryRun;
-    if(forceLive)setCl2gOptions(p=>({...p,dryRun:false}));
+    const explicitDry=arg && typeof arg==='object' && typeof arg.dryRun==='boolean' ? arg.dryRun : null;
+    const forceLive=arg===true;
+    const isDry=explicitDry!==null?explicitDry:(forceLive?false:cl2gOptions.dryRun);
+    setCl2gOptions(p=>({...p,dryRun:isDry}));
     setCl2gLastDry(isDry);
     if(cl2gSelectedUuids.size===0){addAgentMsg('bot','⚠️ No users selected. Go back to the user mapping step and select at least one user.');return;}
     const keys=[...cl2gSelectedUuids];
@@ -3104,10 +3123,11 @@ function App(){
     if(!agentMigrationTrigger)return;
     setAgentMigrationTrigger(null);
     const{migDir:dir,dryRun}=agentMigrationTrigger;
-    const forceLive=dryRun===false;
-    if(dir==='gemini-copilot')runMigrationRef.current?.(forceLive);
-    else if(dir==='copilot-gemini')runC2GMigrationRef.current?.(forceLive);
-    else if(dir==='claude-gemini')runCL2GMigrationRef.current?.(forceLive);
+    // Pass agent's explicit dryRun decision so UI checkbox can't override it
+    const opts={dryRun:dryRun!==false};
+    if(dir==='gemini-copilot')runMigrationRef.current?.(opts);
+    else if(dir==='copilot-gemini')runC2GMigrationRef.current?.(opts);
+    else if(dir==='claude-gemini')runCL2GMigrationRef.current?.(opts);
   },[agentMigrationTrigger]);
 
   const handleChangeDirection=useCallback(()=>{
@@ -3164,12 +3184,13 @@ function App(){
     if(evt.event==='navigate'&&typeof evt.step==='number'){setStep(evt.step);}
     else if(evt.event==='select_direction'&&evt.direction){setMigDir(evt.direction);if(typeof evt.step==='number')setStep(evt.step);}
     else if(evt.event==='refresh_mapping'){setLeftMode&&typeof setLeftMode==='function'&&setLeftMode('mapping');}
+    else if(evt.event==='trigger_auto_map'){triggerAutoMap&&triggerAutoMap();}
     else if(evt.event==='refresh_reports'){setShowReports&&setShowReports(true);}
     else if(evt.event==='refresh_status'){setReportRefreshKey&&setReportRefreshKey(k=>k+1);}
     else if(evt.event==='migration_started'&&evt.migDir){setAgentMigrationTrigger({migDir:evt.migDir,dryRun:evt.dryRun??true,ts:Date.now()});}
     else if(evt.event==='show_widget'&&evt.widget){/* widget stored inline — handled when text event arrives */}
     else if(evt.event==='set_config'&&evt.config){applyAgentConfig&&applyAgentConfig(evt.config);}
-  },[setStep,setMigDir,setLeftMode,setShowReports,setReportRefreshKey,applyAgentConfig,setAgentMigrationTrigger]);
+  },[setStep,setMigDir,setLeftMode,setShowReports,setReportRefreshKey,applyAgentConfig,setAgentMigrationTrigger,triggerAutoMap,addAgentMsg]);
 
   const sendToAgent=useCallback(async(overrideMsg,isSystem=false)=>{
     const userMsg=overrideMsg||agentInput.trim();
@@ -3181,22 +3202,23 @@ function App(){
     setAgentTyping(true);
     try{
       const uiContext=(()=>{
-        if(step===0){const g=googleAuthed?'✓ Google connected':'✗ Google not connected';const m=msAuthed?'✓ Microsoft 365 connected':'✗ Microsoft 365 not connected';return `Left panel: Connect Clouds. ${g}. ${m}.`;}
-        if(step===1){const opts=[];if(googleAuthed&&msAuthed)opts.push('Gemini→Copilot','Copilot→Gemini','Claude→Gemini');else if(googleAuthed)opts.push('Claude→Gemini (available)','Gemini→Copilot (needs MS)');else if(msAuthed)opts.push('Gemini→Copilot (needs Google)','Copilot→Gemini (needs Google)');else opts.push('All directions locked');return `Left panel: Choose Direction. Options: ${opts.join(', ')}.`;}
-        if(step===2&&migDir==='gemini-copilot'){return `Left panel: Import Data (Gemini→Copilot). Upload status: ${uploadData?`${uploadData.total_users} users loaded`:'not uploaded'}.`;}
-        if(step===2&&migDir==='copilot-gemini'){return `Left panel: Map Users (Copilot→Gemini). ${Object.keys(c2gMappings).length} users mapped.`;}
-        if(step===2&&migDir==='claude-gemini'){const u=cl2gUploadData?.users?.length||0;return `Left panel: Upload ZIP (Claude→Gemini). ${u>0?`${u} users loaded`:'No ZIP uploaded'}.`;}
-        if(step===3&&migDir==='gemini-copilot'){return `Left panel: Map Users (Gemini→Copilot). ${Object.keys(mappings).length} users mapped.`;}
-        if(step===3&&migDir==='claude-gemini'){return `Left panel: Map Users (Claude→Gemini). ${Object.keys(cl2gMappings).length} users mapped.`;}
-        if(step===3&&migDir==='copilot-gemini'){return `Left panel: Options (Copilot→Gemini). Start Migration visible.`;}
-        if(step===4&&migDir==='gemini-copilot'){return `Left panel: Options (Gemini→Copilot). Dry run: ${options.dryRun?'ON':'OFF'}.`;}
-        if(step===4&&migDir==='claude-gemini'){return `Left panel: Options (Claude→Gemini). Dry run: ${cl2gOptions?.dryRun?'ON':'OFF'}.`;}
-        if(live||c2gLive||cl2gLive)return `Left panel: Migration in progress.`;
-        if(migDone||c2gDone||cl2gDone)return `Left panel: Migration complete. Stats: ${stats?.users||0} users, ${stats?.pages||0} files, ${stats?.errors||0} errors.`;
-        return `Left panel: Step ${step}, direction ${migDir||'not selected'}.`;
+        const sp=panelSwapped?'Left':'Right';
+        if(step===0){const g=googleAuthed?'✓ Google connected':'✗ Google not connected';const m=msAuthed?'✓ Microsoft 365 connected':'✗ Microsoft 365 not connected';return `${sp} panel: Connect Clouds. ${g}. ${m}.`;}
+        if(step===1){const opts=[];if(googleAuthed&&msAuthed)opts.push('Gemini→Copilot','Copilot→Gemini','Claude→Gemini');else if(googleAuthed)opts.push('Claude→Gemini (available)','Gemini→Copilot (needs MS)');else if(msAuthed)opts.push('Gemini→Copilot (needs Google)','Copilot→Gemini (needs Google)');else opts.push('All directions locked');return `${sp} panel: Choose Direction. Options: ${opts.join(', ')}.`;}
+        if(step===2&&migDir==='gemini-copilot'){return `${sp} panel: Import Data (Gemini→Copilot). Upload status: ${uploadData?`${uploadData.total_users} users loaded`:'not uploaded'}.`;}
+        if(step===2&&migDir==='copilot-gemini'){return `${sp} panel: Map Users (Copilot→Gemini). ${Object.keys(c2gMappings).length} users mapped.`;}
+        if(step===2&&migDir==='claude-gemini'){const u=cl2gUploadData?.users?.length||0;return `${sp} panel: Upload ZIP (Claude→Gemini). ${u>0?`${u} users loaded`:'No ZIP uploaded'}.`;}
+        if(step===3&&migDir==='gemini-copilot'){return `${sp} panel: Map Users (Gemini→Copilot). ${Object.keys(mappings).length} users mapped.`;}
+        if(step===3&&migDir==='claude-gemini'){return `${sp} panel: Map Users (Claude→Gemini). ${Object.keys(cl2gMappings).length} users mapped.`;}
+        if(step===3&&migDir==='copilot-gemini'){return `${sp} panel: Options (Copilot→Gemini). Start Migration visible.`;}
+        if(step===4&&migDir==='gemini-copilot'){return `${sp} panel: Options (Gemini→Copilot). Dry run: ${options.dryRun?'ON':'OFF'}.`;}
+        if(step===4&&migDir==='claude-gemini'){return `${sp} panel: Options (Claude→Gemini). Dry run: ${cl2gOptions?.dryRun?'ON':'OFF'}.`;}
+        if(live||c2gLive||cl2gLive)return `${sp} panel: Migration in progress.`;
+        if(migDone||c2gDone||cl2gDone)return `${sp} panel: Migration complete. Stats: ${stats?.users||0} users, ${stats?.pages||0} files, ${stats?.errors||0} errors.`;
+        return `${sp} panel: Step ${step}, direction ${migDir||'not selected'}.`;
       })();
       // Build direction-scoped state — only include stats for the active direction to avoid stale cross-direction confusion
-      const migrationState={step,migDir,live,agentMode,googleAuthed,msAuthed,uiContext,
+      const migrationState={step,migDir,live,agentMode,googleAuthed,msAuthed,uiContext,panelSwapped,
         // G2C (gemini-copilot) fields
         ...(migDir==='gemini-copilot'||migDir===null?{
           migDone,stats,lastRunWasDry,currentBatchId,
@@ -3502,7 +3524,25 @@ function App(){
                 <span style={{fontSize:12,color:live?'#16a34a':C.muted,fontWeight:500}}>{live?'Migrating':'Ready'}</span>
               </div>
             </div>
-            <AgentChat msgs={agentMsgs} typing={agentTyping} input={agentInput} onInput={setAgentInput} onSend={()=>sendToAgent()} onLogLineClick={handleLogLineClick} onQuickReply={handleAgentQuickReply} widgetProps={widgetProps} onShowReports={()=>setShowReports(true)} onClearChat={()=>setAgentMsgs([])} onWidgetDone={(msgId,w,result)=>{setAgentMsgs(prev=>prev.map(m=>m.id===msgId?{...m,content:{...m.content,done:true}}:m));const notifyMsg=w.widgetType==='zip'?`Upload complete. ${result.total_users??result.users?.length??0} users loaded.`:`CSV imported. ${result.count??0} mappings loaded.`;sendToAgent(notifyMsg,false);}}/>
+            <AgentChat msgs={agentMsgs} typing={agentTyping} input={agentInput} onInput={setAgentInput} onSend={()=>sendToAgent()} onLogLineClick={handleLogLineClick} onQuickReply={handleAgentQuickReply} widgetProps={widgetProps} onShowReports={()=>setShowReports(true)} onClearChat={()=>setAgentMsgs([])} onWidgetDone={(msgId,w,result)=>{
+  setAgentMsgs(prev=>prev.map(m=>m.id===msgId?{...m,content:{...m.content,done:true}}:m));
+  // Sync React state with whatever the backend just stored — otherwise migration
+  // reads empty React state and migrates 0 users.
+  if(w.widgetType==='csv'&&result?.mappings){
+    const dir=result.migDir||w.migDir;
+    if(dir==='copilot-gemini')setC2gMappings(result.mappings);
+    else if(dir==='claude-gemini')setCl2gMappings(result.mappings);
+    else setMappings(result.mappings);
+  }else if(w.widgetType==='zip'){
+    if(w.migDir==='claude-gemini'&&result?.users){
+      setCl2gUploadData(result);
+    }else if(result?.users||result?.total_users){
+      setUploadData(result);
+    }
+  }
+  const notifyMsg=w.widgetType==='zip'?`Upload complete. ${result.total_users??result.users?.length??0} users loaded.`:`CSV imported. ${result.count??0} mappings loaded.`;
+  sendToAgent(notifyMsg,false);
+}}/>
           </div>
         );
         return(

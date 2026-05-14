@@ -89,8 +89,18 @@ export async function getCopilotInteractionsForUser(accessToken, userId, overrid
   });
 
   if (copilotChatOnly) {
+    // First collect session IDs that have at least one valid Copilot chat response
+    const validSessionIds = new Set(
+      interactions
+        .filter((item) => isCopilotChatSurface(item.appClass))
+        .map((item) => item.sessionId)
+    );
+    // Keep Copilot response interactions AND userPrompt interactions that belong
+    // to those sessions — userPrompt interactions often have null appClass but
+    // may carry file attachments the user uploaded to the conversation
     interactions = interactions.filter((item) =>
-      isCopilotChatSurface(item.appClass)
+      isCopilotChatSurface(item.appClass) ||
+      (item.interactionType === "userPrompt" && validSessionIds.has(item.sessionId))
     );
   }
 
