@@ -327,7 +327,7 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
                   sectionName: `${cl2cFolder} Conversations`,
                 }, appUserId);
                 const existingDeployment = await db().collection('agentDeployments').findOne({
-                  appUserId: appUserId, tenantId,
+                  appUserId: appUserId, tenantId, agentName: 'Claude Conversation Agent',
                 });
 
                 let appInfo;

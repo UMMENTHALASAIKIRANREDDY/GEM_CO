@@ -78,13 +78,12 @@ export class AgentDeployer {
     const headers = await this._headers();
 
     const response = await fetch(
-      `${GRAPH_V1}/appCatalogs/teamsApps/${catalogId}/appDefinitions`,
+      `${GRAPH_V1}/appCatalogs/teamsApps/${catalogId}/appDefinitions?requiresReview=false`,
       {
         method: 'POST',
         headers: {
           ...headers,
           'Content-Type': 'application/zip',
-          'requiresReview': 'false',
         },
         body: zipBuffer,
       }
