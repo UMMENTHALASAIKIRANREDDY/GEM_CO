@@ -163,29 +163,29 @@ function buildStepContextInstruction(state) {
   if (migDir === 'gemini-copilot') {
     if (step === 2) {
       if (!uploadData) return `\n\n[BLOCKER] User is at Import Data but has NOT uploaded anything yet. Explain clearly: "Before mapping users or starting migration, you need to import your Google Workspace data. You can either select users directly from Google Workspace (left tab) or upload a Google Vault export ZIP file (right tab). Without this, there's nothing to migrate." Then tell them which option is easier.`;
-      return `\n\n[AUTO CONTEXT] Import Data done — ${uploadData.total_users} users loaded. Tell them the import is complete and they can now proceed to map users. 1 sentence.`;
+      return `\n\n[AUTO CONTEXT] Import Data done — ${uploadData.total_users} users loaded. Tell them the import is complete and they can click "Continue →" to map users. DO NOT call navigate_to_step.`;
     }
     if (step === 3) {
       if (mappings_count === 0) return `\n\n[BLOCKER] User is at Map Users but 0 users are mapped. Explain: "You need to match each Google Workspace user to their Microsoft 365 account. Without mappings, migration can't start — the system won't know where to send each person's data. I can auto-map everyone by email right now, or you can set them manually." Offer auto-map as the fast option.`;
-      return `\n\n[AUTO CONTEXT] Map Users — ${mappings_count} users mapped. Tell them mappings look good and they can proceed to Options. 1 sentence.`;
+      return `\n\n[AUTO CONTEXT] Map Users — ${mappings_count} users mapped. Tell them mappings look good and they can click "Continue →" when ready. DO NOT call navigate_to_step — let the user click the button themselves.`;
     }
     if (step === 4) return `\n\n[AUTO CONTEXT] Options step. ${dryRunDone ? 'Dry run already done — primary action is live migration now.' : 'First time here — explain dry run briefly: it previews what will happen without writing any data. Recommend it before going live.'}`;
   }
   if (migDir === 'copilot-gemini') {
     if (step === 2) {
       if (c2g_mappings_count === 0) return `\n\n[BLOCKER] User is at Map Users (Copilot→Gemini) but 0 users mapped. Explain: "You need to match each Microsoft 365 user to their Google Workspace destination. Without this, the migration engine doesn't know which Google account to write data into. Auto-map will match them by email instantly." Offer auto-map.`;
-      return `\n\n[AUTO CONTEXT] Map Users (C2G) — ${c2g_mappings_count} users mapped. Tell them to proceed to Options. 1 sentence.`;
+      return `\n\n[AUTO CONTEXT] Map Users (C2G) — ${c2g_mappings_count} users mapped. Tell them mappings look good and they can click "Continue →" when ready. DO NOT call navigate_to_step — let the user click the button themselves.`;
     }
     if (step === 3) return `\n\n[AUTO CONTEXT] Options (C2G). ${dryRunDone ? 'Dry run done — offer live migration.' : 'Recommend dry run first — safe preview with no data written.'}`;
   }
   if (migDir === 'claude-gemini') {
     if (step === 2) {
       if (cl2g_upload_users === 0) return `\n\n[BLOCKER] User is at Upload ZIP but hasn't uploaded anything. Explain: "To migrate your Claude AI conversations, you first need to export them from Claude.ai. Go to claude.ai → Settings → Account → Export Data, download the ZIP file, then upload it here. This ZIP contains all your conversation history." Give them the steps clearly.`;
-      return `\n\n[AUTO CONTEXT] ZIP uploaded — ${cl2g_upload_users} users found. Tell them upload is done, now they need to map users. 1 sentence.`;
+      return `\n\n[AUTO CONTEXT] ZIP uploaded — ${cl2g_upload_users} users found. Tell them upload is done and they can click "Continue →" to map users. DO NOT call navigate_to_step.`;
     }
     if (step === 3) {
       if (cl2g_mappings_count === 0) return `\n\n[BLOCKER] User is at Map Users (CL2G) but 0 mapped. Explain: "Each Claude user in your export needs to be matched to a Google Workspace account. This tells the system which Google Drive to put the conversations into. Auto-map will match by email automatically." Offer auto-map.`;
-      return `\n\n[AUTO CONTEXT] Map Users (CL2G) — ${cl2g_mappings_count} mapped. Tell them to proceed to Options. 1 sentence.`;
+      return `\n\n[AUTO CONTEXT] Map Users (CL2G) — ${cl2g_mappings_count} mapped. Tell them mappings look good and they can click "Continue →" when ready. DO NOT call navigate_to_step — let the user click the button themselves.`;
     }
     if (step === 4) return `\n\n[AUTO CONTEXT] Options (CL2G). ${dryRunDone ? 'Dry run done — offer live migration.' : 'Recommend dry run — safe preview first.'}`;
   }
@@ -265,7 +265,7 @@ export async function runAgentLoop(req, res, { message, migrationState: _migrati
     const isReturnGreet  = message === '__step_context__' && isReturningUser && history.length === 0;
 
     const greetingInstruction = isFirstMessage
-      ? `\n\n[GREETING — FIRST VISIT] Welcome ${migrationState.appUserName ?? 'the user'} by name. Introduce yourself as GEM, CloudFuze's migration assistant. In 3-4 sentences: (1) greet them by first name, (2) say what GEM can do — migrate Google Workspace, Microsoft 365 Copilot, and Claude AI conversations, (3) tell them the first step is connecting their cloud accounts on the left panel. Professional, warm, not robotic.`
+      ? `\n\n[GREETING — FIRST VISIT] Welcome ${migrationState.appUserName ?? 'the user'} by name. Introduce yourself as GEM, CloudFuze's migration assistant. In 3-4 sentences: (1) greet them by first name, (2) say what GEM can do — migrate Google Workspace, Microsoft 365 Copilot, and Claude AI conversations, (3) tell them the first step is connecting their cloud accounts on the ${migrationState.panelSwapped ? 'left' : 'right'} panel. Professional, warm, not robotic.`
       : isReturnGreet
         ? `\n\n[GREETING — RETURNING USER] Welcome ${migrationState.appUserName ?? 'back'} back by name. 1 sentence warm greeting, then immediately tell them where they left off based on current state. Be specific. No generic intros.`
         : '';

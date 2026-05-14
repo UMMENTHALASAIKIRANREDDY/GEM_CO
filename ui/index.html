@@ -3395,6 +3395,9 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
 function App(){
   // Read stored userId synchronously so state initializers use the right scoped keys
   const [step,setStep]=useState(()=>lsGet(LS_PREFS,{}).step||0);
+  // Track initial values so DB restore doesn't clobber navigation the user made before init fetch returned
+  const initStepRef=useRef(lsGet(LS_PREFS,{}).step||0);
+  const initMigDirRef=useRef(lsGet(LS_PREFS,{}).migDir||null);
   const [uploadData,setUploadData]=useState(()=>{const c=lsGet(LS_UPLOAD,null);return c?.uploadId?c:null});
   const [config,setConfig]=useState(()=>({filePath:'GeminiChats',tenantId:'807d6772-847c-40e2-9bec-e2c930b3a42e',...(lsGet(LS_PREFS,{}).config||{})}));
   const [mappings,setMappings]=useState(()=>lsGet(LS_MAPPING,{}).g2c||{});
@@ -3574,8 +3577,9 @@ function App(){
           // recentWorkspaces recovery below may further update done/stats state
           const ui=initData.uiState;
           if(ui){
-            if(typeof ui.step==='number') setStep(ui.step);
-            if(ui.migDir) setMigDir(ui.migDir);
+            // Only restore step/migDir if user hasn't navigated since page load (race condition guard)
+            if(typeof ui.step==='number') setStep(prev=>prev===initStepRef.current?ui.step:prev);
+            if(ui.migDir) setMigDir(prev=>prev===initMigDirRef.current?ui.migDir:prev);
             if(ui.stats) setStats(ui.stats);
             if(ui.c2gStats) setC2gStats(ui.c2gStats);
             if(ui.cl2gStats) setCl2gStats(ui.cl2gStats);
@@ -3844,7 +3848,7 @@ function App(){
       setMappings(newMappings);
       const mapped=Object.values(newMappings).filter(Boolean).length;
       const total=(uploadData?.users||[]).length;
-      addAgentMsg('bot',`Auto-mapped **${mapped}** of **${total}** users by email match.${mapped<total?` **${total-mapped}** have no match — fill them in on the left.`:' All users mapped!'}`);
+      addAgentMsg('bot',`Auto-mapped **${mapped}** of **${total}** users by email match.${mapped<total?` **${total-mapped}** have no match — fill them in on the right.`:' All users mapped!'}`);
     } else if(migDir==='copilot-gemini'){
       const newMappings={...c2gMappings};
       msUsers.forEach(u=>{
@@ -3854,7 +3858,7 @@ function App(){
       setC2gMappings(newMappings);
       const mapped=Object.values(newMappings).filter(Boolean).length;
       const total=msUsers.length;
-      addAgentMsg('bot',`Auto-mapped **${mapped}** of **${total}** users.${mapped<total?` **${total-mapped}** unmatched — fill in on the left.`:' All mapped!'}`);
+      addAgentMsg('bot',`Auto-mapped **${mapped}** of **${total}** users.${mapped<total?` **${total-mapped}** unmatched — fill in on the right.`:' All mapped!'}`);
     } else if(migDir==='claude-gemini'){
       const newMappings={...cl2gMappings};
       (cl2gUploadData?.users||[]).forEach(u=>{
@@ -3864,7 +3868,7 @@ function App(){
       setCl2gMappings(newMappings);
       const mapped=Object.values(newMappings).filter(Boolean).length;
       const total=(cl2gUploadData?.users||[]).length;
-      addAgentMsg('bot',`Auto-mapped **${mapped}** of **${total}** users.${mapped<total?` **${total-mapped}** unmatched — fill in on the left.`:' All mapped!'}`);
+      addAgentMsg('bot',`Auto-mapped **${mapped}** of **${total}** users.${mapped<total?` **${total-mapped}** unmatched — fill in on the right.`:' All mapped!'}`);
     }
   },[migDir,mappings,uploadData,msUsers,googleUsers,c2gMappings,cl2gMappings,cl2gUploadData,setMappings,setC2gMappings,setCl2gMappings,addAgentMsg]);
 
@@ -4223,22 +4227,23 @@ function App(){
     setAgentTyping(true);
     try{
       const uiContext=(()=>{
-        if(step===0){const g=googleAuthed?'✓ Google connected':'✗ Google not connected';const m=msAuthed?'✓ Microsoft 365 connected':'✗ Microsoft 365 not connected';return `Left panel: Connect Clouds. ${g}. ${m}.`;}
-        if(step===1){const opts=[];if(googleAuthed&&msAuthed)opts.push('Gemini→Copilot','Copilot→Gemini','Claude→Gemini');else if(googleAuthed)opts.push('Claude→Gemini (available)','Gemini→Copilot (needs MS)');else if(msAuthed)opts.push('Gemini→Copilot (needs Google)','Copilot→Gemini (needs Google)');else opts.push('All directions locked');return `Left panel: Choose Direction. Options: ${opts.join(', ')}.`;}
-        if(step===2&&migDir==='gemini-copilot'){return `Left panel: Import Data (Gemini→Copilot). Upload status: ${uploadData?`${uploadData.total_users} users loaded`:'not uploaded'}.`;}
-        if(step===2&&migDir==='copilot-gemini'){return `Left panel: Map Users (Copilot→Gemini). ${Object.keys(c2gMappings).length} users mapped.`;}
-        if(step===2&&migDir==='claude-gemini'){const u=cl2gUploadData?.users?.length||0;return `Left panel: Upload ZIP (Claude→Gemini). ${u>0?`${u} users loaded`:'No ZIP uploaded'}.`;}
-        if(step===3&&migDir==='gemini-copilot'){return `Left panel: Map Users (Gemini→Copilot). ${Object.keys(mappings).length} users mapped.`;}
-        if(step===3&&migDir==='claude-gemini'){return `Left panel: Map Users (Claude→Gemini). ${Object.keys(cl2gMappings).length} users mapped.`;}
-        if(step===3&&migDir==='copilot-gemini'){return `Left panel: Options (Copilot→Gemini). Start Migration visible.`;}
-        if(step===4&&migDir==='gemini-copilot'){return `Left panel: Options (Gemini→Copilot). Dry run: ${options.dryRun?'ON':'OFF'}.`;}
-        if(step===4&&migDir==='claude-gemini'){return `Left panel: Options (Claude→Gemini). Dry run: ${cl2gOptions?.dryRun?'ON':'OFF'}.`;}
-        if(live||c2gLive||cl2gLive)return `Left panel: Migration in progress.`;
-        if(migDone||c2gDone||cl2gDone)return `Left panel: Migration complete. Stats: ${stats?.users||0} users, ${stats?.pages||0} files, ${stats?.errors||0} errors.`;
-        return `Left panel: Step ${step}, direction ${migDir||'not selected'}.`;
+        const sp=panelSwapped?'Left':'Right';
+        if(step===0){const g=googleAuthed?'✓ Google connected':'✗ Google not connected';const m=msAuthed?'✓ Microsoft 365 connected':'✗ Microsoft 365 not connected';return `${sp} panel: Connect Clouds. ${g}. ${m}.`;}
+        if(step===1){const opts=[];if(googleAuthed&&msAuthed)opts.push('Gemini→Copilot','Copilot→Gemini','Claude→Gemini');else if(googleAuthed)opts.push('Claude→Gemini (available)','Gemini→Copilot (needs MS)');else if(msAuthed)opts.push('Gemini→Copilot (needs Google)','Copilot→Gemini (needs Google)');else opts.push('All directions locked');return `${sp} panel: Choose Direction. Options: ${opts.join(', ')}.`;}
+        if(step===2&&migDir==='gemini-copilot'){return `${sp} panel: Import Data (Gemini→Copilot). Upload status: ${uploadData?`${uploadData.total_users} users loaded`:'not uploaded'}.`;}
+        if(step===2&&migDir==='copilot-gemini'){return `${sp} panel: Map Users (Copilot→Gemini). ${Object.keys(c2gMappings).length} users mapped.`;}
+        if(step===2&&migDir==='claude-gemini'){const u=cl2gUploadData?.users?.length||0;return `${sp} panel: Upload ZIP (Claude→Gemini). ${u>0?`${u} users loaded`:'No ZIP uploaded'}.`;}
+        if(step===3&&migDir==='gemini-copilot'){return `${sp} panel: Map Users (Gemini→Copilot). ${Object.keys(mappings).length} users mapped.`;}
+        if(step===3&&migDir==='claude-gemini'){return `${sp} panel: Map Users (Claude→Gemini). ${Object.keys(cl2gMappings).length} users mapped.`;}
+        if(step===3&&migDir==='copilot-gemini'){return `${sp} panel: Options (Copilot→Gemini). Start Migration visible.`;}
+        if(step===4&&migDir==='gemini-copilot'){return `${sp} panel: Options (Gemini→Copilot). Dry run: ${options.dryRun?'ON':'OFF'}.`;}
+        if(step===4&&migDir==='claude-gemini'){return `${sp} panel: Options (Claude→Gemini). Dry run: ${cl2gOptions?.dryRun?'ON':'OFF'}.`;}
+        if(live||c2gLive||cl2gLive)return `${sp} panel: Migration in progress.`;
+        if(migDone||c2gDone||cl2gDone)return `${sp} panel: Migration complete. Stats: ${stats?.users||0} users, ${stats?.pages||0} files, ${stats?.errors||0} errors.`;
+        return `${sp} panel: Step ${step}, direction ${migDir||'not selected'}.`;
       })();
       // Build direction-scoped state — only include stats for the active direction to avoid stale cross-direction confusion
-      const migrationState={step,migDir,live,agentMode,googleAuthed,msAuthed,uiContext,
+      const migrationState={step,migDir,live,agentMode,googleAuthed,msAuthed,uiContext,panelSwapped,
         // G2C (gemini-copilot) fields
         ...(migDir==='gemini-copilot'||migDir===null?{
           migDone,stats,lastRunWasDry,currentBatchId,
