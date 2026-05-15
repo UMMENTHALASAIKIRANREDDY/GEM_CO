@@ -1,5 +1,5 @@
 import AdmZip from 'adm-zip';
-import { getValidToken, getAppOnlyToken } from '../core/auth/microsoft.js';
+import { getValidToken } from '../core/auth/microsoft.js';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('agent:deployer');
@@ -37,14 +37,7 @@ export class AgentDeployer {
   }
 
   async _headers() {
-    try {
-      const token = await getValidToken(this.appUserId);
-      return { 'Authorization': `Bearer ${token}` };
-    } catch {
-      // Fall back to app-only token when no delegated session is available
-      const token = await getAppOnlyToken(this.tenantId);
-      return { 'Authorization': `Bearer ${token}` };
-    }
+    return { 'Authorization': `Bearer ${await getValidToken(this.appUserId)}` };
   }
 
   /**
