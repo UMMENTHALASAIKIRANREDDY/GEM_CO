@@ -307,7 +307,13 @@ export async function restoreMsSessions() {
  * Not per-user; uses client credentials flow.
  */
 export async function getAppOnlyToken(tenantId) {
-  const app = _createMsalApp(tenantId);
+  const app = new ConfidentialClientApplication({
+    auth: {
+      clientId: process.env.AZURE_CLIENT_ID,
+      clientSecret: process.env.AZURE_CLIENT_SECRET,
+      authority: `https://login.microsoftonline.com/${tenantId}`,
+    },
+  });
   const result = await app.acquireTokenByClientCredential({
     scopes: ['https://graph.microsoft.com/.default']
   });

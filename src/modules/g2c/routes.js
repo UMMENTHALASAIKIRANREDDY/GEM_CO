@@ -911,18 +911,35 @@ export function createG2CRouter(deps) {
       if (!dry_run) {
         emit('info', '━━━ Deploying Copilot Agent ━━━');
         try {
-          const deployer = new AgentDeployer(customer_name, tenant_id, {}, appUserId);
-          const appInfo = await deployer.deployAgent();
+          const existingG2CDeployment = await db().collection('agentDeployments').findOne({
+            appUserId, tenantId: tenant_id, agentName: 'Gemini Conversation Agent',
+          });
+          const deployer = new AgentDeployer(customer_name, tenant_id, {
+            appId: existingG2CDeployment?.appId || undefined,
+          }, appUserId);
+
+          let appInfo;
+          if (existingG2CDeployment?.catalogId) {
+            const updateResult = await deployer.updateAgent(existingG2CDeployment.catalogId);
+            if (!updateResult.updated) {
+              appInfo = await deployer.deployAgent();
+            } else {
+              appInfo = { id: existingG2CDeployment.catalogId, alreadyExisted: true, installInstructions: deployer._installInstructions() };
+            }
+          } else {
+            appInfo = await deployer.deployAgent();
+          }
+
           if (appInfo.alreadyExisted) {
-            emit('info', `Agent "Gemini Conversation Agent" already exists in catalog — skipping publish`);
+            emit('info', `Agent "Gemini Conversation Agent" already exists in catalog — updated`);
           } else {
             emit('success', `Agent "Gemini Conversation Agent" published to Teams catalog (id: ${appInfo.id})`);
           }
           emit('info', appInfo.installInstructions);
           reportUpdate.agentDeployment = { catalogId: appInfo.id, alreadyExisted: appInfo.alreadyExisted };
           await db().collection('agentDeployments').updateOne(
-            { appUserId, msEmail, agentName: 'Gemini Conversation Agent' },
-            { $set: { batchId, catalogId: appInfo.id, deployedAt: new Date() } },
+            { appUserId, tenantId: tenant_id, agentName: 'Gemini Conversation Agent' },
+            { $set: { batchId, catalogId: appInfo.id, appId: deployer.appId, msEmail, deployedAt: new Date() } },
             { upsert: true }
           );
           dbLog.info(`agentDeployments.upsert — "Gemini Conversation Agent" (catalog id: ${appInfo.id})`);

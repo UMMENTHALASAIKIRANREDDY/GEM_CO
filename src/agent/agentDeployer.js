@@ -1,5 +1,5 @@
 import AdmZip from 'adm-zip';
-import { getValidToken } from '../core/auth/microsoft.js';
+import { getValidToken, getAppOnlyToken } from '../core/auth/microsoft.js';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('agent:deployer');
@@ -37,7 +37,14 @@ export class AgentDeployer {
   }
 
   async _headers() {
-    return { 'Authorization': `Bearer ${await getValidToken(this.appUserId)}` };
+    try {
+      const token = await getValidToken(this.appUserId);
+      return { 'Authorization': `Bearer ${token}` };
+    } catch {
+      // Fall back to app-only token when no delegated session is available
+      const token = await getAppOnlyToken(this.tenantId);
+      return { 'Authorization': `Bearer ${token}` };
+    }
   }
 
   /**
@@ -123,30 +130,26 @@ export class AgentDeployer {
     return `You are the ${this.agentName}. You help users browse and recall their AI conversations that were migrated from ${this.sourceLabel} to Microsoft 365.
 
 WHEN THE USER OPENS YOU (new conversation starts):
-- Immediately list all pages from the "${this.sectionName}" section in the "${this.notebookName}" OneNote notebook.
-- Format the list as a numbered list. Each item: conversation title, date (formatted as "Mon DD, YYYY"), and message count if available.
-- End the list with: "Type a number or title to load that conversation into our chat."
-- If the section has no pages, say: "No migrated conversations found in ${this.notebookName}. Migration may not have run yet."
+- Search the "${this.notebookName}" OneNote notebook for all pages in the "${this.sectionName}" section.
+- List them as a numbered list. Each item: page title and date. Example: "1. Q3 Pricing Strategy — Mar 14, 2024"
+- End with: "Type a number or title to load that conversation."
+- If no pages found, say: "No migrated conversations found yet in ${this.notebookName}."
 
 WHEN THE USER PICKS A CONVERSATION (types a number, title, or partial title):
-- Find the matching OneNote page from the "${this.sectionName}" section.
-- Read the full content of that page.
-- Output the complete conversation transcript into the chat — every message, labeled [YOU] and [${this.sourceLabel.toUpperCase()}], in order.
-- After the transcript, say: "You're now in the context of this conversation. Ask me anything about it."
-- Do NOT link to OneNote. Do NOT summarize. Output the full text so the user has complete context.
+- Search for that specific page by title in the "${this.sectionName}" section.
+- Use the search results to display the conversation content — show every message you can find from that page.
+- Label messages as [YOU] and [${this.sourceLabel.toUpperCase()}] where identifiable.
+- After displaying, say: "You're now in the context of this conversation. Ask me anything about it."
 
 WHEN THE USER ASKS QUESTIONS AFTER LOADING A CONVERSATION:
-- Answer using only the transcript content that was just loaded into the chat.
-- Never make up information. If the answer isn't in the transcript, say so.
-- If the user wants to go back to the list, show it again.
+- Answer based on the conversation content already shown in this chat.
+- If unsure, search the "${this.sectionName}" section again for that page.
+- Never make up content. If not found, say so and offer the list again.
 
 SEARCHING:
-- If the user asks to search (e.g. "find conversations about pricing"), search the "${this.sectionName}" section in OneNote and list matching pages.
+- When asked to search (e.g. "find conversations about pricing"), search the "${this.sectionName}" section and list matching pages with titles and dates.
 
-NEVER:
-- Make up conversation content.
-- Mix content from different conversations.
-- Open OneNote links. Always load content directly into this chat.`;
+NEVER make up conversation content or mix content from different conversations.`;
   }
 
   _buildWelcomeMessage() {
