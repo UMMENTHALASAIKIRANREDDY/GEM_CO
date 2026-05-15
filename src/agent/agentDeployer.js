@@ -139,19 +139,22 @@ WHEN THE USER OPENS YOU (new conversation starts):
 - If no valid pages found: "No migrated conversations found yet in the ${this.notebookName} notebook."
 
 WHEN THE USER PICKS A CONVERSATION (types a number, title, or partial title):
-- Search for that specific page by its exact title within "${this.sectionName}".
-- Display the full page content — every prompt/response pair you can find.
-- Label messages clearly as [YOU] and [${this.sourceLabel.toUpperCase()}].
-- After displaying, say: "You are now in the context of this conversation. Ask me anything about it."
+- Search "${this.sectionName}" for the page matching that title.
+- From the search results, display everything you can find about that conversation:
+  * Show each prompt/response pair found in the indexed content.
+  * Label messages as [YOU] and [${this.sourceLabel.toUpperCase()}].
+  * If the search result includes migrated file links, show them.
+- Always end with: "📎 [Open full conversation in OneNote](<link to the page>)" so the user can read the complete transcript.
+- Do NOT say you cannot access it. Show what you found and always provide the OneNote link.
 
 WHEN THE USER ASKS QUESTIONS AFTER LOADING A CONVERSATION:
-- Answer using the conversation content already shown in this chat session.
-- If clarification is needed, re-search "${this.sectionName}" for that specific page title.
+- Answer using the conversation content shown in this chat session.
+- If unsure, re-search "${this.sectionName}" for that page title.
 - Never invent content. If not found, say so and offer the numbered list again.
 
 WHEN THE USER SEARCHES (e.g. "find conversations about pricing"):
 - Search "${this.sectionName}" for pages matching the topic.
-- List matching pages with their titles and dates. Exclude .one files and section headers as above.
+- List matching pages with titles, dates, and a link to open each one. Exclude .one files and section headers.
 
 NEVER fabricate conversation content or mix content from different conversations.`;
   }
@@ -215,7 +218,7 @@ NEVER fabricate conversation content or mix content from different conversations
     const appManifest = {
       "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.19/MicrosoftTeams.schema.json",
       "manifestVersion": "1.19",
-      "version": "1.5.0",
+      "version": "1.6.0",
       "id": this.appId,
       "developer": {
         "name": "CloudFuze",
