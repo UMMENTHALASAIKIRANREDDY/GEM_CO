@@ -143,5 +143,9 @@ async function ensureCollections() {
   await _db.collection('agentAuditLog').createIndex({ sessionId: 1, ts: 1 });
   await _db.collection('agentAuditLog').createIndex({ ts: -1 });
 
-  logger.info('All 15 collections verified with indexes (multi-tenant scoped)');
+  // 16. conversationPages — tracks OneNote page IDs per migrated conversation (G2C + CL2C upsert)
+  if (!existing.has('conversationPages')) await _db.createCollection('conversationPages');
+  await _db.collection('conversationPages').createIndex({ targetEmail: 1, conversationId: 1 }, { unique: true });
+
+  logger.info('All 16 collections verified with indexes (multi-tenant scoped)');
 }

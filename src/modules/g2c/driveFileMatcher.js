@@ -37,38 +37,40 @@ export class DriveFileMatcher {
 
   async uploadToOneDrive(driveFile, targetEmail) {
     try {
-      // Google Docs editors can't be downloaded as binary — must export
       const exportFmt = this._exportFormat(driveFile.mimeType);
-      let buffer, uploadName;
+      const uploadName = exportFmt ? driveFile.name + exportFmt.ext : driveFile.name;
 
+      const msToken = await getValidToken(this.appUserId);
+      const encodedPath = encodeURIComponent(`GeminiMigration/${uploadName}`);
+      const fileBaseUrl = `${GRAPH_BASE}/users/${targetEmail}/drive/root:/${encodedPath}`;
+
+      // Check if file already exists in OneDrive — reuse link, skip re-upload
+      const checkRes = await fetch(fileBaseUrl, { headers: { Authorization: `Bearer ${msToken}` } });
+      if (checkRes.ok) {
+        const existing = await checkRes.json();
+        logger.info(`File "${uploadName}" already exists in OneDrive for ${targetEmail} — reusing`);
+        return existing.webUrl || existing['@microsoft.graph.downloadUrl'] || `uploaded:${uploadName}`;
+      }
+
+      // Download from Google Drive
+      let buffer;
       if (exportFmt) {
         const dlRes = await this.drive.files.export(
           { fileId: driveFile.id, mimeType: exportFmt.mime },
           { responseType: 'arraybuffer' }
         );
         buffer = Buffer.from(dlRes.data);
-        uploadName = driveFile.name + exportFmt.ext;
       } else {
         const dlRes = await this.drive.files.get(
           { fileId: driveFile.id, alt: 'media' },
           { responseType: 'arraybuffer' }
         );
         buffer = Buffer.from(dlRes.data);
-        uploadName = driveFile.name;
       }
 
-      const msToken = await getValidToken(this.appUserId);
-      const headers = {
-        Authorization: `Bearer ${msToken}`,
-        'Content-Type': 'application/octet-stream',
-      };
-
-      // Upload to OneDrive — PUT creates or replaces
-      const encodedPath = encodeURIComponent(`GeminiMigration/${uploadName}`);
-      const uploadUrl = `${GRAPH_BASE}/users/${targetEmail}/drive/root:/${encodedPath}:/content`;
-      const upRes = await fetch(uploadUrl, {
+      const upRes = await fetch(`${fileBaseUrl}:/content`, {
         method: 'PUT',
-        headers,
+        headers: { Authorization: `Bearer ${msToken}`, 'Content-Type': 'application/octet-stream' },
         body: buffer,
       });
 
