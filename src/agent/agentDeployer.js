@@ -215,7 +215,7 @@ NEVER fabricate conversation content or mix content from different conversations
     const appManifest = {
       "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.19/MicrosoftTeams.schema.json",
       "manifestVersion": "1.19",
-      "version": "1.3.0",
+      "version": "1.5.0",
       "id": this.appId,
       "developer": {
         "name": "CloudFuze",
@@ -288,7 +288,7 @@ NEVER fabricate conversation content or mix content from different conversations
   async _publishToCatalog(zipBuffer) {
     const headers = await this._headers();
 
-    const response = await fetch(`${GRAPH_V1}/appCatalogs/teamsApps`, {
+    const response = await fetch(`${GRAPH_V1}/appCatalogs/teamsApps?requiresReview=false`, {
       method: 'POST',
       headers: {
         ...headers,

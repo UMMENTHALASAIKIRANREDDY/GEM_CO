@@ -22,23 +22,26 @@ const KNOWN_CATALOG_ID = 'eb613bd7-b046-467c-bfcf-9356790a180e';
 const EXTERNAL_ID      = '88486dc9-3491-4964-ad36-d7d827abbb43'; // must match manifest id
 
 const deployer = new AgentDeployer(CUSTOMER, TENANT_ID, {
-  agentName:    'Claude Conversation Agent',
+  agentName:    'Claude Conversation Agent 1',
   sourceLabel:  'Claude',
   notebookName: 'ClaudeChats',
   sectionName:  'ClaudeChats Conversations',
   appId:        EXTERNAL_ID,
 }, APP_USER_ID, ACCOUNT_ID);
 
-console.log(`Updating Claude agent (catalogId=${KNOWN_CATALOG_ID}) to v1.3.0…`);
-const result = await deployer.updateAgent(KNOWN_CATALOG_ID);
-if (!result.updated) { console.log('Update failed — check logs above'); process.exit(1); }
+console.log('Deploying Claude Conversation Agent 1…');
+const result = await deployer.deployAgent();
+if (!result.id && !result.alreadyExisted) { console.log('Deploy failed'); process.exit(1); }
 
-await db.collection('agentDeployments').updateOne(
-  { tenantId: TENANT_ID, agentName: 'Claude Conversation Agent' },
-  { $set: { catalogId: KNOWN_CATALOG_ID, appId: EXTERNAL_ID, updatedAt: new Date(), msEmail: 'erik@filefuze.co' } },
-  { upsert: true },
-);
-console.log('Deployment record updated.');
+const catalogId = result.id;
+if (catalogId) {
+  await db.collection('agentDeployments').updateOne(
+    { tenantId: TENANT_ID, agentName: 'Claude Conversation Agent 1' },
+    { $set: { catalogId, appId: deployer.appId, updatedAt: new Date(), msEmail: 'erik@filefuze.co' } },
+    { upsert: true },
+  );
+  console.log(`Deployment record updated (catalogId=${catalogId}).`);
+}
 
 console.log('\n--- Result ---');
 console.log(JSON.stringify(result, null, 2));
