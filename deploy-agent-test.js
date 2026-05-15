@@ -9,7 +9,7 @@ import { connectMongo, getDb } from './src/db/mongo.js';
 import { AgentDeployer } from './src/agent/agentDeployer.js';
 import { restoreMsSessions } from './src/core/auth/microsoft.js';
 
-const APP_USER_ID = '69f761943237ab4719b99ed8'; // Dave QA — has active MS session
+const APP_USER_ID = '69d651fb1fb027942f3a9d73'; // active MS session (erik@filefuze.co)
 const TENANT_ID   = '807d6772-847c-40e2-9bec-e2c930b3a42e'; // filefuze.co
 const CUSTOMER    = 'FileFuze';
 
@@ -17,42 +17,38 @@ await connectMongo();
 const db = getDb();
 await restoreMsSessions(); // loads MSAL cache from authSessions into memory
 
-// Check for existing deployment so we update instead of duplicate-publish
-const existing = await db.collection('agentDeployments').findOne({
-  appUserId: APP_USER_ID, tenantId: TENANT_ID, agentName: 'Claude Conversation Agent',
-});
+// Known catalog ID from previous deployment
+const KNOWN_CATALOG_ID = 'eb613bd7-b046-467c-bfcf-9356790a180e';
 
 const deployer = new AgentDeployer(CUSTOMER, TENANT_ID, {
   agentName:    'Claude Conversation Agent',
   sourceLabel:  'Claude',
   notebookName: 'ClaudeChats',
   sectionName:  'ClaudeChats Conversations',
+  appId:        'your-app-guid', // will be overwritten if we read from DB
 }, APP_USER_ID);
 
+// Check DB for stored appId (to keep manifest GUID consistent)
+const existing = await db.collection('agentDeployments').findOne({
+  tenantId: TENANT_ID, agentName: 'Claude Conversation Agent',
+});
+if (existing?.appId) deployer.appId = existing.appId;
+
 let result;
-if (existing?.catalogId) {
-  console.log(`Updating agent (catalogId=${existing.catalogId}) to v1.1.0…`);
-  result = await deployer.updateAgent(existing.catalogId);
-  if (!result.updated) {
-    console.log('Update failed, falling back to fresh publish…');
-    result = await deployer.deployAgent();
-  }
-} else {
-  console.log('No existing deployment — publishing new agent…');
-  result = await deployer.deployAgent();
+console.log(`Force-updating agent (catalogId=${KNOWN_CATALOG_ID}) to v1.1.0…`);
+result = await deployer.updateAgent(KNOWN_CATALOG_ID);
+if (!result.updated) {
+  console.log('Update failed — check Graph API response above');
+  process.exit(1);
 }
 
-if (result.alreadyExisted) {
-  console.log('Agent was already in catalog (no changes needed).');
-} else {
-  // Upsert deployment record
-  await db.collection('agentDeployments').updateOne(
-    { appUserId: APP_USER_ID, tenantId: TENANT_ID, agentName: 'Claude Conversation Agent' },
-    { $set: { catalogId: result.id, appId: deployer.appId, deployedAt: new Date(), msEmail: 'erik@filefuze.co' } },
-    { upsert: true },
-  );
-  console.log('Deployment record saved.');
-}
+// Upsert deployment record
+await db.collection('agentDeployments').updateOne(
+  { tenantId: TENANT_ID, agentName: 'Claude Conversation Agent' },
+  { $set: { catalogId: KNOWN_CATALOG_ID, appId: deployer.appId, updatedAt: new Date(), msEmail: 'erik@filefuze.co' } },
+  { upsert: true },
+);
+console.log('Deployment record updated.');
 
 console.log('\n--- Result ---');
 console.log(JSON.stringify(result, null, 2));

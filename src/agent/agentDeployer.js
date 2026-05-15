@@ -204,7 +204,7 @@ NEVER make up conversation content or mix content from different conversations.`
     const appManifest = {
       "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.19/MicrosoftTeams.schema.json",
       "manifestVersion": "1.19",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "id": this.appId,
       "developer": {
         "name": "CloudFuze",
