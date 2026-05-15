@@ -9,8 +9,8 @@ import { connectMongo, getDb } from './src/db/mongo.js';
 import { AgentDeployer } from './src/agent/agentDeployer.js';
 import { restoreMsSessions } from './src/core/auth/microsoft.js';
 
-const APP_USER_ID  = '69d651fb1fb027942f3a9d73'; // erik@filefuze.co
-const ACCOUNT_ID   = 'bb673537-3f00-4624-99c9-0700562c8861'; // erik@filefuze.co accountId (not voohalu.co)
+const APP_USER_ID  = '69d651fb1fb027942f3a9d75'; // erik@filefuze.co
+const ACCOUNT_ID   = '50d89c86-08b9-49cd-87d4-c02fe562c391'; // erik@filefuze.co accountId
 const TENANT_ID   = '807d6772-847c-40e2-9bec-e2c930b3a42e'; // filefuze.co
 const CUSTOMER    = 'FileFuze';
 
@@ -18,8 +18,8 @@ await connectMongo();
 const db = getDb();
 await restoreMsSessions(); // loads MSAL cache from authSessions into memory
 
-const KNOWN_CATALOG_ID = 'bbbe49d8-414f-4a92-afa2-8539b76549b4';
-const EXTERNAL_ID      = '9e751af7-7941-4635-9d0a-bcb40429bffc'; // must match manifest id
+const KNOWN_CATALOG_ID = 'eb613bd7-b046-467c-bfcf-9356790a180e';
+const EXTERNAL_ID      = '88486dc9-3491-4964-ad36-d7d827abbb43'; // must match manifest id
 
 const deployer = new AgentDeployer(CUSTOMER, TENANT_ID, {
   agentName:    'Claude Conversation Agent',
