@@ -9,7 +9,8 @@ import { connectMongo, getDb } from './src/db/mongo.js';
 import { AgentDeployer } from './src/agent/agentDeployer.js';
 import { restoreMsSessions } from './src/core/auth/microsoft.js';
 
-const APP_USER_ID  = '69d651fb1fb027942f3a9d73'; // active MS session (erik@filefuze.co)
+const APP_USER_ID  = '69d651fb1fb027942f3a9d73'; // erik@filefuze.co
+const ACCOUNT_ID   = 'bb673537-3f00-4624-99c9-0700562c8861'; // erik@filefuze.co accountId
 const TENANT_ID    = '807d6772-847c-40e2-9bec-e2c930b3a42e'; // filefuze.co
 const CUSTOMER     = 'FileFuze';
 // Canonical catalog entry — use 1b46ecb3 (most recent) with its externalId as appId
@@ -26,7 +27,7 @@ const deployer = new AgentDeployer(CUSTOMER, TENANT_ID, {
   notebookName: `${CUSTOMER} Conversations`,
   sectionName:  `${CUSTOMER} Conversations`,
   appId:        EXTERNAL_ID,
-}, APP_USER_ID);
+}, APP_USER_ID, ACCOUNT_ID);
 
 console.log(`Force-updating Gemini agent (catalogId=${CATALOG_ID}) to v1.2.0…`);
 const result = await deployer.updateAgent(CATALOG_ID);

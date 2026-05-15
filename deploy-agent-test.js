@@ -9,7 +9,8 @@ import { connectMongo, getDb } from './src/db/mongo.js';
 import { AgentDeployer } from './src/agent/agentDeployer.js';
 import { restoreMsSessions } from './src/core/auth/microsoft.js';
 
-const APP_USER_ID = '69d651fb1fb027942f3a9d73'; // active MS session (erik@filefuze.co)
+const APP_USER_ID  = '69d651fb1fb027942f3a9d73'; // erik@filefuze.co
+const ACCOUNT_ID   = 'bb673537-3f00-4624-99c9-0700562c8861'; // erik@filefuze.co accountId (not voohalu.co)
 const TENANT_ID   = '807d6772-847c-40e2-9bec-e2c930b3a42e'; // filefuze.co
 const CUSTOMER    = 'FileFuze';
 
@@ -17,35 +18,24 @@ await connectMongo();
 const db = getDb();
 await restoreMsSessions(); // loads MSAL cache from authSessions into memory
 
-// Known catalog ID from previous deployment
-const KNOWN_CATALOG_ID = 'eb613bd7-b046-467c-bfcf-9356790a180e';
+const KNOWN_CATALOG_ID = 'bbbe49d8-414f-4a92-afa2-8539b76549b4';
+const EXTERNAL_ID      = '9e751af7-7941-4635-9d0a-bcb40429bffc'; // must match manifest id
 
 const deployer = new AgentDeployer(CUSTOMER, TENANT_ID, {
   agentName:    'Claude Conversation Agent',
   sourceLabel:  'Claude',
   notebookName: 'ClaudeChats',
   sectionName:  'ClaudeChats Conversations',
-  appId:        'your-app-guid', // will be overwritten if we read from DB
-}, APP_USER_ID);
+  appId:        EXTERNAL_ID,
+}, APP_USER_ID, ACCOUNT_ID);
 
-// Check DB for stored appId (to keep manifest GUID consistent)
-const existing = await db.collection('agentDeployments').findOne({
-  tenantId: TENANT_ID, agentName: 'Claude Conversation Agent',
-});
-if (existing?.appId) deployer.appId = existing.appId;
+console.log(`Updating Claude agent (catalogId=${KNOWN_CATALOG_ID}) to v1.3.0…`);
+const result = await deployer.updateAgent(KNOWN_CATALOG_ID);
+if (!result.updated) { console.log('Update failed — check logs above'); process.exit(1); }
 
-let result;
-console.log(`Force-updating agent (catalogId=${KNOWN_CATALOG_ID}) to v1.1.0…`);
-result = await deployer.updateAgent(KNOWN_CATALOG_ID);
-if (!result.updated) {
-  console.log('Update failed — check Graph API response above');
-  process.exit(1);
-}
-
-// Upsert deployment record
 await db.collection('agentDeployments').updateOne(
   { tenantId: TENANT_ID, agentName: 'Claude Conversation Agent' },
-  { $set: { catalogId: KNOWN_CATALOG_ID, appId: deployer.appId, updatedAt: new Date(), msEmail: 'erik@filefuze.co' } },
+  { $set: { catalogId: KNOWN_CATALOG_ID, appId: EXTERNAL_ID, updatedAt: new Date(), msEmail: 'erik@filefuze.co' } },
   { upsert: true },
 );
 console.log('Deployment record updated.');

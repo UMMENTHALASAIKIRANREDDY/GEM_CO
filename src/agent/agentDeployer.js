@@ -24,10 +24,11 @@ export class AgentDeployer {
    * @param {string} [options.sectionName] — OneNote section name (default: "{customerName} Conversations")
    * @param {string} [options.driveFolder] — OneDrive folder path (default: "Migrated from Google Drive")
    */
-  constructor(customerName, tenantId, options = {}, appUserId = null) {
+  constructor(customerName, tenantId, options = {}, appUserId = null, accountId = null) {
     this.customerName = customerName;
     this.tenantId = tenantId;
     this.appUserId = appUserId;
+    this.accountId = accountId;
     this.agentName = options.agentName || 'Gemini Conversation Agent';
     this.sourceLabel = options.sourceLabel || 'Gemini';
     this.appId = options.appId || this._generateGuid(); // reuse stored GUID on updates
@@ -37,7 +38,7 @@ export class AgentDeployer {
   }
 
   async _headers() {
-    return { 'Authorization': `Bearer ${await getValidToken(this.appUserId)}` };
+    return { 'Authorization': `Bearer ${await getValidToken(this.appUserId, this.accountId)}` };
   }
 
   /**
@@ -120,29 +121,39 @@ export class AgentDeployer {
   }
 
   _buildInstructions() {
-    return `You are the ${this.agentName}. You help users browse and recall their AI conversations that were migrated from ${this.sourceLabel} to Microsoft 365.
+    return `You are the ${this.agentName}. You help users browse and recall their AI conversations that were migrated from ${this.sourceLabel} to Microsoft 365 OneNote.
+
+DATA LOCATION:
+- All migrated conversations are stored as individual OneNote pages inside the "${this.notebookName}" notebook, in the section called "${this.sectionName}".
+- Each page title is the conversation topic (e.g., "Help me write a proposal", "Summarize this document").
 
 WHEN THE USER OPENS YOU (new conversation starts):
-- Search the "${this.notebookName}" OneNote notebook for all pages in the "${this.sectionName}" section.
-- List them as a numbered list. Each item: page title and date. Example: "1. Q3 Pricing Strategy — Mar 14, 2024"
-- End with: "Type a number or title to load that conversation."
-- If no pages found, say: "No migrated conversations found yet in ${this.notebookName}."
+- Search OneDrive/SharePoint for pages inside the "${this.sectionName}" section of the "${this.notebookName}" OneNote notebook.
+- From the search results, ONLY include individual conversation pages. Apply these filters strictly:
+  * EXCLUDE any result whose title ends with ".one" — those are notebook container files, not conversations.
+  * EXCLUDE any result whose title is exactly "${this.sectionName}" — that is the section header.
+  * EXCLUDE any result whose title is exactly "${this.notebookName}" — that is the notebook itself.
+  * INCLUDE only results with real conversation topic titles.
+- Present included results as a numbered list: "1. [Conversation Title] — [Last Modified Date]"
+- End with: "Type a number or title to open that conversation."
+- If no valid pages found: "No migrated conversations found yet in the ${this.notebookName} notebook."
 
 WHEN THE USER PICKS A CONVERSATION (types a number, title, or partial title):
-- Search for that specific page by title in the "${this.sectionName}" section.
-- Use the search results to display the conversation content — show every message you can find from that page.
-- Label messages as [YOU] and [${this.sourceLabel.toUpperCase()}] where identifiable.
-- After displaying, say: "You're now in the context of this conversation. Ask me anything about it."
+- Search for that specific page by its exact title within "${this.sectionName}".
+- Display the full page content — every prompt/response pair you can find.
+- Label messages clearly as [YOU] and [${this.sourceLabel.toUpperCase()}].
+- After displaying, say: "You are now in the context of this conversation. Ask me anything about it."
 
 WHEN THE USER ASKS QUESTIONS AFTER LOADING A CONVERSATION:
-- Answer based on the conversation content already shown in this chat.
-- If unsure, search the "${this.sectionName}" section again for that page.
-- Never make up content. If not found, say so and offer the list again.
+- Answer using the conversation content already shown in this chat session.
+- If clarification is needed, re-search "${this.sectionName}" for that specific page title.
+- Never invent content. If not found, say so and offer the numbered list again.
 
-SEARCHING:
-- When asked to search (e.g. "find conversations about pricing"), search the "${this.sectionName}" section and list matching pages with titles and dates.
+WHEN THE USER SEARCHES (e.g. "find conversations about pricing"):
+- Search "${this.sectionName}" for pages matching the topic.
+- List matching pages with their titles and dates. Exclude .one files and section headers as above.
 
-NEVER make up conversation content or mix content from different conversations.`;
+NEVER fabricate conversation content or mix content from different conversations.`;
   }
 
   _buildWelcomeMessage() {
@@ -204,7 +215,7 @@ NEVER make up conversation content or mix content from different conversations.`
     const appManifest = {
       "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.19/MicrosoftTeams.schema.json",
       "manifestVersion": "1.19",
-      "version": "1.2.0",
+      "version": "1.3.0",
       "id": this.appId,
       "developer": {
         "name": "CloudFuze",
