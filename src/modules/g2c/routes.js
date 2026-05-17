@@ -25,6 +25,7 @@ import { checkPermissions } from './permissionsChecker.js';
 import { ReportWriter } from './reportWriter.js';
 import { CheckpointManager } from '../../utils/checkpoint.js';
 import { AgentDeployer } from '../../agent/agentDeployer.js';
+import { IndexWriter } from '../../agent/indexWriter.js';
 import { getLogger } from '../../utils/logger.js';
 import { runAgentLoop } from '../../agent/agentLoop.js';
 import { auditEmitter } from '../../agent/auditLogger.js';
@@ -946,6 +947,38 @@ export function createG2CRouter(deps) {
         } catch (err) {
           emit('warn', `Agent deployment failed (can be done manually): ${err.message}`);
         }
+      }
+
+      // Write GemCo/index.json to each target user's OneDrive
+      try {
+        emit('info', 'Writing conversation index to OneDrive...');
+        const indexWriter = new IndexWriter(appUserId);
+        const pages = await db().collection('conversationPages').find({
+          batchFolder: customer_name,
+        }).toArray();
+
+        const byEmail = {};
+        for (const p of pages) {
+          if (!p.targetEmail || !p.oneNotePageId) continue;
+          if (!byEmail[p.targetEmail]) byEmail[p.targetEmail] = [];
+          byEmail[p.targetEmail].push({
+            title: p.title || 'Untitled',
+            pageId: p.oneNotePageId,
+            migratedAt: p.migratedAt?.toISOString?.() || new Date().toISOString(),
+          });
+        }
+
+        for (const [email, conversations] of Object.entries(byEmail)) {
+          await indexWriter.writeIndex(email, {
+            source: 'Gemini',
+            notebookName: `${customer_name} Conversations`,
+            sectionName: `${customer_name} Conversations`,
+            conversations,
+          }).catch(e => logger.warn(`IndexWriter failed for ${email}: ${e.message}`));
+        }
+        emit('info', 'Conversation index written to OneDrive.');
+      } catch (err) {
+        emit('warn', `Index write failed (non-fatal): ${err.message}`);
       }
 
       await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'gemini-copilot', ...reportUpdate } });

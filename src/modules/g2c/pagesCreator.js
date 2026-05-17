@@ -169,7 +169,7 @@ export class PagesCreator {
             const db = getDb();
             await db.collection('conversationPages').updateOne(
               { targetEmail, conversationId: convId },
-              { $set: { targetEmail, conversationId: convId, batchFolder: this.customerName, provider: 'gemini', oneNotePageId: data.id, messageCount: turns.length, migratedAt: new Date() } },
+              { $set: { targetEmail, conversationId: convId, batchFolder: this.customerName, provider: 'gemini', oneNotePageId: data.id, title: conversation.topic || conversation.title || 'Untitled', messageCount: turns.length, migratedAt: new Date() } },
               { upsert: true }
             );
           } catch {}
@@ -347,7 +347,7 @@ export class PagesCreator {
         const db = getDb();
         await db.collection('conversationPages').updateOne(
           { targetEmail, conversationId: convId },
-          { $set: { targetEmail, conversationId: convId, batchFolder: this.customerName, provider: 'claude', oneNotePageId: pageId, messageCount: messages.length, migratedAt: new Date() } },
+          { $set: { targetEmail, conversationId: convId, batchFolder: this.customerName, provider: 'claude', oneNotePageId: pageId, title: claudeConv.name || 'Untitled', messageCount: messages.length, migratedAt: new Date() } },
           { upsert: true }
         );
       } catch {}
