@@ -1,0 +1,31 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #faf9f8; color: #201f1e; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+#header { background: #0129AC; color: white; padding: 12px 14px; display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+#header-title { font-size: 14px; font-weight: 600; flex: 1; }
+#signout-btn { background: rgba(255,255,255,0.2); border: none; color: white; padding: 4px 8px; border-radius: 3px; font-size: 11px; cursor: pointer; }
+#signout-btn:hover { background: rgba(255,255,255,0.35); }
+
+#body { flex: 1; overflow-y: auto; padding: 12px; }
+
+#signin-section { text-align: center; padding: 40px 16px; }
+#signin-section p { font-size: 13px; color: #605e5c; margin-bottom: 16px; line-height: 1.5; }
+#signin-btn { background: #0078d4; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-size: 13px; cursor: pointer; width: 100%; }
+#signin-btn:hover { background: #106ebe; }
+
+#loading { text-align: center; padding: 30px; color: #605e5c; font-size: 13px; }
+#error-msg { background: #fde7e9; color: #a4262c; padding: 12px; border-radius: 4px; font-size: 13px; margin-bottom: 8px; }
+
+.source-group { margin-bottom: 16px; }
+.source-header { font-size: 11px; font-weight: 600; color: #0129AC; text-transform: uppercase; letter-spacing: 0.5px; padding: 6px 0; border-bottom: 1px solid #e1dfdd; margin-bottom: 6px; }
+.conv-item { padding: 9px 10px; border-radius: 4px; cursor: pointer; margin-bottom: 3px; border: 1px solid transparent; }
+.conv-item:hover { background: #f0f6ff; border-color: #c7e0f4; }
+.conv-title { font-size: 13px; color: #201f1e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.conv-date { font-size: 11px; color: #a19f9d; margin-top: 2px; }
+
+#viewer { display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: white; flex-direction: column; z-index: 10; overflow: hidden; }
+#viewer.active { display: flex; }
+#viewer-header { background: #f3f2f1; padding: 10px 12px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #e1dfdd; flex-shrink: 0; }
+#back-btn { background: none; border: none; cursor: pointer; color: #0078d4; font-size: 18px; padding: 0 4px; line-height: 1; }
+#viewer-title { font-size: 13px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#viewer-body { flex: 1; overflow-y: auto; padding: 14px; font-size: 13px; line-height: 1.6; }
