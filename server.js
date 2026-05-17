@@ -107,6 +107,13 @@ app.get('/api/app-config', (req, res) => {
   res.json({ showReset: process.env.SHOW_RESET_BUTTON === 'true' });
 });
 
+app.get('/api/tab-config', (req, res) => {
+  res.json({
+    clientId: process.env.AZURE_CLIENT_ID,
+    redirectUri: (process.env.BASE_URL || 'http://localhost:4000') + '/tab-callback.html',
+  });
+});
+
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
