@@ -28,16 +28,25 @@ export class AgentDeployer {
     this.customerName = customerName;
     this.tenantId = tenantId;
     this.appUserId = appUserId;
+    // Optional: target a specific MS account for the delegated token (used by
+    // C2C where the destination tenant admin is one of several signed-in
+    // accounts). G2C leaves this null and falls back to the first account.
+    this.accountId = options.accountId || null;
     this.agentName = options.agentName || 'Gemini Conversation Agent';
     this.sourceLabel = options.sourceLabel || 'Gemini';
     this.appId = this._generateGuid();
     this.notebookName = options.notebookName || customerName;
     this.sectionName = options.sectionName || `${customerName} Conversations`;
     this.driveFolder = options.driveFolder || 'Migrated from Google Drive';
+    this.manifestDescShort = options.manifestDescShort || null;
+    this.manifestDescFull = options.manifestDescFull || null;
+    this.starterTopic = options.starterTopic || `What did I discuss about marketing in my ${this.sourceLabel} conversations?`;
+    this.starterCompare = options.starterCompare || `Show the ${this.sourceLabel} response vs Copilot response for my last conversation`;
+    this.declarativeAgentId = options.declarativeAgentId || 'geminiConversationAgent';
   }
 
   async _headers() {
-    return { 'Authorization': `Bearer ${await getValidToken(this.appUserId)}` };
+    return { 'Authorization': `Bearer ${await getValidToken(this.appUserId, this.accountId)}` };
   }
 
   /**
@@ -145,7 +154,7 @@ Never make up information. Only answer based on the actual migrated conversation
         },
         {
           "title": "Search by Topic",
-          "text": "What did I discuss about marketing in my Gemini conversations?"
+          "text": this.starterTopic
         },
         {
           "title": "Find a Conversation",
@@ -153,7 +162,7 @@ Never make up information. Only answer based on the actual migrated conversation
         },
         {
           "title": "Compare Responses",
-          "text": "Show the Gemini response vs Copilot response for my last conversation"
+          "text": this.starterCompare
         }
       ],
       "disclaimer": {
@@ -185,8 +194,8 @@ Never make up information. Only answer based on the actual migrated conversation
         "full": this.agentName
       },
       "description": {
-        "short": `Review migrated ${this.customerName} Gemini chats`,
-        "full": `Search and review your migrated ${this.customerName} Google Gemini conversation history. Ask questions about past Gemini chats and get instant answers grounded in your actual conversation data. Built by CloudFuze.`
+        "short": this.manifestDescShort || `Review migrated ${this.customerName} ${this.sourceLabel} chats`,
+        "full": this.manifestDescFull || `Search and review your migrated ${this.customerName} ${this.sourceLabel} conversation history. Ask questions about past ${this.sourceLabel} chats and get instant answers grounded in your actual conversation data. Built by CloudFuze.`
       },
       "icons": {
         "color": "color.png",
@@ -196,7 +205,7 @@ Never make up information. Only answer based on the actual migrated conversation
       "copilotAgents": {
         "declarativeAgents": [
           {
-            "id": "geminiConversationAgent",
+            "id": this.declarativeAgentId,
             "file": "declarativeAgent.json"
           }
         ]

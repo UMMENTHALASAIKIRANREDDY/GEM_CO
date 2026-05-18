@@ -501,8 +501,17 @@ export function createG2CRouter(deps) {
     if (googleEmail && msEmail) orClauses.push({ appUserId, googleEmail, msEmail });
     if (googleEmail)            orClauses.push({ appUserId, googleEmail, msEmail: { $exists: false } });
     orClauses.push({ appUserId, googleEmail: { $exists: false } });
+    // Exclude migrations that have dedicated /reports endpoints (g2g, c2c).
+    // Without this filter, ReportsPanel — which concatenates results from
+    // /api/reports + /api/g2g/reports + /api/c2c/reports — shows each foreign
+    // batch twice.
     const reports = await db().collection('migrationWorkspaces')
-      .find({ $or: orClauses }, { projection: { report: 0 } })
+      .find({
+        $and: [
+          { $or: orClauses },
+          { migDir: { $nin: ['gemini-gemini', 'copilot-copilot'] } },
+        ],
+      }, { projection: { report: 0 } })
       .sort({ startTime: -1 }).toArray();
     res.json(reports);
   });
@@ -511,7 +520,7 @@ export function createG2CRouter(deps) {
     const { appUserId } = getWorkspaceContext(req);
     if (!appUserId) return res.json({ totalBatches: 0, totalUsers: 0, totalPages: 0, totalErrors: 0, liveBatches: 0, dryRunBatches: 0 });
     const pipeline = [
-      { $match: { status: 'completed', appUserId } },
+      { $match: { status: 'completed', appUserId, migDir: { $nin: ['gemini-gemini', 'copilot-copilot'] } } },
       { $group: { _id: null, totalBatches: { $sum: 1 }, totalUsers: { $sum: '$totalUsers' }, totalPages: { $sum: '$migratedConversations' }, totalErrors: { $sum: { $ifNull: ['$report.summary.total_errors', 0] } }, liveBatches: { $sum: { $cond: [{ $ne: ['$dryRun', true] }, 1, 0] } }, dryRunBatches: { $sum: { $cond: [{ $eq: ['$dryRun', true] }, 1, 0] } } } }
     ];
     const [agg] = await db().collection('migrationWorkspaces').aggregate(pipeline).toArray();

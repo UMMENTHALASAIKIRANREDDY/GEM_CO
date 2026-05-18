@@ -42,9 +42,9 @@ function defaultChips(migrationState) {
     return ['Help me pick the right migration path'];
   }
 
-  // Auth missing — guide to connect what's needed
-  const needsGoogle = ['gemini-copilot', 'copilot-gemini', 'claude-gemini'].includes(migDir);
-  const needsMs = ['gemini-copilot', 'copilot-gemini'].includes(migDir);
+  // Auth missing — guide to connect what's needed (C2C uses tenant consent, not OAuth)
+  const needsGoogle = ['gemini-copilot', 'copilot-gemini', 'claude-gemini', 'gemini-gemini'].includes(migDir);
+  const needsMs = ['gemini-copilot', 'copilot-gemini', 'claude-copilot'].includes(migDir);
   const missingGoogle = needsGoogle && !googleAuthed;
   const missingMs = needsMs && !msAuthed;
   if (missingGoogle && missingMs) return [
@@ -140,7 +140,7 @@ function buildStepContextInstruction(state) {
     : migDir === 'claude-gemini' ? cl2g_done && cl2gLastDry
     : migDone && lastRunWasDry);
 
-  const needsGoogle = migDir && migDir !== 'claude-copilot';
+  const needsGoogle = migDir && migDir !== 'claude-copilot' && migDir !== 'copilot-copilot';
   const needsMs = migDir && (migDir === 'gemini-copilot' || migDir === 'copilot-gemini' || migDir === 'claude-copilot');
   const missingGoogle = needsGoogle && !googleAuthed;
   const missingMs = needsMs && !msAuthed;

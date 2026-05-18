@@ -13,7 +13,9 @@ import { fileURLToPath } from 'url';
 import session from 'express-session';
 import bcrypt from 'bcryptjs';
 
-import { getAuthUrl, acquireTokenByCode, isAuthenticated, getValidToken, clearMsToken, clearMsAccount, getMsAccounts, restoreMsSessions } from './src/core/auth/microsoft.js';
+import { getAuthUrl, acquireTokenByCode, isAuthenticated, getValidToken, clearMsToken, clearMsAccount, getMsAccounts, restoreMsSessions, verifyAppOnlyAccess } from './src/core/auth/microsoft.js';
+import { fetchTenantInfo, buildAdminConsentUrl } from './src/modules/c2c/tenantConsent.js';
+import { clearTenantToken } from './src/modules/c2c/multiTenantAuth.js';
 import { getGoogleAuthUrl, acquireGoogleTokenByCode, isGoogleAuthenticated, getGoogleOAuth2Client, clearGoogleToken, clearGoogleAccount, getGoogleAccounts, restoreGoogleSessions } from './src/core/auth/googleOAuth.js';
 import { connectMongo, getDb } from './src/db/mongo.js';
 import { getLogger } from './src/utils/logger.js';
@@ -22,6 +24,7 @@ import { createC2GRouter } from './src/modules/c2g/routes.js';
 import { createCL2GRouter } from './src/modules/cl2g/routes.js';
 import { createCL2CRouter } from './src/modules/cl2c/routes.js';
 import { createG2GRouter } from './src/modules/g2g/routes.js';
+import { createC2CRouter, createTenantConsentCallback } from './src/modules/c2c/routes.js';
 import { runAgentLoop } from './src/agent/agentLoop.js';
 import { auditEmitter } from './src/agent/auditLogger.js';
 
@@ -162,21 +165,155 @@ app.get('/auth/login', async (req, res) => {
 
 app.get('/auth/callback', async (req, res) => {
   try {
-    const { code, error, error_description, state } = req.query;
+    const { code, error, error_description, state, admin_consent, tenant } = req.query;
+
+    // Branch 1: This is the RETURN from an admin-consent redirect (no `code`, has `admin_consent`+`tenant`).
+    // Reuses the same redirect URI as OAuth so Azure only needs one URI registered.
+    if (!code && admin_consent !== undefined) {
+      const stateMap = req.session?._c2cConsentState || {};
+      const stateEntry = state ? stateMap[state] : null;
+      if (!stateEntry) {
+        return res.status(400).send(`<html><body><h2>Consent state invalid or expired</h2><script>setTimeout(()=>window.close(),2000);</script></body></html>`);
+      }
+      delete req.session._c2cConsentState[state];
+
+      if (error || admin_consent !== 'True') {
+        return res.status(400).send(`<html><body><h2>Consent not granted</h2><p>${error_description || error || ''}</p><script>setTimeout(()=>window.close(),2000);</script></body></html>`);
+      }
+      if (!tenant) {
+        return res.status(400).send(`<html><body><h2>Tenant id missing</h2><script>setTimeout(()=>window.close(),2000);</script></body></html>`);
+      }
+
+      // CRITICAL: clear the cached app-only token BEFORE fetching tenant info.
+      // Before consent, the cache may hold a token with no roles (still 200 OK
+      // from /token endpoint, just empty roles). Without clearing, every
+      // subsequent call would reuse that powerless token for 60s.
+      clearTenantToken(tenant);
+
+      const info = await fetchTenantInfo(tenant);
+      try {
+        await db().collection('connectedTenants').updateOne(
+          { appUserId: stateEntry.appUserId, tenantId: tenant },
+          { $set: {
+            appUserId: stateEntry.appUserId, tenantId: tenant,
+            displayName: info.displayName, defaultDomain: info.defaultDomain,
+            consentedAt: new Date(), consentState: 'active',
+          } },
+          { upsert: true }
+        );
+        dbLog.info(`connectedTenants.upsert — ${tenant} (${info.displayName || ''}) granted via /auth/callback`);
+      } catch (e) { dbLog.warn(`connectedTenants upsert failed: ${e.message}`); }
+
+      return res.send(`<html><body style="font-family:Segoe UI,sans-serif;text-align:center;padding:32px">
+        <h2 style="color:#107c10">✓ Tenant connected</h2>
+        <p style="color:#605e5c">${info.displayName || tenant}</p>
+        <script>
+          try { window.opener && window.opener.postMessage({ type: 'auth-success', alreadyConnected: false }, '*'); } catch (e) {}
+          try { window.opener && window.opener.postMessage({ type: 'c2c-tenant-consent-success', tenantId: ${JSON.stringify(tenant)}, displayName: ${JSON.stringify(info.displayName)}, defaultDomain: ${JSON.stringify(info.defaultDomain)} }, '*'); } catch (e) {}
+          setTimeout(() => window.close(), 1200);
+        </script>
+      </body></html>`);
+    }
+
+    // Branch 2: Normal OAuth code exchange.
     if (error) return res.send(`<html><body><h2>Auth failed</h2><p>${error_description || error}</p><script>window.close();</script></body></html>`);
     if (!code) return res.status(400).send('No authorization code received');
     const msResult = await acquireTokenByCode(code, state);
     const msEmail = msResult.email || msResult?.account?.username || null;
     const msAlready = !!msResult.alreadyConnected;
+    const realTenantId = msResult.realTenantId || null;
     if (msEmail) {
       req.session.msEmail = msEmail;
       await new Promise((resolve, reject) => req.session.save(err => err ? reject(err) : resolve()));
     }
     dbLog.info(`authSessions.upsert — ${msEmail} (microsoft)`);
+
+    // Auto-register the tenant for C2C if admin-consent is already in place.
+    // If not, redirect the same popup to the admin-consent URL so the admin
+    // completes both ceremonies (delegated + application) in a single visit.
+    let consentNeeded = false;
+    const ctx = getWorkspaceContext(req);
+    const appUserId = ctx.appUserId;
+    dbLog.info(`[/auth/callback] post-OAuth — email=${msEmail} realTenantId=${realTenantId} appUserId=${appUserId}`);
+
+    if (realTenantId && appUserId) {
+      const hasAppOnly = await verifyAppOnlyAccess(realTenantId);
+      dbLog.info(`[/auth/callback] verifyAppOnlyAccess(${realTenantId}) → ${hasAppOnly}`);
+      if (hasAppOnly) {
+        const info = await fetchTenantInfo(realTenantId);
+        try {
+          await db().collection('connectedTenants').updateOne(
+            { appUserId, tenantId: realTenantId },
+            { $set: {
+              appUserId, tenantId: realTenantId,
+              displayName: info.displayName, defaultDomain: info.defaultDomain,
+              consentedAt: new Date(), consentState: 'active',
+            } },
+            { upsert: true }
+          );
+          dbLog.info(`connectedTenants.upsert — ${realTenantId} (${info.displayName || msEmail}) auto-registered after OAuth`);
+        } catch (e) { dbLog.warn(`connectedTenants auto-upsert failed: ${e.message}`); }
+      } else {
+        consentNeeded = true;
+      }
+    } else {
+      dbLog.warn(`[/auth/callback] skipping verify+upsert — realTenantId=${realTenantId} appUserId=${appUserId}`);
+    }
+
+    // If admin consent is still needed, chain into the consent flow in the
+    // SAME popup. We use a full-bleed loading page with explicit "Step 2 of 2"
+    // messaging so the user understands Microsoft's consent screen is a
+    // continuation, not a restart.
+    if (consentNeeded && realTenantId && appUserId) {
+      const baseUrl = process.env.BASE_URL || `http://localhost:${PORT}`;
+      const { randomUUID } = await import('crypto');
+      const stateToken = randomUUID();
+      req.session._c2cConsentState = req.session._c2cConsentState || {};
+      req.session._c2cConsentState[stateToken] = { appUserId, createdAt: Date.now() };
+      await new Promise((resolve, reject) => req.session.save(err => err ? reject(err) : resolve()));
+      const consentUrl = buildAdminConsentUrl({
+        redirectUri: `${baseUrl}/auth/callback`,
+        state: stateToken,
+        tenantId: realTenantId,
+        loginHint: msEmail,
+      });
+      return res.send(`<html><head><meta charset="utf-8"><title>Granting permissions…</title>
+<style>
+  body{font-family:Segoe UI,system-ui,sans-serif;background:#F6F6F6;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+  .card{background:white;padding:40px 36px;border-radius:14px;box-shadow:0 4px 20px rgba(0,0,0,.08);max-width:440px;text-align:center}
+  .step{display:inline-block;background:#deecf9;color:#0078d4;padding:4px 10px;border-radius:12px;font-size:12px;font-weight:600;margin-bottom:12px}
+  h2{margin:6px 0 12px;color:#107c10;font-size:18px}
+  p{margin:8px 0;color:#605e5c;font-size:14px;line-height:1.5}
+  .spinner{margin:18px auto 0;width:28px;height:28px;border:3px solid #e1dfdd;border-top-color:#0078d4;border-radius:50%;animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+</style></head>
+<body><div class="card">
+  <div class="step">Step 2 of 2</div>
+  <h2>✓ Signed in as ${String(msEmail || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}</h2>
+  <p>Now Microsoft will ask you to <b>grant organization permissions</b> for CloudFuze Migration.</p>
+  <p style="font-size:12px;color:#888">This happens once per tenant. After you click <b>Accept</b>, this window will close.</p>
+  <div class="spinner"></div>
+</div>
+<script>setTimeout(() => window.location.replace(${JSON.stringify(consentUrl)}), 1800);</script>
+</body></html>`);
+    }
+
+    // Already consented (or appUserId missing) — close popup cleanly.
     res.send(`<html><body>
       <h2 style="font-family:Segoe UI,sans-serif;color:#107c10">${msAlready ? '⚠ Account already connected' : '✓ Signed in successfully!'}</h2>
       <p style="font-family:Segoe UI,sans-serif;color:#605e5c">You can close this window.</p>
-      <script>if (window.opener) { window.opener.postMessage({ type: 'auth-success', alreadyConnected: ${msAlready} }, '*'); } setTimeout(() => window.close(), 1500);</script>
+      <script>
+        if (window.opener) {
+          window.opener.postMessage({
+            type: 'auth-success',
+            alreadyConnected: ${msAlready},
+            consentNeeded: ${consentNeeded},
+            tenantId: ${JSON.stringify(realTenantId)},
+            email: ${JSON.stringify(msEmail)},
+          }, '*');
+        }
+        setTimeout(() => window.close(), 1000);
+      </script>
     </body></html>`);
   } catch (err) { res.send(`<html><body><h2>Auth error</h2><p>${err.message}</p><script>window.close();</script></body></html>`); }
 });
@@ -274,6 +411,29 @@ app.post('/api/auth/google/disconnect', requireAuth, (req, res) => {
 app.get('/api/auth/ms/accounts', requireAuth, (req, res) => {
   const { appUserId } = getWorkspaceContext(req);
   res.json({ accounts: getMsAccounts(appUserId) });
+});
+
+// GET /api/auth/ms/users?accountId=... — list directory users for a specific MS account (delegated token).
+// Used by Manage Clouds dropdown to show per-tenant users.
+app.get('/api/auth/ms/users', requireAuth, async (req, res) => {
+  try {
+    const { appUserId } = getWorkspaceContext(req);
+    const accountId = req.query.accountId || null;
+    if (!accountId) return res.status(400).json({ error: 'accountId required' });
+    const token = await getValidToken(appUserId, accountId);
+    const users = [];
+    let url = 'https://graph.microsoft.com/v1.0/users?$select=id,displayName,mail,userPrincipalName&$top=999';
+    while (url) {
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const data = await r.json();
+      if (!r.ok) return res.status(r.status).json({ error: data.error?.message || 'Graph API error' });
+      users.push(...(data.value || []));
+      url = data['@odata.nextLink'] || null;
+    }
+    res.json({ total: users.length, users });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.post('/api/auth/ms/disconnect', requireAuth, (req, res) => {
@@ -503,6 +663,13 @@ app.use('/api/cl2c', cl2cRouter);
 // G2G router — mounted at /api/g2g (Gemini → Gemini)
 const g2gRouter = createG2GRouter({ db, getGoogleOAuth2Client });
 app.use('/api/g2g', g2gRouter);
+
+// C2C router — mounted at /api/c2c (Copilot → Copilot, cross-tenant)
+const c2cRouter = createC2CRouter({ db });
+app.use('/api/c2c', c2cRouter);
+
+// Tenant consent callback for C2C — outside /api prefix so MS can redirect to it
+app.get('/auth/ms/tenant-consent-callback', createTenantConsentCallback({ db }));
 
 // ─── Index bootstrap ──────────────────────────────────────────────────────────
 

@@ -14,6 +14,7 @@ function checkStepPrerequisites(targetStep, migDir, migrationState) {
     cl2g_upload_users = 0,
     g2g_source_account_id = '', g2g_upload_users = 0, g2g_mappings_count = 0,
     cl2c_upload_users = 0, cl2c_mappings_count = 0,
+    c2c_source_tenant_id = '', c2c_dest_tenant_id = '', c2c_mappings_count = 0,
   } = migrationState ?? {};
 
   if (migDir === 'gemini-copilot') {
@@ -52,6 +53,13 @@ function checkStepPrerequisites(targetStep, migDir, migrationState) {
       return 'Map your users first (Step 3 — Map Users). At least one mapping is required.';
   }
 
+  if (migDir === 'copilot-copilot') {
+    if (targetStep >= 3 && (!c2c_source_tenant_id || !c2c_dest_tenant_id))
+      return 'Select source AND destination tenants first (Step 2 — Select Tenants). Connect tenants via admin consent if not yet connected.';
+    if (targetStep >= 4 && c2c_mappings_count === 0)
+      return 'Map your users first (Step 3 — Map Users). At least one mapping is required.';
+  }
+
   return null; // no blocker
 }
 
@@ -73,7 +81,8 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
     case 'select_direction': {
       const dir = args.migDir;
       const { googleAuthed = false, msAuthed = false } = migrationState ?? {};
-      const needsGoogle = dir !== 'claude-copilot'; // all except CL2C need Google
+      // C2C is fully app-only (per-tenant admin consent); CL2C only needs MS; others need Google
+      const needsGoogle = dir !== 'claude-copilot' && dir !== 'copilot-copilot';
       const needsMs = dir === 'gemini-copilot' || dir === 'copilot-gemini' || dir === 'claude-copilot';
       const missingGoogle = needsGoogle && !googleAuthed;
       const missingMs = needsMs && !msAuthed;
