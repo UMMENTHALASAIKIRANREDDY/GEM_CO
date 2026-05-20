@@ -28,13 +28,18 @@ export class AgentDeployer {
     this.customerName = customerName;
     this.tenantId = tenantId;
     this.appUserId = appUserId;
-    this.accountId = accountId;
+    this.accountId = accountId || options.accountId || null;
     this.agentName = options.agentName || 'Gemini Conversation Agent';
     this.sourceLabel = options.sourceLabel || 'Gemini';
     this.appId = options.appId || this._generateGuid(); // reuse stored GUID on updates
     this.notebookName = options.notebookName || customerName;
     this.sectionName = options.sectionName || `${customerName} Conversations`;
     this.driveFolder = options.driveFolder || 'Migrated from Google Drive';
+    this.manifestDescShort = options.manifestDescShort || null;
+    this.manifestDescFull = options.manifestDescFull || null;
+    this.starterTopic = options.starterTopic || `What did I discuss about marketing in my ${this.sourceLabel} conversations?`;
+    this.starterCompare = options.starterCompare || `Show the ${this.sourceLabel} response vs Copilot response for my last conversation`;
+    this.declarativeAgentId = options.declarativeAgentId || 'geminiConversationAgent';
   }
 
   async _headers() {
@@ -205,11 +210,15 @@ NEVER fabricate conversation content or mix content from different conversations
         },
         {
           "title": "Search by Topic",
-          "text": "Find conversations about pricing"
+          "text": this.starterTopic
         },
         {
-          "title": "Load a Conversation",
-          "text": "Load conversation number 1 into this chat"
+          "title": "Find a Conversation",
+          "text": "Find my conversation about data analysis"
+        },
+        {
+          "title": "Compare Responses",
+          "text": this.starterCompare
         }
       ],
       "disclaimer": {
@@ -241,8 +250,8 @@ NEVER fabricate conversation content or mix content from different conversations
         "full": this.agentName
       },
       "description": {
-        "short": `Review migrated ${this.customerName} Gemini chats`,
-        "full": `Search and review your migrated ${this.customerName} Google Gemini conversation history. Ask questions about past Gemini chats and get instant answers grounded in your actual conversation data. Built by CloudFuze.`
+        "short": this.manifestDescShort || `Review migrated ${this.customerName} ${this.sourceLabel} chats`,
+        "full": this.manifestDescFull || `Search and review your migrated ${this.customerName} ${this.sourceLabel} conversation history. Ask questions about past ${this.sourceLabel} chats and get instant answers grounded in your actual conversation data. Built by CloudFuze.`
       },
       "icons": {
         "color": "color.png",
@@ -252,7 +261,7 @@ NEVER fabricate conversation content or mix content from different conversations
       "copilotAgents": {
         "declarativeAgents": [
           {
-            "id": "geminiConversationAgent",
+            "id": this.declarativeAgentId,
             "file": "declarativeAgent.json"
           }
         ]

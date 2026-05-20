@@ -112,9 +112,18 @@ export async function acquireTokenByCode(code, stateParam) {
     }
   }
 
-  _sessions.set(key, {
+  // Resolve the user's REAL home tenant from the MSAL account (account.tenantId
+   // is set after acquireTokenByCode; fall back to id-token claims / homeAccountId).
+   const acct = result.account || {};
+   let realTenantId = acct.tenantId || acct?.idTokenClaims?.tid || null;
+   if (!realTenantId && typeof acct.homeAccountId === 'string') {
+     const parts = acct.homeAccountId.split('.');
+     if (parts.length === 2 && parts[1].length > 8) realTenantId = parts[1];
+   }
+
+   _sessions.set(key, {
     msalApp,
-    tenant: tenantId,
+    tenant: realTenantId || tenantId,
     token: result.accessToken,
     tokenExpiry,
     account: result.account || null,
@@ -143,7 +152,51 @@ export async function acquireTokenByCode(code, stateParam) {
     logger.warn(`Failed to persist Microsoft authSession for ${appUserId}:${accountId}: ${e.message}`);
   }
 
-  return { ...result, email, displayName, accountId };
+  return { ...result, email, displayName, accountId, realTenantId };
+}
+
+/**
+ * Verify that the C2C multi-tenant Azure app has admin-consent in the given
+ * tenant. Returns true if an app-only token works AND a basic Graph call succeeds.
+ *
+ * Critically uses `getTenantAccessToken` from c2c/multiTenantAuth.js — that
+ * helper resolves the SAME client_id used by the admin-consent URL builder
+ * (`SOURCE_AZURE_CLIENT_ID` / `C2C_AZURE_CLIENT_ID`), so a tenant consented
+ * via /adminconsent will register as "consented" here too. Do NOT switch this
+ * back to process.env.AZURE_CLIENT_ID — that's the delegated-OAuth app and
+ * may be a different registration.
+ */
+export async function verifyAppOnlyAccess(tenantId) {
+  if (!tenantId || tenantId === 'common' || tenantId === 'organizations') return false;
+  try {
+    const { getTenantAccessToken } = await import('../../modules/c2c/multiTenantAuth.js');
+    const token = await getTenantAccessToken(tenantId);
+    if (!token) return false;
+    // Inspect the token's `roles` claim — this is the authoritative list of
+    // application permissions the tenant has consented for our app. Probing a
+    // single endpoint (e.g. /users) only tells us about ONE permission; an admin
+    // could have consented to User.Read.All but not Notes.ReadWrite.All, in
+    // which case the migration would still fail later. So require BOTH.
+    const requiredRoles = ['User.Read.All', 'Notes.ReadWrite.All', 'Files.ReadWrite.All'];
+    const parts = token.split('.');
+    if (parts.length !== 3) return false;
+    let claims;
+    try {
+      const payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+      const pad = payload.length % 4 === 0 ? '' : '='.repeat(4 - (payload.length % 4));
+      claims = JSON.parse(Buffer.from(payload + pad, 'base64').toString('utf8'));
+    } catch { return false; }
+    const tokenRoles = new Set(claims.roles || []);
+    const missing = requiredRoles.filter(r => !tokenRoles.has(r));
+    if (missing.length > 0) {
+      logger.info(`verifyAppOnlyAccess(${tenantId}) — missing roles: ${missing.join(', ')} (granted: ${[...tokenRoles].join(', ') || 'none'})`);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    logger.info(`verifyAppOnlyAccess(${tenantId}) — not yet consented: ${e.message}`);
+    return false;
+  }
 }
 
 /**
@@ -217,17 +270,33 @@ export function isAuthenticated(appUserId) {
 
 /**
  * Get all connected Microsoft accounts for a user.
+ *
+ * `tenantId` returned here is the user's REAL home-tenant GUID (from the MSAL
+ * `account` object — `account.tenantId` or parsed from `homeAccountId`).
+ * Session.tenant (the OAuth input tenant) is often `common`/`organizations` for
+ * multi-tenant apps and is NOT suitable as a tenant identifier.
  */
 export function getMsAccounts(appUserId) {
   const accounts = [];
   for (const [key, session] of _sessions.entries()) {
     if (!key.startsWith(`${appUserId}:`)) continue;
     if (!session.account && !session.token) continue;
+    // Resolve the user's actual home tenant in order of preference:
+    //  1. account.tenantId (MSAL standard)
+    //  2. account.idTokenClaims.tid
+    //  3. utid portion of homeAccountId ("uid.utid")
+    //  4. session.tenant (fallback — may be 'common' for multi-tenant apps)
+    const acct = session.account || {};
+    let realTenant = acct.tenantId || acct?.idTokenClaims?.tid || null;
+    if (!realTenant && typeof acct.homeAccountId === 'string') {
+      const parts = acct.homeAccountId.split('.');
+      if (parts.length === 2 && parts[1].length > 8) realTenant = parts[1];
+    }
     accounts.push({
       accountId: session.accountId,
       email: session.email || null,
       displayName: session.displayName || null,
-      tenantId: session.tenant || null,
+      tenantId: realTenant || session.tenant || null,
     });
   }
   return accounts;

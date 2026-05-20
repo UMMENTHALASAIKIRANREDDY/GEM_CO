@@ -72,6 +72,21 @@ export const COMBINATIONS = {
     isLive: (state) => !!state.cl2c_live,
     isDone: (state) => !!state.cl2c_done,
   },
+  'copilot-copilot': {
+    label: 'Microsoft 365 Copilot → Microsoft 365 Copilot (cross-tenant)',
+    auth: [], // uses per-tenant admin consent, not user OAuth
+    hasUpload: false,
+    steps: ['Connect Tenants', 'Direction', 'Select Tenants', 'Map Users', 'Options', 'Migration'],
+    authCheck: (state) => {
+      const blockers = [];
+      if (!state.c2c_source_tenant_id) blockers.push('Source tenant not selected');
+      if (!state.c2c_dest_tenant_id) blockers.push('Destination tenant not selected');
+      return blockers;
+    },
+    mappingsCount: (state) => state.c2c_mappings_count ?? 0,
+    isLive: (state) => !!state.c2c_live,
+    isDone: (state) => !!state.c2c_done,
+  },
 };
 
 export function getCombo(migDir) {

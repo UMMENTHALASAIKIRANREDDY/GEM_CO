@@ -70,6 +70,7 @@ export function buildSystemPrompt(migrationState, migrationLogs = [], { isReturn
 - "Copilot to Gemini", "Microsoft to Google", "C2G" → migDir = "copilot-gemini"
 - "Gemini to Gemini", "Google to Google", "G2G", "workspace to workspace" → migDir = "gemini-gemini"
 - "Claude to Copilot", "Claude to Teams", "Claude to Microsoft", "CL2C", "Claude to OneNote" → migDir = "claude-copilot"
+- "Copilot to Copilot", "M365 to M365", "tenant to tenant", "Microsoft to Microsoft", "C2C", "cross-tenant Copilot" → migDir = "copilot-copilot"
 - NEVER map "Claude" to any direction other than "claude-gemini" or "claude-copilot"
 
 ## Full UI Map — What the User Sees
@@ -315,7 +316,7 @@ function buildAuthGateSection({ migDir, googleAuthed, msAuthed, step, live, c2g_
   if (!migDir) return 'No direction selected — auth gate not applicable yet.';
 
   const needsMs = migDir === 'gemini-copilot' || migDir === 'copilot-gemini' || migDir === 'claude-copilot';
-  const needsGoogle = migDir !== 'claude-copilot';
+  const needsGoogle = migDir !== 'claude-copilot' && migDir !== 'copilot-copilot';
   const missingGoogle = needsGoogle && !googleAuthed;
   const missingMs = needsMs && !msAuthed;
 

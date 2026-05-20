@@ -156,7 +156,7 @@ const IcoGrip=({s=14})=><svg width={s} height={s} viewBox="0 0 20 20" fill="curr
 /* ══════════════════════════════ */
 /* ═══    STEP 0: ADD CLOUDS  ═══ */
 /* ══════════════════════════════ */
-const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setGoogleUsers,msUsers,setMsUsers,googleAccounts,setGoogleAccounts,tenantId,onComplete})=>{
+const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setGoogleUsers,msUsers,setMsUsers,googleAccounts,setGoogleAccounts,msAccounts,setMsAccounts,tenantId,onComplete})=>{
   const [lgG,setLgG]=useState(false),[lgM,setLgM]=useState(false);
   const [errG,setErrG]=useState(''),[errM,setErrM]=useState('');
   const [tab,setTab]=useState('all');
@@ -165,6 +165,7 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
   const loadGoogleUsers=async()=>{setLgG(true);setErrG('');try{const r=await fetch('/api/google/users');if(r.status===401){setGoogleAuthed(false);setLgG(false);return}const d=await r.json();if(d.users)setGoogleUsers(d.users);else setErrG(d.error||'Failed to load users')}catch(e){setErrG(e.message)}setLgG(false)};
   const loadGoogleAccounts=async()=>{try{const r=await fetch('/api/auth/google/accounts');if(r.ok){const d=await r.json();if(d.accounts)setGoogleAccounts(d.accounts)}}catch(e){}};
   const loadMsUsers=async()=>{setLgM(true);setErrM('');try{const r=await fetch('/api/ms/users');if(r.status===401){setMsAuthed(false);setLgM(false);return}const d=await r.json();if(d.users)setMsUsers(d.users);else setErrM(d.error||'Failed to load users')}catch(e){setErrM(e.message)}setLgM(false)};
+  const loadMsAccounts=async()=>{try{const r=await fetch('/api/auth/ms/accounts');if(r.ok){const d=await r.json();if(d.accounts&&setMsAccounts)setMsAccounts(d.accounts)}}catch(e){}};
 
   // Track the signed-in MS admin email separately (different from msUsers[0] which is just the first user in the tenant).
   const [msAdminEmail,setMsAdminEmail]=useState(null);
@@ -174,14 +175,17 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
   },[msAuthed]);
 
   useEffect(()=>{if(googleAuthed){loadGoogleUsers();loadGoogleAccounts();}else{setGoogleUsers([]);}},[googleAuthed]);
-  useEffect(()=>{if(msAuthed)loadMsUsers();else setMsUsers([])},[msAuthed]);
+  useEffect(()=>{if(msAuthed){loadMsUsers();loadMsAccounts();}else{setMsUsers([]);if(setMsAccounts)setMsAccounts([]);}},[msAuthed]);
 
   const signInGoogle=()=>{window.open('/auth/google/login','googleauth','width=500,height=700,left=300,top=100');window.addEventListener('message',function h(e){if(e.data?.type==='google-auth-success'){window.removeEventListener('message',h);
     // Verify with server before setting state (small delay to allow session save)
     setTimeout(()=>{fetch('/auth/google/status').then(r=>r.json()).then(d=>{if(d.authenticated){setGoogleAuthed(true);loadGoogleUsers();loadGoogleAccounts();}else{setGoogleAuthed(true);loadGoogleUsers();loadGoogleAccounts();/* trust postMessage */}}).catch(()=>{setGoogleAuthed(true);loadGoogleUsers();loadGoogleAccounts();})},500);
   }})};
   const signInMs=()=>{const url=`/auth/login${tenantId?`?tenant_id=${tenantId}`:''}`;window.open(url,'msauth','width=500,height=700,left=300,top=100');window.addEventListener('message',function h(e){if(e.data?.type==='auth-success'){window.removeEventListener('message',h);
-    setTimeout(()=>{fetch('/auth/status').then(r=>r.json()).then(d=>{setMsAuthed(true);loadMsUsers();}).catch(()=>{setMsAuthed(true);loadMsUsers();})},500);
+    setTimeout(()=>{
+      fetch('/auth/status').then(r=>r.json()).then(()=>{setMsAuthed(true);loadMsUsers();loadMsAccounts();}).catch(()=>{setMsAuthed(true);loadMsUsers();loadMsAccounts();});
+      try { fetch('/api/c2c/connected-tenants').catch(()=>{}); } catch(_) {}
+    },500);
   }})};
   const logoutGoogle=async()=>{await fetch('/auth/google/logout',{method:'POST'});setGoogleAuthed(false);setGoogleUsers([]);setGoogleAccounts([])};
   const logoutMs=async()=>{await fetch('/auth/logout',{method:'POST'});setMsAuthed(false);setMsUsers([])};
@@ -202,8 +206,18 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
       setGoogleAccounts(remaining);
       if(remaining.length===0){setGoogleAuthed(false);setGoogleUsers([]);}else{loadGoogleAccounts();loadGoogleUsers();}
     }else if(target.provider==='microsoft'){
-      await fetch('/auth/logout',{method:'POST'});
-      setMsAuthed(false);setMsUsers([]);
+      if(target.accountId){
+        // Per-account MS disconnect
+        await fetch('/api/auth/ms/disconnect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:target.accountId})});
+        const remaining=(msAccounts||[]).filter(a=>a.accountId!==target.accountId);
+        if(setMsAccounts)setMsAccounts(remaining);
+        if(remaining.length===0){setMsAuthed(false);setMsUsers([]);}else{loadMsAccounts();loadMsUsers();}
+      }else{
+        // Global disconnect (legacy)
+        await fetch('/auth/logout',{method:'POST'});
+        setMsAuthed(false);setMsUsers([]);
+        if(setMsAccounts)setMsAccounts([]);
+      }
     }
   };
 
@@ -234,9 +248,9 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
   };
 
   // Expanded row state + per-account users cache for the Manage Clouds dropdown.
-  // expandedAccountId can be a Google accountId OR the literal 'ms' for the single Microsoft row.
+  // Key for Google is the accountId; for MS it's 'ms_' + accountId so they don't collide.
   const [expandedAccountId,setExpandedAccountId]=useState(null);
-  const [accountUsersMap,setAccountUsersMap]=useState({}); // accountId → { loading, users: [], total: 0 }
+  const [accountUsersMap,setAccountUsersMap]=useState({}); // key → { loading, users: [], total: 0, error?, needsReconnect? }
   const toggleMsUsers=()=>setExpandedAccountId(p=>p==='ms'?null:'ms');
   const toggleAccountUsers=async(accountId)=>{
     if(expandedAccountId===accountId){setExpandedAccountId(null);return;}
@@ -255,6 +269,28 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
     }catch(err){
       const fe=friendlyError(err.message);
       setAccountUsersMap(p=>({...p,[accountId]:{loading:false,users:[],total:0,error:fe.msg,needsReconnect:fe.needsReconnect}}));
+    }
+  };
+
+  // Per-MS-account users fetch (delegated token endpoint)
+  const toggleMsAccountUsers=async(accountId)=>{
+    const key='ms_'+accountId;
+    if(expandedAccountId===key){setExpandedAccountId(null);return;}
+    setExpandedAccountId(key);
+    if(accountUsersMap[key]?.users?.length)return; // cached
+    setAccountUsersMap(p=>({...p,[key]:{loading:true,users:[],total:0}}));
+    try{
+      const r=await fetch(`/api/auth/ms/users?accountId=${encodeURIComponent(accountId)}`);
+      const d=await r.json();
+      if(r.ok&&Array.isArray(d.users)){
+        setAccountUsersMap(p=>({...p,[key]:{loading:false,users:d.users,total:d.total||d.users.length}}));
+      }else{
+        const fe=friendlyError(d.error||d);
+        setAccountUsersMap(p=>({...p,[key]:{loading:false,users:[],total:0,error:fe.msg,needsReconnect:fe.needsReconnect}}));
+      }
+    }catch(err){
+      const fe=friendlyError(err.message);
+      setAccountUsersMap(p=>({...p,[key]:{loading:false,users:[],total:0,error:fe.msg,needsReconnect:fe.needsReconnect}}));
     }
   };
 
@@ -359,7 +395,7 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
               <MsIcon s={40}/>
               <div style={{textAlign:'center'}}>
                 <div style={{fontWeight:600,fontSize:14,color:C.primary,marginBottom:2}}>Microsoft 365</div>
-                <div style={{fontSize:12,color:'#16a34a',fontWeight:500}}>{msAuthed?1:0} account connected</div>
+                <div style={{fontSize:12,color:'#16a34a',fontWeight:500}}>{msAccounts?.length||(msAuthed?1:0)} account{(msAccounts?.length||(msAuthed?1:0))!==1?'s':''} connected</div>
               </div>
               <Btn onClick={signInMs} variant="outline" style={{fontSize:12,width:'100%',justifyContent:'center'}}>+ Add Another</Btn>
             </div>
@@ -446,58 +482,77 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
                 );
               })}
 
-              {/* Microsoft Account */}
-              {msAuthed&&(()=>{
-                const isExp=expandedAccountId==='ms';
-                const msDisplay=msAdminEmail||'Microsoft 365';
+              {/* Microsoft Accounts — one row per connected MS tenant */}
+              {(msAccounts&&msAccounts.length>0?msAccounts:(msAuthed?[{accountId:'ms-legacy',email:msAdminEmail||'Microsoft 365'}]:[])).map(acc=>{
+                const expandKey='ms_'+acc.accountId;
+                const isExp=expandedAccountId===expandKey;
+                const emailDisplay=acc.email||'Microsoft 365';
+                const info=accountUsersMap[expandKey];
+                // Fallback: for legacy single-account case use the shared msUsers list as the count
+                const fallbackUsers=acc.accountId==='ms-legacy'?(msUsers||[]):null;
+                const headerCount=info?.total||fallbackUsers?.length||0;
                 return(
-                  <div>
+                  <div key={acc.accountId} style={{borderBottom:`1px solid ${C.border}`}}>
                     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 120px 60px',gap:16,padding:'14px 16px',alignItems:'center',background:isExp?C.tint:'transparent',transition:'background .15s'}}>
                       <div style={{display:'flex',alignItems:'center',gap:8}}>
-                        <button onClick={toggleMsUsers} title={isExp?'Hide users':'Show users'} style={{background:'none',border:'none',cursor:'pointer',color:C.muted,padding:0,display:'flex',alignItems:'center'}} onMouseEnter={e=>e.currentTarget.style.color=C.primary} onMouseLeave={e=>e.currentTarget.style.color=C.muted}>
+                        <button onClick={()=>acc.accountId==='ms-legacy'?toggleMsUsers():toggleMsAccountUsers(acc.accountId)} title={isExp?'Hide users':'Show users'} style={{background:'none',border:'none',cursor:'pointer',color:C.muted,padding:0,display:'flex',alignItems:'center'}} onMouseEnter={e=>e.currentTarget.style.color=C.primary} onMouseLeave={e=>e.currentTarget.style.color=C.muted}>
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{transition:'transform .2s',transform:isExp?'rotate(90deg)':'rotate(0)'}}><polyline points="9 18 15 12 9 6"/></svg>
                         </button>
                         <MsIcon s={28}/>
                         <div style={{fontWeight:500,fontSize:13}}>Microsoft 365</div>
                       </div>
                       <div style={{display:'flex',alignItems:'center',gap:8,fontSize:13,color:C.dark}}>
-                        <span>{msDisplay}</span>
-                        {msUsers?.length>0&&<span style={{fontSize:11,padding:'2px 6px',borderRadius:10,background:C.tint,color:C.primary,fontWeight:600}}>{msUsers.length} users</span>}
+                        <span>{emailDisplay}</span>
+                        {headerCount>0&&<span style={{fontSize:11,padding:'2px 6px',borderRadius:10,background:C.tint,color:C.primary,fontWeight:600}}>{headerCount} users</span>}
                       </div>
                       <div style={{fontSize:12,color:'#16a34a',fontWeight:500}}>Admin</div>
                       <div style={{textAlign:'center'}}>
-                        <button onClick={()=>requestDisconnect('microsoft',null,msDisplay,'Microsoft 365 ('+msDisplay+')')} title="Disconnect Microsoft 365" style={{background:'none',border:'none',cursor:'pointer',color:C.error,fontSize:16,padding:'4px 6px',borderRadius:4,transition:'background .15s'}} onMouseEnter={e=>e.currentTarget.style.background='#FEF2F2'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}><IcoTrash s={14}/></button>
+                        <button onClick={()=>requestDisconnect('microsoft',acc.accountId==='ms-legacy'?null:acc.accountId,emailDisplay,emailDisplay)} title={`Disconnect ${emailDisplay}`} style={{background:'none',border:'none',cursor:'pointer',color:C.error,fontSize:16,padding:'4px 6px',borderRadius:4,transition:'background .15s'}} onMouseEnter={e=>e.currentTarget.style.background='#FEF2F2'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}><IcoTrash s={14}/></button>
                       </div>
                     </div>
                     {isExp&&(
                       <div style={{padding:'8px 16px 16px 48px',background:'#FAFBFD'}}>
-                        {(!msUsers||msUsers.length===0)?(
-                          <div style={{display:'flex',alignItems:'center',gap:8,fontSize:12,color:C.muted,padding:'8px 0'}}><Spinner s={12}/> Loading users...</div>
-                        ):(
-                          <>
-                            <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>Users in tenant — {msUsers.length} total</div>
-                            <div style={{maxHeight:240,overflowY:'auto',border:`1px solid ${C.border}`,borderRadius:6,background:'white'}}>
-                              {msUsers.map((u,i)=>{
-                                const em=u.mail||u.userPrincipalName||'';
-                                const nm=u.displayName||em;
-                                return(
-                                  <div key={em+i} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',borderBottom:i<msUsers.length-1?`1px solid ${C.bg}`:'none',fontSize:12}}>
-                                    <div style={{width:24,height:24,borderRadius:'50%',background:avatarColor(em||nm),color:'white',display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:600,flexShrink:0}}>{(nm||em).slice(0,2).toUpperCase()}</div>
-                                    <div style={{flex:1,minWidth:0}}>
-                                      <div style={{fontWeight:500,color:C.dark,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{nm}</div>
-                                      <div style={{fontSize:10,color:C.muted,fontFamily:'monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{em}</div>
-                                    </div>
-                                  </div>
-                                );
-                              })}
+                        {info?.loading&&<div style={{display:'flex',alignItems:'center',gap:8,fontSize:12,color:C.muted,padding:'8px 0'}}><Spinner s={12}/> Loading users from {emailDisplay}...</div>}
+                        {info?.error&&(
+                          <div style={{display:'flex',alignItems:'flex-start',gap:10,padding:'10px 12px',background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:8,marginTop:4}}>
+                            <IcoWarn s={14}/>
+                            <div style={{flex:1,fontSize:12,color:'#991B1B'}}>
+                              <div style={{fontWeight:600,marginBottom:2}}>{info.needsReconnect?'Sign-in expired':'Could not load users'}</div>
+                              <div style={{color:'#B91C1C'}}>{info.error}</div>
                             </div>
-                          </>
+                          </div>
                         )}
+                        {(()=>{
+                          const list=info?.users?.length?info.users:(fallbackUsers||[]);
+                          const total=info?.total||list.length;
+                          if(info?.loading||info?.error)return null;
+                          if(list.length===0)return <div style={{fontSize:12,color:C.muted,padding:'8px 0'}}>No users found in this tenant.</div>;
+                          return(
+                            <>
+                              <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.5,marginBottom:8}}>Users in tenant — {total} total</div>
+                              <div style={{maxHeight:240,overflowY:'auto',border:`1px solid ${C.border}`,borderRadius:6,background:'white'}}>
+                                {list.map((u,i)=>{
+                                  const em=u.mail||u.userPrincipalName||'';
+                                  const nm=u.displayName||em;
+                                  return(
+                                    <div key={em+i} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',borderBottom:i<list.length-1?`1px solid ${C.bg}`:'none',fontSize:12}}>
+                                      <div style={{width:24,height:24,borderRadius:'50%',background:avatarColor(em||nm),color:'white',display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:600,flexShrink:0}}>{(nm||em).slice(0,2).toUpperCase()}</div>
+                                      <div style={{flex:1,minWidth:0}}>
+                                        <div style={{fontWeight:500,color:C.dark,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{nm}</div>
+                                        <div style={{fontSize:10,color:C.muted,fontFamily:'monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{em}</div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </>
+                          );
+                        })()}
                       </div>
                     )}
                   </div>
                 );
-              })()}
+              })}
             </div>
           ):(
             <div style={{padding:'24px',textAlign:'center',background:C.bg,borderRadius:8,color:C.muted,fontSize:12}}>No cloud accounts connected</div>
@@ -505,8 +560,8 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
         </div>
       )}
 
-      {!googleAuthed&&<div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:8,fontSize:13,color:'#991B1B',marginBottom:16}}><IcoWarn s={14}/>Google Workspace connection is required to proceed.</div>}
-      <Btn onClick={onComplete} disabled={!googleAuthed} style={{width:'100%',justifyContent:'center',marginTop:8}}>Continue →</Btn>
+      {!googleAuthed&&!msAuthed&&<div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',background:'#FEF2F2',border:'1px solid #FCA5A5',borderRadius:8,fontSize:13,color:'#991B1B',marginBottom:16}}><IcoWarn s={14}/>Connect at least one cloud (Google Workspace or Microsoft 365) to proceed.</div>}
+      <Btn onClick={onComplete} disabled={!googleAuthed&&!msAuthed} style={{width:'100%',justifyContent:'center',marginTop:8}}>Continue →</Btn>
     </div>
   );
 };
@@ -532,18 +587,38 @@ const DirCard=({d,hovered,setHovered,onSelect})=>{
     </button>
   );
 };
-const StepDirection=({onSelect,onBack,googleAuthed,msAuthed,googleAccounts})=>{
+const StepDirection=({onSelect,onBack,googleAuthed,msAuthed,googleAccounts,msAccounts})=>{
   const [hovered,setHovered]=useState(null);
+  const googleCount=googleAccounts?.length||0;
+  const msCount=msAccounts?.length||(msAuthed?1:0);
   const bothConnected=googleAuthed&&msAuthed;
-  const multiGoogle=googleAccounts?.length>=2;
-  const dirs=bothConnected?[
-    {id:'gemini-copilot',label:'Gemini → Copilot',sub:'Google Workspace to Microsoft 365',srcIcon:<GoogleIcon/>,tgtIcon:<MsIcon/>},
-    {id:'copilot-gemini',label:'Copilot → Gemini',sub:'Microsoft 365 to Google Workspace',srcIcon:<MsIcon/>,tgtIcon:<GoogleIcon/>},
-  ]:multiGoogle?[
-    {id:'gemini-gemini',label:'Gemini → Gemini',sub:'Migrate between Google Workspace accounts',srcIcon:<GoogleIcon/>,tgtIcon:<GoogleIcon/>},
-  ]:[
-    {id:'claude-gemini',label:'Claude → Gemini',sub:'Claude export ZIP to Google Drive',srcIcon:<ClaudeIcon/>,tgtIcon:<GoogleIcon/>},
-  ];
+  const multiGoogle=googleCount>=2;
+  const multiMs=msCount>=2;
+
+  // Build dirs additively so each condition contributes its tiles without overwriting others
+  const dirs=[];
+  if(bothConnected){
+    dirs.push({id:'gemini-copilot',label:'Gemini → Copilot',sub:'Google Workspace to Microsoft 365',srcIcon:<GoogleIcon/>,tgtIcon:<MsIcon/>});
+    dirs.push({id:'copilot-gemini',label:'Copilot → Gemini',sub:'Microsoft 365 to Google Workspace',srcIcon:<MsIcon/>,tgtIcon:<GoogleIcon/>});
+  }
+  if(multiGoogle){
+    dirs.push({id:'gemini-gemini',label:'Gemini → Gemini',sub:'Migrate between Google Workspace accounts',srcIcon:<GoogleIcon/>,tgtIcon:<GoogleIcon/>});
+  }
+  if(multiMs){
+    dirs.push({id:'copilot-copilot',label:'Copilot → Copilot',sub:'Microsoft 365 to Microsoft 365 (cross-tenant)',srcIcon:<MsIcon/>,tgtIcon:<MsIcon/>});
+  }
+  if(msAuthed&&!multiMs){
+    // 1 Microsoft connected — show Claude→Copilot (and Claude→Gemini if Google also connected)
+    dirs.push({id:'claude-copilot',label:'Claude → Copilot',sub:'Claude export ZIP to Microsoft OneDrive',srcIcon:<ClaudeIcon/>,tgtIcon:<MsIcon/>});
+  }
+  if(googleAuthed){
+    dirs.push({id:'claude-gemini',label:'Claude → Gemini',sub:'Claude export ZIP to Google Drive',srcIcon:<ClaudeIcon/>,tgtIcon:<GoogleIcon/>});
+  }
+  // Deduplicate by id while preserving order (in case bothConnected + multiGoogle add same tile via different routes — currently they don't, but defensive)
+  const seenIds=new Set();
+  const dedupedDirs=dirs.filter(d=>{if(seenIds.has(d.id))return false;seenIds.add(d.id);return true;});
+  // Fallback: if nothing matches yet (no clouds connected) show Claude→Gemini as the lowest-friction path
+  if(dedupedDirs.length===0)dedupedDirs.push({id:'claude-gemini',label:'Claude → Gemini',sub:'Claude export ZIP to Google Drive',srcIcon:<ClaudeIcon/>,tgtIcon:<GoogleIcon/>});
   return(
     <div className="fade-up">
       <div style={{marginBottom:24}}>
@@ -551,7 +626,7 @@ const StepDirection=({onSelect,onBack,googleAuthed,msAuthed,googleAccounts})=>{
         <div style={{fontSize:13,color:C.muted}}>Select the source and destination for your migration.</div>
       </div>
       <div style={{display:'flex',gap:14,marginBottom:24,flexWrap:'wrap'}}>
-        {dirs.map(d=><DirCard key={d.id} d={d} hovered={hovered} setHovered={setHovered} onSelect={onSelect}/>)}
+        {dedupedDirs.map(d=><DirCard key={d.id} d={d} hovered={hovered} setHovered={setHovered} onSelect={onSelect}/>)}
       </div>
       {googleAuthed&&!msAuthed&&!multiGoogle&&<div style={{fontSize:12,color:C.muted,marginBottom:20,padding:'10px 14px',background:C.bg,borderRadius:8}}>
         • Connect <strong>Microsoft 365</strong> on the previous step to unlock G2C and C2G directions, or add another Google account for G2G.
@@ -2773,7 +2848,8 @@ const StepCL2CMap=({cl2cUploadData,msUsers,cl2cMappings,setCl2cMappings,cl2cSele
   useEffect(()=>{
     if(!users.length||!msUsers.length)return;
     const byLocal={};
-    msUsers.forEach(u=>{const em=(u.email||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
+    // Graph returns Microsoft users with `mail` / `userPrincipalName` — NOT `email`.
+    msUsers.forEach(u=>{const em=(u.mail||u.userPrincipalName||u.email||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
     const m={};const used=new Set();
     users.forEach(u=>{
       const existing=(cl2cMappings[u.uuid]||'').toLowerCase();
@@ -2836,7 +2912,7 @@ const StepCL2CMap=({cl2cUploadData,msUsers,cl2cMappings,setCl2cMappings,cl2cSele
   const clearCsv=()=>{
     setCsvEmails(null);
     const byLocal={};
-    msUsers.forEach(u=>{const em=(u.email||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
+    msUsers.forEach(u=>{const em=(u.mail||u.userPrincipalName||u.email||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
     const m={};const used=new Set();
     users.forEach(u=>{const loc=(u.email_address||'').toLowerCase().split('@')[0];const dest=byLocal[loc]||'';if(dest&&!used.has(dest)){m[u.uuid]=dest;used.add(dest);}else m[u.uuid]='';});
     setCl2cMappings(m);
@@ -2921,7 +2997,7 @@ const StepCL2CMap=({cl2cUploadData,msUsers,cl2cMappings,setCl2cMappings,cl2cSele
                       onClick={e=>e.stopPropagation()}
                       style={{border:'none',background:'transparent',fontSize:12,fontFamily:'inherit',color:C.muted,cursor:'pointer',outline:'none',width:'100%',padding:'2px 0'}}>
                       <option value="" disabled>— assign —</option>
-                      {msUsers.map(g=><option key={g.email||g.id} value={g.email||''}>{g.email||g.name}</option>)}
+                      {msUsers.map(m=>{const em=(m.mail||m.userPrincipalName||m.email||'').toLowerCase();return em?<option key={em} value={em}>{em}</option>:null})}
                     </select>
                   ):(
                     <span style={{color:C.muted,fontSize:13}}>–</span>
@@ -3053,6 +3129,575 @@ const StepCL2CMigrate=({cl2cStats,cl2cDone,onRunAnother,onBack,onStart,cl2cLive,
             {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{flex:'1 1 140px',justifyContent:'center'}}><IcoRocket s={14}/> Start Live Migration</Btn>}
             <Btn variant="ghost" onClick={onBack} style={{flex:'1 1 100px',justifyContent:'center'}}>← Options</Btn>
             <Btn variant="ghost" onClick={()=>onRunAnother&&onRunAnother()} style={{flex:'1 1 120px',justifyContent:'center'}}>New Migration</Btn>
+            {onChangeDirection&&<Btn variant="ghost" onClick={onChangeDirection} style={{flex:'1 1 120px',justifyContent:'center'}}>⇄ Change Direction</Btn>}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
+/* ══════════════════════════════════════════════════════════════════ */
+/* ═══  C2C (Copilot → Copilot, cross-tenant) STEP COMPONENTS    ═══ */
+/* ══════════════════════════════════════════════════════════════════ */
+
+/* Post-migration: "Install the CloudFuze Copilot agent" admin-console instructions panel */
+const CopilotAgentInstallPanel=()=>{
+  const [open,setOpen]=useState(true);
+  const steps=[
+    {n:1,icon:'🌐',title:'Open Microsoft 365 Admin Center',desc:'Sign in at admin.microsoft.com as a Global / Application admin of the DESTINATION tenant.'},
+    {n:2,icon:'🤖',title:'Go to Integrated apps',desc:'Navigate to Settings → Integrated apps → click Get apps.'},
+    {n:3,icon:'🔍',title:'Find the CloudFuze Copilot Agent',desc:'Search "CloudFuze Copilot Migrated Chats" in the agent marketplace. (Or use the manifest URL provided by your CloudFuze rep for a sideload upload.)'},
+    {n:4,icon:'✅',title:'Deploy to users',desc:'Click Get it now → Deploy → choose the destination users that received migrated pages → Finish. The agent is pinned in their Copilot sidebar.'},
+    {n:5,icon:'💬',title:'Users open Copilot',desc:'Each destination user opens Microsoft 365 Copilot. The agent surfaces the migrated OneNote pages — they can ask "Find my migrated chat about X" or browse by date.'},
+  ];
+  return(
+    <div style={{border:`1px solid #BFDBFE`,borderRadius:12,background:'#EFF6FF',marginBottom:16,overflow:'hidden'}}>
+      <div onClick={()=>setOpen(o=>!o)} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 16px',cursor:'pointer',userSelect:'none'}}>
+        <div style={{display:'flex',alignItems:'center',gap:10}}>
+          <span style={{fontSize:18}}>🤖</span>
+          <div>
+            <div style={{fontSize:13,fontWeight:700,color:'#1E3A5F'}}>Install the Copilot Agent in Admin Console</div>
+            <div style={{fontSize:11,color:'#3B82F6'}}>One-time setup — the agent only needs to be deployed once per destination tenant</div>
+          </div>
+        </div>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{transition:'transform .2s',transform:open?'rotate(180deg)':'none'}}><polyline points="6 9 12 15 18 9"/></svg>
+      </div>
+      {open&&(
+        <div style={{padding:'0 16px 16px'}}>
+          <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:12}}>
+            {steps.map(s=>(
+              <div key={s.n} style={{display:'flex',gap:12,alignItems:'flex-start',background:'white',borderRadius:10,padding:'10px 14px',border:'1px solid #DBEAFE'}}>
+                <div style={{minWidth:28,height:28,borderRadius:'50%',background:'#1D4ED8',color:'white',display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,flexShrink:0}}>{s.n}</div>
+                <div>
+                  <div style={{fontSize:12,fontWeight:700,color:'#1E3A5F',marginBottom:2}}>{s.icon} {s.title}</div>
+                  <div style={{fontSize:11,color:'#4B5563',lineHeight:1.5}}>{s.desc}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{padding:'8px 12px',background:'#FEF9C3',border:'1px solid #FDE68A',borderRadius:8,fontSize:11,color:'#713F12'}}>
+            <strong>Note:</strong> If the destination tenant already has the agent deployed (from a previous C2C migration), this step is automatically skipped — the agent supports multiple migrations.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* Step: Select source + destination Microsoft tenants (with "+ Connect" popup) */
+const StepC2CTenantSelect=({c2cConfig,setC2cConfig,onNext,onBack,showToast})=>{
+  // Tenants come from TWO sources we merge:
+  //   1. Microsoft accounts the user signed into (Manage Clouds) — each carries its own tenantId
+  //   2. Explicit admin-consent tenants from /api/c2c/connected-tenants (for tenants where the user
+  //      isn't signed in as an admin but has granted app-only consent out-of-band)
+  // Most users will only need #1 — they sign in as the admin and we have everything we need.
+  const [msAccts,setMsAccts]=useState([]);
+  const [extraTenants,setExtraTenants]=useState([]);
+  const [loading,setLoading]=useState(false);
+  const [connecting,setConnecting]=useState(false);
+  const [consentStatus,setConsentStatus]=useState({}); // tenantId → { ok, error }
+
+  const load=useCallback(async()=>{
+    setLoading(true);
+    try{
+      const [a,t]=await Promise.all([
+        fetch('/api/auth/ms/accounts').then(r=>r.ok?r.json():{accounts:[]}).catch(()=>({accounts:[]})),
+        fetch('/api/c2c/connected-tenants').then(r=>r.ok?r.json():{tenants:[]}).catch(()=>({tenants:[]})),
+      ]);
+      setMsAccts(a.accounts||[]);
+      setExtraTenants(t.tenants||[]);
+    }catch(e){showToast?.('Failed to load tenants','error');}
+    setLoading(false);
+  },[showToast]);
+
+  useEffect(()=>{load()},[load]);
+
+  // Merge MS accounts + explicit consent tenants. Deduplicate by tenantId.
+  const tenants=useMemo(()=>{
+    const seen=new Set();
+    const out=[];
+    for(const a of msAccts){
+      if(!a.tenantId||seen.has(a.tenantId))continue;
+      seen.add(a.tenantId);
+      out.push({
+        tenantId:a.tenantId,
+        displayName:a.displayName||a.email,
+        defaultDomain:(a.email||'').split('@')[1]||null,
+        adminEmail:a.email,
+        source:'signin',
+      });
+    }
+    for(const t of extraTenants){
+      if(!t.tenantId||seen.has(t.tenantId))continue;
+      seen.add(t.tenantId);
+      out.push({...t,source:'consent'});
+    }
+    return out;
+  },[msAccts,extraTenants]);
+
+  // Probe app-only consent for each tenant (shows ✓ Ready or ⚠ Needs consent on each row)
+  useEffect(()=>{
+    let cancelled=false;
+    tenants.forEach(async(t)=>{
+      if(consentStatus[t.tenantId])return;
+      try{
+        const r=await fetch(`/api/c2c/tenants/${encodeURIComponent(t.tenantId)}/users`);
+        const d=await r.json();
+        if(cancelled)return;
+        if(r.ok){
+          setConsentStatus(p=>({...p,[t.tenantId]:{ok:true,total:d.total||d.users?.length||0}}));
+        }else{
+          setConsentStatus(p=>({...p,[t.tenantId]:{ok:false,error:d.error||'Consent required'}}));
+        }
+      }catch(e){
+        if(!cancelled)setConsentStatus(p=>({...p,[t.tenantId]:{ok:false,error:e.message}}));
+      }
+    });
+    return ()=>{cancelled=true;};
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[tenants.length]);
+
+  const grantConsentForTenant=async(tenantId)=>{
+    setConnecting(true);
+    try{
+      const r=await fetch('/api/c2c/consent-url');
+      const d=await r.json();
+      if(!d.url)throw new Error(d.error||'No consent URL');
+      // Direct to the specific tenant by replacing /common/ in the URL
+      const url=d.url.replace('/common/adminconsent',`/${tenantId}/adminconsent`);
+      const popup=window.open(url,'mstenantconsent','width=560,height=720,left=300,top=80');
+      const handler=(e)=>{
+        if(e.data?.type==='c2c-tenant-consent-success'){
+          window.removeEventListener('message',handler);
+          showToast?.(`Consent granted for ${e.data.displayName||e.data.tenantId}`);
+          setConsentStatus(p=>({...p,[tenantId]:{ok:true}}));
+          load();
+        }else if(e.data?.type==='c2c-tenant-consent-error'){
+          window.removeEventListener('message',handler);
+          showToast?.(`Consent failed: ${e.data.message}`,'error');
+        }
+      };
+      window.addEventListener('message',handler);
+      const closeCheck=setInterval(()=>{
+        if(popup&&popup.closed){clearInterval(closeCheck);setConnecting(false);load();window.removeEventListener('message',handler);}
+      },1000);
+    }catch(e){
+      showToast?.(e.message,'error');
+    }
+    setTimeout(()=>setConnecting(false),3000);
+  };
+
+  const connectNewTenant=async()=>{
+    // For tenants NOT already signed-in via OAuth — admin consent only flow
+    setConnecting(true);
+    try{
+      const r=await fetch('/api/c2c/consent-url');
+      const d=await r.json();
+      if(!d.url)throw new Error(d.error||'No consent URL');
+      const popup=window.open(d.url,'mstenantconsent','width=560,height=720,left=300,top=80');
+      const handler=(e)=>{
+        if(e.data?.type==='c2c-tenant-consent-success'){
+          window.removeEventListener('message',handler);
+          showToast?.(`Connected ${e.data.displayName||e.data.tenantId}`);
+          load();
+        }else if(e.data?.type==='c2c-tenant-consent-error'){
+          window.removeEventListener('message',handler);
+          showToast?.(`Consent failed: ${e.data.message}`,'error');
+        }
+      };
+      window.addEventListener('message',handler);
+      const closeCheck=setInterval(()=>{
+        if(popup&&popup.closed){clearInterval(closeCheck);setConnecting(false);load();window.removeEventListener('message',handler);}
+      },1000);
+    }catch(e){
+      showToast?.(e.message,'error');
+    }
+    setTimeout(()=>setConnecting(false),3000);
+  };
+
+  const tenantLabel=(t)=>t.displayName?`${t.displayName} (${t.defaultDomain||t.tenantId.slice(0,8)})`:t.tenantId;
+
+  return(
+    <div className="fade-up">
+      <div style={{marginBottom:20}}>
+        <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Select Microsoft 365 Tenants</div>
+        <div style={{fontSize:13,color:C.muted}}>Each tenant admin must consent once. You can then migrate Copilot conversations between any two connected tenants.</div>
+      </div>
+
+      <Card style={{marginBottom:16}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+          <div style={{fontSize:13,fontWeight:600,color:C.dark}}>Available Tenants {tenants.length>0&&<span style={{fontSize:11,padding:'2px 8px',borderRadius:10,background:C.tint,color:C.primary,marginLeft:6}}>{tenants.length}</span>}</div>
+          <Btn variant="outline" onClick={connectNewTenant} disabled={connecting} style={{fontSize:12,padding:'6px 14px'}}>{connecting?<><Spinner s={12}/> Adding…</>:'+ Add Another Tenant'}</Btn>
+        </div>
+        {loading?<div style={{display:'flex',alignItems:'center',gap:8,fontSize:12,color:C.muted}}><Spinner s={12}/> Loading…</div>:tenants.length===0?(
+          <div style={{textAlign:'center',padding:'20px',color:C.muted,fontSize:13}}>
+            No Microsoft 365 tenants found. Go back to <b>Connect Clouds</b> and sign in as a Microsoft tenant admin, or click <b>+ Add Another Tenant</b> to grant admin consent for a tenant you don't manage as a user.
+          </div>
+        ):(
+          <div style={{display:'flex',flexDirection:'column',gap:8}}>
+            {tenants.map(t=>{
+              const cs=consentStatus[t.tenantId];
+              const isProbing=!cs;
+              const needsConsent=cs&&!cs.ok;
+              return(
+                <div key={t.tenantId} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',border:`1px solid ${needsConsent?'#FCA5A5':C.border}`,borderRadius:8,background:needsConsent?'#FEF2F2':'white'}}>
+                  <MsIcon s={20}/>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',display:'flex',alignItems:'center',gap:8}}>
+                      <span>{t.displayName||t.tenantId}</span>
+                      {t.source==='signin'&&<span style={{fontSize:10,padding:'1px 6px',borderRadius:10,background:'#DBEAFE',color:'#1E40AF',fontWeight:600}}>signed in</span>}
+                    </div>
+                    <div style={{fontSize:11,color:C.muted,fontFamily:'monospace'}}>{t.defaultDomain||t.tenantId}</div>
+                  </div>
+                  {isProbing&&<span style={{display:'inline-flex',alignItems:'center',gap:5,fontSize:11,color:C.muted}}><Spinner s={11}/> Checking…</span>}
+                  {cs?.ok&&<span style={{display:'inline-flex',alignItems:'center',gap:5,fontSize:11,color:C.success,fontWeight:600}}>✓ Ready{cs.total>0&&` (${cs.total} users)`}</span>}
+                  {needsConsent&&(
+                    <button onClick={()=>grantConsentForTenant(t.tenantId)} style={{display:'inline-flex',alignItems:'center',gap:5,fontSize:11,fontWeight:600,padding:'5px 10px',borderRadius:6,border:`1px solid #F59E0B`,background:'#FEF3C7',color:'#92400E',cursor:'pointer',fontFamily:'inherit'}} onMouseEnter={e=>e.currentTarget.style.background='#FDE68A'} onMouseLeave={e=>e.currentTarget.style.background='#FEF3C7'}>
+                      ⚠ Grant App Consent
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
+
+      <Card style={{marginBottom:20}}>
+        <Field label="Source Tenant (read Copilot from)">
+          <select value={c2cConfig.sourceTenantId||''} onChange={e=>setC2cConfig(p=>({...p,sourceTenantId:e.target.value}))} style={{width:'100%',border:`1px solid ${C.border}`,borderRadius:6,padding:'9px 12px',fontSize:13,fontFamily:'inherit',background:'white'}}>
+            <option value="">Select source tenant…</option>
+            {tenants.map(t=><option key={t.tenantId} value={t.tenantId}>{tenantLabel(t)}</option>)}
+          </select>
+        </Field>
+        <Field label="Destination Tenant (upload to OneDrive in)">
+          <select value={c2cConfig.destTenantId||''} onChange={e=>setC2cConfig(p=>({...p,destTenantId:e.target.value}))} style={{width:'100%',border:`1px solid ${C.border}`,borderRadius:6,padding:'9px 12px',fontSize:13,fontFamily:'inherit',background:'white'}}>
+            <option value="">Select destination tenant…</option>
+            {tenants.map(t=><option key={t.tenantId} value={t.tenantId}>{tenantLabel(t)}</option>)}
+          </select>
+        </Field>
+      </Card>
+
+      <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+        <Btn variant="ghost" onClick={onBack}>← Back</Btn>
+        <Btn onClick={onNext} disabled={!c2cConfig.sourceTenantId||!c2cConfig.destTenantId||c2cConfig.sourceTenantId===c2cConfig.destTenantId}>Continue →</Btn>
+      </div>
+    </div>
+  );
+};
+
+/* Step: Map source users → destination users */
+const StepC2CUserMap=({c2cConfig,c2cMappings,setC2cMappings,c2cSelectedUsers,setC2cSelectedUsers,onNext,onBack,showToast})=>{
+  const [srcUsers,setSrcUsers]=useState([]);
+  const [destUsers,setDestUsers]=useState([]);
+  const [loading,setLoading]=useState(false);
+  const [search,setSearch]=useState('');
+  const csvRef=useRef(null);
+  const [csvUploading,setCsvUploading]=useState(false);
+
+  useEffect(()=>{
+    if(!c2cConfig?.sourceTenantId||!c2cConfig?.destTenantId)return;
+    setLoading(true);
+    Promise.all([
+      fetch(`/api/c2c/tenants/${encodeURIComponent(c2cConfig.sourceTenantId)}/users`).then(r=>r.json()).catch(()=>({users:[]})),
+      fetch(`/api/c2c/tenants/${encodeURIComponent(c2cConfig.destTenantId)}/users`).then(r=>r.json()).catch(()=>({users:[]})),
+    ]).then(([s,d])=>{
+      setSrcUsers(s.users||[]);
+      setDestUsers(d.users||[]);
+    }).finally(()=>setLoading(false));
+  },[c2cConfig?.sourceTenantId,c2cConfig?.destTenantId]);
+
+  const toggleUser=(em)=>setC2cSelectedUsers(p=>{const n=new Set(p);n.has(em)?n.delete(em):n.add(em);return n;});
+  const toggleAll=()=>{if(c2cSelectedUsers.size===srcUsers.length)setC2cSelectedUsers(new Set());else setC2cSelectedUsers(new Set(srcUsers.map(u=>u.mail||u.userPrincipalName)))};
+
+  const autoMap=()=>{
+    const m={...c2cMappings};
+    const destByLocal={};
+    destUsers.forEach(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();const loc=em.split('@')[0];if(loc&&!destByLocal[loc])destByLocal[loc]=em});
+    const used=new Set(Object.values(m).filter(Boolean).map(v=>v.toLowerCase()));
+    let n=0;
+    srcUsers.forEach(u=>{
+      const em=(u.mail||u.userPrincipalName||'').toLowerCase();
+      if(m[em])return;
+      const loc=em.split('@')[0];
+      const cand=destByLocal[loc];
+      if(cand&&!used.has(cand)){m[em]=cand;used.add(cand);n++;}
+    });
+    setC2cMappings(m);
+    const sel=new Set(c2cSelectedUsers);
+    Object.entries(m).forEach(([s,d])=>{if(d)sel.add(s)});
+    setC2cSelectedUsers(sel);
+    showToast?.(n>0?`Auto-mapped ${n} user(s).`:'No new auto-mappings found.');
+  };
+
+  const downloadCsv=()=>{
+    const rows=[['SECTION','Source User','Destination User','Mapped'].map(v=>`"${v}"`).join(',')];
+    srcUsers.forEach(u=>{
+      const em=u.mail||u.userPrincipalName||'';
+      const d=c2cMappings[em.toLowerCase()]||'';
+      rows.push(['source',em,d,d?'yes':'no'].map(v=>`"${String(v||'').replace(/"/g,'""')}"`).join(','));
+    });
+    const used=new Set(Object.values(c2cMappings).filter(Boolean).map(v=>v.toLowerCase()));
+    destUsers.forEach(u=>{
+      const em=u.mail||u.userPrincipalName||'';
+      rows.push(['destination','',em,used.has(em.toLowerCase())?'used':'available'].map(v=>`"${String(v||'').replace(/"/g,'""')}"`).join(','));
+    });
+    const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(rows.join('\n'));a.download='c2c-user-mappings.csv';a.click();
+    showToast?.(`Downloaded ${srcUsers.length} source + ${destUsers.length} destination users.`);
+  };
+
+  const uploadCsv=file=>{
+    setCsvUploading(true);
+    const r=new FileReader();
+    r.onload=e=>{
+      const lines=e.target.result.split(/\r?\n/);
+      const m={...c2cMappings};let n=0;
+      for(const l of lines){
+        if(!l.trim())continue;
+        const c=parseCsvLine(l);
+        if(c.length<2)continue;
+        const first=(c[0]||'').trim().toLowerCase();
+        if(first==='section'||first==='source user'||first==='destination')continue;
+        const src=first==='source'?(c[1]||'').trim().toLowerCase():(c[0]||'').trim().toLowerCase();
+        const dst=first==='source'?(c[2]||'').trim().toLowerCase():(c[1]||'').trim().toLowerCase();
+        if(src){m[src]=dst;n++;}
+      }
+      setC2cMappings(m);
+      setCsvUploading(false);
+      showToast?.(`Imported ${n} mapping(s).`);
+    };
+    r.onerror=()=>setCsvUploading(false);
+    r.readAsText(file);
+  };
+
+  const filtered=srcUsers.filter(u=>{
+    const em=u.mail||u.userPrincipalName||'';
+    const q=search.toLowerCase();
+    return em.toLowerCase().includes(q)||(u.displayName||'').toLowerCase().includes(q)||(c2cMappings[em.toLowerCase()]||'').toLowerCase().includes(q);
+  });
+  const mappedCount=srcUsers.filter(u=>!!c2cMappings[(u.mail||u.userPrincipalName||'').toLowerCase()]).length;
+  const unmapped=srcUsers.length-mappedCount;
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',height:'100%'}} className="fade-up">
+      <div style={{flexShrink:0,marginBottom:12}}>
+        <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:8}}>
+          <div>
+            <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:2}}>User Mapping</div>
+            <div style={{fontSize:13,color:C.muted}}>
+              Source tenant: {srcUsers.length} users · Destination tenant: {destUsers.length} users.{' '}
+              {mappedCount>0&&<span style={{color:C.success,fontWeight:500}}>{mappedCount} mapped</span>}
+              {unmapped>0&&<span style={{color:C.error}}>{mappedCount>0?' · ':''}{unmapped} need mapping</span>}
+            </div>
+          </div>
+          <div style={{display:'flex',gap:4,flexShrink:0}}>
+            <input ref={csvRef} type="file" accept=".csv" style={{display:'none'}} onChange={e=>{if(e.target.files[0])uploadCsv(e.target.files[0]);e.target.value=''}}/>
+            <button onClick={()=>csvRef.current.click()} disabled={csvUploading} title="Upload CSV" style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.border}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>{csvUploading?<Spinner s={12}/>:<IcoUpload s={13} c={C.muted}/>}</button>
+            <button onClick={downloadCsv} title="Download CSV" style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.primary}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}><IcoDownload s={13} c={C.primary}/></button>
+          </div>
+        </div>
+        <div style={{display:'flex',alignItems:'center',marginBottom:8}}>
+          <div style={{fontSize:12,color:C.muted}}><span style={{fontWeight:600,color:C.primary}}>{c2cSelectedUsers.size}</span> of {srcUsers.length} selected</div>
+        </div>
+        <SearchBar value={search} onChange={setSearch} placeholder="Search by email or name..."/>
+      </div>
+
+      <div style={{flex:1,overflowY:'auto',minHeight:0,background:'white',border:`1px solid ${C.border}`,borderRadius:10}}>
+        <div style={{display:'grid',gridTemplateColumns:'32px 1fr 1fr',padding:'9px 14px',background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:.4,position:'sticky',top:0,zIndex:1}}>
+          <input type="checkbox" checked={c2cSelectedUsers.size>0&&c2cSelectedUsers.size===srcUsers.length} onChange={toggleAll} style={{accentColor:C.primary,width:15,height:15,cursor:'pointer'}}/>
+          <div>Source User</div>
+          <div>Destination User</div>
+        </div>
+        {loading?(
+          <div style={{padding:'30px',textAlign:'center',color:C.muted,fontSize:13}}><Spinner s={20}/><div style={{marginTop:10}}>Loading users from both tenants…</div></div>
+        ):filtered.map((u,i)=>{
+          const em=(u.mail||u.userPrincipalName||'').toLowerCase();
+          const mapped=!!c2cMappings[em];
+          return(
+            <div key={em||i} style={{display:'grid',gridTemplateColumns:'32px 1fr 1fr',alignItems:'center',padding:'9px 14px',borderBottom:i<filtered.length-1?`1px solid ${C.bg}`:'none',background:c2cSelectedUsers.has(em)?C.tint:'white',cursor:'pointer'}} onClick={()=>toggleUser(em)}>
+              <input type="checkbox" checked={c2cSelectedUsers.has(em)} onChange={()=>toggleUser(em)} style={{accentColor:C.primary,width:15,height:15}} onClick={e=>e.stopPropagation()}/>
+              <div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}>
+                <Avatar name={u.displayName||em} email={em} size={26}/>
+                <div style={{minWidth:0}}>
+                  <span style={{fontSize:12,fontWeight:500,display:'block',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{u.displayName||em}</span>
+                  <span style={{fontSize:11,color:C.muted,fontFamily:'monospace',display:'block',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{em}</span>
+                </div>
+              </div>
+              <div onClick={e=>e.stopPropagation()}>
+                {mapped?(
+                  <div style={{display:'flex',alignItems:'center',gap:6}}>
+                    <Avatar name={c2cMappings[em]} email={c2cMappings[em]} size={22}/>
+                    <span style={{fontSize:12,fontFamily:'monospace',flex:1,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{c2cMappings[em]}</span>
+                    <button onClick={()=>setC2cMappings(p=>{const n={...p};delete n[em];return n;})} style={{background:'none',border:'none',cursor:'pointer',color:C.muted,padding:'0 2px'}}>✕</button>
+                  </div>
+                ):destUsers.length>0?(
+                  <select value="" onChange={e=>{const v=e.target.value;if(v){setC2cMappings(p=>({...p,[em]:v}));setC2cSelectedUsers(p=>{const n=new Set(p);n.add(em);return n;});}}} style={{border:'none',background:'transparent',fontSize:12,fontFamily:'inherit',color:C.muted,cursor:'pointer',width:'100%',padding:'2px 0'}}>
+                    <option value="" disabled>— assign —</option>
+                    {destUsers.map(d=>{const dem=(d.mail||d.userPrincipalName||'').toLowerCase();return<option key={dem} value={dem}>{dem}</option>})}
+                  </select>
+                ):(<span style={{color:C.muted,fontSize:12}}>Loading…</span>)}
+              </div>
+            </div>
+          );
+        })}
+        {!loading&&filtered.length===0&&<div style={{textAlign:'center',padding:'24px',fontSize:13,color:C.muted}}>No users found.</div>}
+      </div>
+
+      <div style={{flexShrink:0,display:'flex',gap:10,paddingTop:12}}>
+        <Btn variant="ghost" onClick={autoMap}>↻ Auto-map</Btn>
+        <Btn variant="ghost" onClick={onBack}>← Back</Btn>
+        <Btn onClick={onNext} disabled={c2cSelectedUsers.size===0} style={{flex:1,justifyContent:'center'}}>Continue →</Btn>
+      </div>
+    </div>
+  );
+};
+
+/* Step: Options (folder name, dry run, dates) */
+const StepC2COptions=({c2cConfig,setC2cConfig,c2cOptions,setC2cOptions,onRun,onBack})=>{
+  return(
+    <div className="fade-up">
+      <div style={{marginBottom:20}}>
+        <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Migration Options</div>
+        <div style={{fontSize:13,color:C.muted}}>Configure and start the migration.</div>
+      </div>
+
+      <Card style={{marginBottom:20}}>
+        <Field label="OneDrive Folder Name *">
+          <Input value={c2cConfig.folderName||'CopilotChats'} onChange={e=>setC2cConfig(p=>({...p,folderName:e.target.value}))} placeholder="CopilotChats" style={{fontSize:13}}/>
+        </Field>
+      </Card>
+
+      <Card style={{marginBottom:20}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:12,color:C.dark}}>Behavior</div>
+        <label style={{display:'flex',alignItems:'flex-start',gap:10,fontSize:13,cursor:'pointer'}}>
+          <input type="checkbox" checked={c2cOptions.dryRun} onChange={e=>setC2cOptions(p=>({...p,dryRun:e.target.checked}))} style={{accentColor:C.primary,width:16,height:16,marginTop:3,flexShrink:0}}/>
+          <div style={{flex:1}}>
+            <span style={{fontWeight:500,display:'block'}}>Dry run (preview only — no files uploaded)</span>
+            <div style={{fontSize:11,color:C.muted,marginTop:2}}>Recommended before first live migration</div>
+          </div>
+        </label>
+      </Card>
+
+      <Card style={{marginBottom:20}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:12,color:C.dark}}>Date Range</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr auto 1fr',gap:12,alignItems:'flex-end'}}>
+          <div>
+            <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',marginBottom:6,letterSpacing:.5}}>FROM DATE</div>
+            <Input type="date" value={c2cOptions.fromDate||''} onChange={e=>setC2cOptions(p=>({...p,fromDate:e.target.value}))} style={{fontSize:12,width:'100%'}}/>
+          </div>
+          <div style={{color:C.muted,textAlign:'center',fontSize:12}}>to</div>
+          <div>
+            <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:'uppercase',marginBottom:6,letterSpacing:.5}}>TO DATE</div>
+            <Input type="date" value={c2cOptions.toDate||''} onChange={e=>setC2cOptions(p=>({...p,toDate:e.target.value}))} style={{fontSize:12,width:'100%'}}/>
+          </div>
+        </div>
+        <div style={{fontSize:10,color:C.muted,marginTop:8,textAlign:'right'}}>Optional — blank = migrate all data</div>
+      </Card>
+
+      <div style={{marginTop:24,paddingTop:12,borderTop:`1px solid ${C.bg}`,display:'flex',gap:10,justifyContent:'flex-end'}}>
+        <Btn variant="ghost" onClick={onBack}>← Back</Btn>
+        <Btn onClick={onRun} disabled={!c2cConfig.folderName}>
+          <IcoRocket s={14}/> {c2cOptions.dryRun?'Start Dry Run':'Start Migration'}
+        </Btn>
+      </div>
+    </div>
+  );
+};
+
+/* Step: Migration progress + completion */
+const StepC2CMigrate=({c2cStats,c2cDone,c2cLive,onRunAnother,onBack,onChangeDirection,lastRunWasDry,onStartLive,c2cTotal})=>{
+  const target=useMemo(()=>{
+    if(c2cDone)return 100;
+    const users=c2cStats?.users||0;
+    const files=c2cStats?.files||0;
+    if(c2cTotal>0){
+      const per=100/c2cTotal;
+      const done=Math.min(users,c2cTotal)*per;
+      const curFiles=Math.max(0,files-users);
+      const partial=Math.min(curFiles*0.25,0.8)*per;
+      return Math.min(98,Math.round(done+partial));
+    }
+    if(files>0||users>0)return Math.min(70,Math.round(5+files*2));
+    return c2cLive?5:0;
+  },[c2cDone,c2cStats?.users,c2cStats?.files,c2cTotal,c2cLive]);
+
+  const [displayRing,setDisplayRing]=useState(c2cDone?100:0);
+  useEffect(()=>{
+    const id=setInterval(()=>{
+      setDisplayRing(prev=>{
+        const diff=target-prev;
+        if(Math.abs(diff)<0.4)return target;
+        const step=Math.abs(diff)<4?Math.sign(diff)*0.4:diff*0.08;
+        return Math.max(0,Math.min(100,prev+step));
+      });
+    },60);
+    return ()=>clearInterval(id);
+  },[target]);
+  const ring=Math.round(displayRing);
+
+  return(
+    <div className="fade-up">
+      {!c2cDone?(
+        <>
+          <div style={{marginBottom:20}}>
+            <div style={{fontSize:18,fontWeight:600,color:C.primary,marginBottom:4}}>Migration in Progress</div>
+            <div style={{fontSize:13,color:C.muted}}>Watch the log on the right for live updates.</div>
+          </div>
+          <div style={{display:'flex',justifyContent:'center',padding:'28px 0 20px'}}>
+            <div style={{position:'relative',display:'inline-flex',alignItems:'center',justifyContent:'center'}}>
+              <Ring pct={ring} size={120} stroke={8} color={C.primary}/>
+              <div style={{position:'absolute',textAlign:'center'}}><div style={{fontSize:22,fontWeight:700,color:C.primary}}>{ring}%</div><div style={{fontSize:10,color:C.muted}}>Progress</div></div>
+            </div>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:16}}>
+            {[
+              {label:'Users',icon:<IcoUser s={18}/>,color:C.primary,val:c2cTotal>0?`${c2cStats?.users||0} / ${c2cTotal}`:(c2cStats?.users||0)},
+              {label:'Conversations',icon:<IcoPage s={18}/>,color:C.success,val:c2cStats?.conversationCount||0},
+              {label:'Pages Created',icon:<IcoPage s={18}/>,color:C.primaryL,val:c2cStats?.files||0},
+              {label:'Errors',icon:<IcoError s={18}/>,color:C.error,val:c2cStats?.errors||0},
+            ].map((e,i)=>(
+              <div key={i} className="slide-r" style={{animationDelay:`${i*60}ms`,background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.color}`,display:'flex',alignItems:'center',gap:10}}>
+                <div style={{color:e.color}}>{e.icon}</div>
+                <div><div style={{fontSize:18,fontWeight:700,color:e.color}}>{e.val}</div><div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div></div>
+              </div>
+            ))}
+          </div>
+          {c2cLive?<div style={{background:C.tint,borderRadius:8,padding:'10px 14px',fontSize:12,color:C.primary,textAlign:'center'}}>Processing… watch the log →</div>
+            :(<>
+              <div style={{background:'#FEF3C7',borderRadius:8,padding:'10px 14px',fontSize:12,color:'#92400E',textAlign:'center',marginBottom:12}}>Migration interrupted or completed in another tab. Check Reports panel.</div>
+              <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                <Btn variant="ghost" onClick={onBack} style={{flex:'1 1 100px',justifyContent:'center'}}>← Back to Options</Btn>
+                <Btn variant="ghost" onClick={()=>onRunAnother&&onRunAnother(false)} style={{flex:'1 1 100px',justifyContent:'center'}}>New Migration</Btn>
+                {onChangeDirection&&<Btn variant="ghost" onClick={onChangeDirection} style={{flex:'1 1 120px',justifyContent:'center'}}>⇄ Change Direction</Btn>}
+              </div>
+            </>)}
+        </>
+      ):(
+        <>
+          <div style={{marginBottom:20,textAlign:'center'}}>
+            <div style={{display:'flex',justifyContent:'center',marginBottom:8,color:C.success}}><IcoDone s={48}/></div>
+            <div style={{fontSize:20,fontWeight:600,color:C.success,marginBottom:4}}>{lastRunWasDry?'Dry Run Complete!':'Migration Complete!'}</div>
+            <div style={{fontSize:13,color:C.muted}}>{lastRunWasDry?'Preview complete — no OneNote pages were created.':'Copilot conversations migrated as OneNote pages in destination tenant.'}</div>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:20}}>
+            {[
+              {label:'Users',val:c2cStats?.users||0,icon:<IcoUser s={22}/>,color:C.primary},
+              {label:'Conversations',val:c2cStats?.conversationCount||0,icon:<IcoPage s={22}/>,color:C.success},
+              {label:'Pages Created',val:c2cStats?.files||0,icon:<IcoPage s={22}/>,color:C.primaryL},
+              {label:'Errors',val:c2cStats?.errors||0,icon:<IcoError s={22}/>,color:c2cStats?.errors>0?C.error:C.muted},
+            ].map((s,i)=>(
+              <Card key={i} className="scale-in" style={{animationDelay:`${i*80}ms`,textAlign:'center',padding:16}}>
+                <div style={{display:'flex',justifyContent:'center',marginBottom:6,color:s.color}}>{s.icon}</div>
+                <div style={{fontSize:28,fontWeight:700,color:s.color}}>{s.val}</div>
+                <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.4,marginTop:2}}>{s.label}</div>
+              </Card>
+            ))}
+          </div>
+          {!lastRunWasDry&&<CopilotAgentInstallPanel/>}
+          {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{width:'100%',justifyContent:'center',marginBottom:12}}><IcoRocket s={14}/> Start Migration (Live)</Btn>}
+          <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+            <Btn variant="ghost" onClick={()=>onRunAnother(false)} style={{flex:'1 1 100px',justifyContent:'center'}}>New Migration</Btn>
             {onChangeDirection&&<Btn variant="ghost" onClick={onChangeDirection} style={{flex:'1 1 120px',justifyContent:'center'}}>⇄ Change Direction</Btn>}
           </div>
         </>
@@ -3713,15 +4358,26 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
       fetch('/api/reports').then(r=>r.json()).catch(()=>[]),
       fetch('/api/reports/aggregate').then(r=>r.json()).catch(()=>null),
       fetch('/api/g2g/reports').then(r=>r.json()).catch(()=>[]),
-      fetch('/api/g2g/reports/aggregate').then(r=>r.json()).catch(()=>null)
-    ]).then(([g2cList,g2cAgg,g2gList,g2gAgg])=>{
-      const combined=[...Array.isArray(g2cList)?g2cList:[],...Array.isArray(g2gList)?g2gList:[]].sort((a,b)=>(b.startTime||0)-(a.startTime||0));
-      setReports(combined);
+      fetch('/api/g2g/reports/aggregate').then(r=>r.json()).catch(()=>null),
+      fetch('/api/c2c/reports').then(r=>r.json()).catch(()=>[]),
+      fetch('/api/c2c/reports/aggregate').then(r=>r.json()).catch(()=>null),
+    ]).then(([g2cList,g2cAgg,g2gList,g2gAgg,c2cList,c2cAgg])=>{
+      const combined=[
+        ...(Array.isArray(g2cList)?g2cList:[]),
+        ...(Array.isArray(g2gList)?g2gList:[]),
+        ...(Array.isArray(c2cList)?c2cList:[]),
+      ].sort((a,b)=>new Date(b.startTime||0)-new Date(a.startTime||0));
+      // Defensive dedup by _id — the legacy /api/reports endpoint historically
+      // returned all migDirs, so a C2C batch could appear both there AND in
+      // /api/c2c/reports. Keep the first occurrence (highest start time wins).
+      const seen=new Set();
+      const deduped=combined.filter(r=>{if(!r?._id||seen.has(r._id))return false;seen.add(r._id);return true;});
+      setReports(deduped);
       const agg={
-        totalBatches:(g2cAgg?.totalBatches||0)+(g2gAgg?.totalBatches||0),
-        totalPages:(g2cAgg?.totalPages||0)+(g2gAgg?.totalConversations||0),
-        totalErrors:(g2cAgg?.totalErrors||0)+(g2gAgg?.totalErrors||0),
-        liveBatches:(g2cAgg?.liveBatches||0)+(g2gAgg?.liveBatches||0)
+        totalBatches:(g2cAgg?.totalBatches||0)+(g2gAgg?.totalBatches||0)+(c2cAgg?.totalBatches||0),
+        totalPages:(g2cAgg?.totalPages||0)+(g2gAgg?.totalConversations||0)+(c2cAgg?.totalConversations||0),
+        totalErrors:(g2cAgg?.totalErrors||0)+(g2gAgg?.totalErrors||0)+(c2cAgg?.totalErrors||0),
+        liveBatches:(g2cAgg?.liveBatches||0)+(g2gAgg?.liveBatches||0)+(c2cAgg?.liveBatches||0),
       };
       setAgg(agg);
       setLoading(false);
@@ -3742,10 +4398,12 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
     return()=>clearInterval(pollRef.current);
   },[reports,isLive,loadReports]);
 
-  // Determine endpoint base for a batch (G2G batches use /api/g2g/, others use /api/)
+  // Determine endpoint base for a batch (G2G → /api/g2g, C2C → /api/c2c, others → /api)
   const endpointBase=(id)=>{
     const r=reports.find(x=>x._id===id);
-    return (r?.direction==='g2g'||r?.direction==='gemini-gemini'||r?.migDir==='gemini-gemini') ? '/api/g2g' : '/api';
+    if(r?.direction==='g2g'||r?.direction==='gemini-gemini'||r?.migDir==='gemini-gemini') return '/api/g2g';
+    if(r?.direction==='c2c'||r?.direction==='copilot-copilot'||r?.migDir==='copilot-copilot') return '/api/c2c';
+    return '/api';
   };
 
   const toggleDetail=async(id)=>{
@@ -3819,6 +4477,7 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
                       {(r.direction==='c2g'||r.direction==='copilot-gemini')&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#EFF6FF',color:'#1D4ED8',fontWeight:600}}>C2G</span>}
                       {r.direction==='claude-gemini'&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#FFF7ED',color:'#C2410C',fontWeight:600}}>CL2G</span>}
                       {r.direction==='gemini-gemini'&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#F3E8FF',color:'#7C3AED',fontWeight:600}}>G2G</span>}
+                      {(r.direction==='c2c'||r.direction==='copilot-copilot'||r.migDir==='copilot-copilot')&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#FEE2E2',color:'#991B1B',fontWeight:600}}>C2C</span>}
                       {(!r.direction||r.direction==='gemini-copilot')&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#F0FDF4',color:'#166534',fontWeight:600}}>G2C</span>}
                     </div>
                     <div style={{fontSize:12,color:C.muted,display:'flex',gap:12}}>
@@ -3841,7 +4500,7 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
                       const donePages=live?liveStats.pages:(isRunningBatch?r.progressPages:(r.dryRun?r.totalConversations:r.migratedConversations));
                       const doneErrors=live?liveStats.errors:(isRunningBatch?r.progressErrors:r.totalErrors);
                       const totalUsers=r.totalUsers||0;
-                      const filesLabel=(r.direction==='c2g'||r.direction==='copilot-gemini'||r.direction==='claude-gemini'||r.direction==='gemini-gemini')?'Files':'Pages';
+                      const filesLabel=(r.direction==='copilot-copilot'||r.migDir==='copilot-copilot')?'Pages':(r.direction==='c2g'||r.direction==='copilot-gemini'||r.direction==='claude-gemini'||r.direction==='gemini-gemini')?'Files':'Pages';
                       return[
                         ['Users',isRunningBatch?`${doneUsers??0}/${totalUsers}`:doneUsers,false],
                         [filesLabel,donePages,false],
@@ -3910,6 +4569,7 @@ function App(){
   const [msAuthed,setMsAuthed]=useState(false);
   const [googleUsers,setGoogleUsers]=useState([]);
   const [googleAccounts,setGoogleAccounts]=useState([]);
+  const [msAccounts,setMsAccounts]=useState([]);
   const [msUsers,setMsUsers]=useState([]);
   const [logs,setLogs]=useState([]);
   const [live,setLive]=useState(false);
@@ -3980,6 +4640,15 @@ function App(){
   const [cl2cDone,setCl2cDone]=useState(false);
   const [cl2cLive,setCl2cLive]=useState(false);
   const [cl2cLastDry,setCl2cLastDry]=useState(false);
+  // C2C (Copilot → Copilot, cross-tenant) state
+  const [c2cConfig,setC2cConfig]=useState(()=>({folderName:'CopilotChats',sourceTenantId:'',destTenantId:'',...(lsGet(LS_PREFS,{}).c2cConfig||{})}));
+  const [c2cMappings,setC2cMappings]=useState({});
+  const [c2cSelectedUsers,setC2cSelectedUsers]=useState(new Set());
+  const [c2cOptions,setC2cOptions]=useState(()=>({dryRun:true,fromDate:'',toDate:'',...(lsGet(LS_PREFS,{}).c2cOptions||{})}));
+  const [c2cStats,setC2cStats]=useState(()=>lsGet(LS_PREFS,{}).c2cStats||{users:0,files:0,errors:0,conversationCount:0});
+  const [c2cDone,setC2cDone]=useState(()=>lsGet(LS_PREFS,{}).c2cDone||false);
+  const [c2cLive,setC2cLive]=useState(false);
+  const [c2cLastDry,setC2cLastDry]=useState(()=>lsGet(LS_PREFS,{}).c2cLastDry||false);
   const [chatGLoading,setChatGLoading]=useState(false);
   const [chatMLoading,setChatMLoading]=useState(false);
   const [chatUploading,setChatUploading]=useState(false);
@@ -3995,6 +4664,7 @@ function App(){
   const runG2GMigrationRef=useRef(null);
   const runCL2CMigrationRef=useRef(null);
   const cl2cLiveRef=useRef(false);
+  const runC2CMigrationRef=useRef(null);
   const [agentMigrationTrigger,setAgentMigrationTrigger]=useState(null);
 
   const showToast=useCallback((message,type='success')=>{
@@ -4084,6 +4754,10 @@ function App(){
         if(authStatus.googleConnected){
           fetch('/api/auth/google/accounts').then(r=>r.json()).then(d=>{if(d.accounts) setGoogleAccounts(d.accounts);}).catch(()=>{});
         }
+        // Load MS accounts if authenticated (for multi-tenant direction picker logic)
+        if(authStatus.msConnected){
+          fetch('/api/auth/ms/accounts').then(r=>r.json()).then(d=>{if(d.accounts) setMsAccounts(d.accounts);}).catch(()=>{});
+        }
 
         if(initData){
           // Restore chat history from DB (cross-device) — DB wins over localStorage
@@ -4111,6 +4785,10 @@ function App(){
             if(ui.cl2cStats) setCl2cStats(ui.cl2cStats);
             if(ui.cl2cLastDry!=null) setCl2cLastDry(!!ui.cl2cLastDry);
             if(ui.cl2cOptions) setCl2cOptions(p=>({...p,...ui.cl2cOptions}));
+            if(ui.c2cDone!=null) setC2cDone(!!ui.c2cDone);
+            if(ui.c2cStats) setC2cStats(ui.c2cStats);
+            if(ui.c2cLastDry!=null) setC2cLastDry(!!ui.c2cLastDry);
+            if(ui.c2cOptions) setC2cOptions(p=>({...p,...ui.c2cOptions}));
             if(ui.lastRunWasDry!=null) setLastRunWasDry(!!ui.lastRunWasDry);
             if(ui.c2gLastDry!=null) setC2gLastDry(!!ui.c2gLastDry);
             if(ui.cl2gLastDry!=null) setCl2gLastDry(!!ui.cl2gLastDry);
@@ -4227,6 +4905,9 @@ function App(){
     if(migDir==='gemini-gemini'&&step>=6&&!g2gDone&&!g2gLive){
       setStep(5);
     }
+    if(migDir==='copilot-copilot'&&step>=5&&!c2cDone&&!c2cLive){
+      setStep(4);
+    }
   },[wsLoaded]);
 
   // Persist chat history — localStorage for instant restore, MongoDB for cross-device
@@ -4237,10 +4918,10 @@ function App(){
     clearTimeout(window._chatSaveTimer);
     window._chatSaveTimer=setTimeout(()=>{
       // Save chat + current UI position so any device can restore exactly where user left off
-      const uiState={step,migDir,migDone,c2gDone,cl2gDone,g2gDone,cl2cDone,stats,c2gStats,cl2gStats,g2gStats,cl2cStats,lastRunWasDry,c2gLastDry,cl2gLastDry,g2gLastDry,cl2cLastDry,currentBatchId,options,c2gOptions,cl2gOptions,cl2cOptions};
+      const uiState={step,migDir,migDone,c2gDone,cl2gDone,g2gDone,cl2cDone,c2cDone,stats,c2gStats,cl2gStats,g2gStats,cl2cStats,c2cStats,lastRunWasDry,c2gLastDry,cl2gLastDry,g2gLastDry,cl2cLastDry,c2cLastDry,currentBatchId,options,c2gOptions,cl2gOptions,cl2cOptions,c2cOptions};
       fetch('/api/chat-history',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:trimmed,uiState})}).catch(()=>{});
     },1500);
-  },[agentMsgs,step,migDir,migDone,c2gDone,cl2gDone,g2gDone,cl2cDone,stats,c2gStats,cl2gStats,g2gStats,cl2cStats,lastRunWasDry,c2gLastDry,cl2gLastDry,g2gLastDry,cl2cLastDry,currentBatchId,options,c2gOptions,cl2gOptions,cl2cOptions]);
+  },[agentMsgs,step,migDir,migDone,c2gDone,cl2gDone,g2gDone,cl2cDone,c2cDone,stats,c2gStats,cl2gStats,g2gStats,cl2cStats,c2cStats,lastRunWasDry,c2gLastDry,cl2gLastDry,g2gLastDry,cl2cLastDry,c2cLastDry,currentBatchId,options,c2gOptions,cl2gOptions,cl2cOptions,c2cOptions]);
 
   // Persist mapping cache to localStorage
   useEffect(()=>{lsSet(LS_MAPPING,{...lsGet(LS_MAPPING,{}),g2c:mappings})},[mappings]);
@@ -4265,6 +4946,7 @@ function App(){
   useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),c2gDone,c2gStats,c2gLastDry,c2gOptions,c2gConfig})},[c2gDone,c2gStats,c2gLastDry,c2gOptions,c2gConfig]);
   useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),cl2gDone,cl2gStats,cl2gLastDry,cl2gOptions,cl2gConfig})},[cl2gDone,cl2gStats,cl2gLastDry,cl2gOptions,cl2gConfig]);
   useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),g2gDone,g2gStats,g2gLastDry})},[g2gDone,g2gStats,g2gLastDry]);
+  useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),c2cDone,c2cStats,c2cLastDry,c2cOptions,c2cConfig})},[c2cDone,c2cStats,c2cLastDry,c2cOptions,c2cConfig]);
   useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),cl2cDone,cl2cStats,cl2cLastDry,cl2cOptions,cl2cConfig})},[cl2cDone,cl2cStats,cl2cLastDry,cl2cOptions,cl2cConfig]);
 
   // Load users at App level as soon as auth is confirmed — not dependent on Step0 being visible
@@ -4748,6 +5430,87 @@ function App(){
   },[cl2cLive,cl2cSelectedUuids,cl2cMappings,cl2cOptions,cl2cConfig,cl2cUploadData,addLog,addAgentMsg]);
   runCL2CMigrationRef.current=runCL2CMigration;
 
+  // ── C2C (Copilot → Copilot) migration runner ──
+  const runC2CMigration=useCallback(async(arg=false)=>{
+    if(c2cLive)return;
+    const explicitDry=arg&&typeof arg==='object'&&typeof arg.dryRun==='boolean'?arg.dryRun:null;
+    const forceLive=arg===true;
+    const isDry=explicitDry!==null?explicitDry:(forceLive?false:c2cOptions.dryRun);
+    setC2cOptions(p=>({...p,dryRun:isDry}));
+    setC2cLastDry(isDry);
+    if(!c2cConfig.sourceTenantId||!c2cConfig.destTenantId){addAgentMsg('bot','⚠️ Pick source AND destination tenants first.');return;}
+    if(c2cSelectedUsers.size===0){addAgentMsg('bot','⚠️ Select at least one user to migrate.');return;}
+
+    setC2cDone(false);setC2cStats({users:0,files:0,errors:0,conversationCount:0});setC2cLive(true);setStep(5);setLogs([]);
+    setAgentMode('running');
+    addLog('info',isDry?'Starting C2C dry run…':'Starting Copilot → Copilot migration…');
+    const cur={users:0,files:0,errors:0,conversationCount:0};
+
+    if(sseRef.current)sseRef.current.close();
+    sseRef.current=new EventSource('/api/c2c/migrate-log');
+    sseRef.current.onmessage=e=>{
+      try{
+        const d=JSON.parse(e.data);
+        if(d.type==='progress'){try{
+          const p=JSON.parse(d.message);
+          if(p.files!=null)cur.files=p.files;
+          if(p.pages!=null)cur.files=p.pages; // server emits pages now; UI still uses 'files' field
+          if(p.conversations!=null)cur.conversationCount=p.conversations;
+          if(p.errors!=null)cur.errors=p.errors;
+          if(p.users!=null)cur.users=p.users;
+        }catch{}}
+        if(d.type==='success')cur.files++;
+        if(d.type==='error')cur.errors++;
+        setC2cStats({...cur});
+        addLog(d.type,d.message||'');
+        if(d.type==='done'){
+          try{
+            const p=JSON.parse(d.message);
+            if(p.files!=null)cur.files=p.files;
+            if(p.pages!=null)cur.files=p.pages;
+            if(p.conversations!=null)cur.conversationCount=p.conversations;
+            if(p.errors!=null)cur.errors=p.errors;
+            if(p.users!=null)cur.users=p.users;
+          }catch{}
+          setC2cStats({...cur});
+          sseRef.current.close();setC2cLive(false);setC2cDone(true);setStep(5);
+          setAgentMode('done');
+          setTimeout(()=>addAgentMsg('bot',
+            cur.errors>0
+              ? `Migration finished with **${cur.errors} error${cur.errors!==1?'s':''}**.`
+              : isDry
+                ? `Dry run complete — **${cur.users} user${cur.users!==1?'s':''}**, **${cur.conversationCount} conversation${cur.conversationCount!==1?'s':''}**.`
+                : `All done! **${cur.files} OneNote page${cur.files!==1?'s':''}** created in destination tenant for **${cur.conversationCount} conversation${cur.conversationCount!==1?'s':''}**.`,
+            {statusCard:{users:cur.users,files:cur.files,errors:cur.errors,label:isDry?'Dry Run Preview':'Migration Results'}}
+          ),400);
+        }
+      }catch(err){console.error('C2C SSE parse error',err,e.data);}
+    };
+    sseRef.current.onerror=()=>{console.warn('C2C SSE dropped');};
+    const sseReady=new Promise(r=>{sseRef.current.onopen=()=>r();setTimeout(r,1000);});
+    await sseReady;
+
+    try{
+      const pairs=[...c2cSelectedUsers].map(srcEmail=>({sourceEmail:srcEmail,destEmail:c2cMappings[srcEmail]||srcEmail}));
+      // Resolve the destination admin's MS account ID so the server can write
+      // OneNote pages using that admin's delegated token (app-only is deprecated).
+      const destAcct=(msAccounts||[]).find(a=>a.tenantId===c2cConfig.destTenantId);
+      const payload={
+        sourceTenantId:c2cConfig.sourceTenantId,
+        destTenantId:c2cConfig.destTenantId,
+        destAccountId:destAcct?.accountId||null,
+        pairs,
+        folderName:c2cConfig.folderName||'CopilotChats',
+        dryRun:isDry,
+      };
+      if(c2cOptions.fromDate)payload.fromDate=c2cOptions.fromDate;
+      if(c2cOptions.toDate)payload.toDate=c2cOptions.toDate;
+      const res=await fetch('/api/c2c/migrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      if(!res.ok){const d=await res.json().catch(()=>({}));addLog('error',d.error||`Migration failed (${res.status})`);setC2cLive(false);}
+    }catch(err){addLog('error',err.message);setC2cLive(false);}
+  },[c2cLive,c2cSelectedUsers,c2cMappings,c2cOptions,c2cConfig,msAccounts,addLog,addAgentMsg]);
+  runC2CMigrationRef.current=runC2CMigration;
+
   // When agent triggers start_migration, UI handles the actual execution (prevents double-migration)
   useEffect(()=>{
     if(!agentMigrationTrigger)return;
@@ -4760,6 +5523,7 @@ function App(){
     else if(dir==='claude-gemini')runCL2GMigrationRef.current?.(opts);
     else if(dir==='gemini-gemini')runG2GMigrationRef.current?.(opts);
     else if(dir==='claude-copilot')runCL2CMigrationRef.current?.(opts);
+    else if(dir==='copilot-copilot')runC2CMigrationRef.current?.(opts);
   },[agentMigrationTrigger]);
 
   const handleChangeDirection=useCallback(()=>{
@@ -5118,9 +5882,9 @@ function App(){
               return(
                 <div style={{flex:1,overflowY:isMapStep?'hidden':'auto',padding:'16px 20px',display:isMapStep?'flex':'block',flexDirection:isMapStep?'column':undefined,minHeight:0}}>
                   {/* Fallback: if step > 1 but no direction chosen, show connect */}
-                  {step>1&&!migDir&&<Step0 googleAuthed={googleAuthed} setGoogleAuthed={setGoogleAuthed} msAuthed={msAuthed} setMsAuthed={setMsAuthed} googleUsers={googleUsers} setGoogleUsers={setGoogleUsers} msUsers={msUsers} setMsUsers={setMsUsers} googleAccounts={googleAccounts} setGoogleAccounts={setGoogleAccounts} tenantId={config.tenantId} onComplete={()=>setStep(1)}/>}
+                  {step>1&&!migDir&&<Step0 googleAuthed={googleAuthed} setGoogleAuthed={setGoogleAuthed} msAuthed={msAuthed} setMsAuthed={setMsAuthed} googleUsers={googleUsers} setGoogleUsers={setGoogleUsers} msUsers={msUsers} setMsUsers={setMsUsers} googleAccounts={googleAccounts} setGoogleAccounts={setGoogleAccounts} msAccounts={msAccounts} setMsAccounts={setMsAccounts} tenantId={config.tenantId} onComplete={()=>setStep(1)}/>}
                   {/* Step 0: Connect */}
-                  {step===0&&<Step0 googleAuthed={googleAuthed} setGoogleAuthed={setGoogleAuthed} msAuthed={msAuthed} setMsAuthed={setMsAuthed} googleUsers={googleUsers} setGoogleUsers={setGoogleUsers} msUsers={msUsers} setMsUsers={setMsUsers} googleAccounts={googleAccounts} setGoogleAccounts={setGoogleAccounts} tenantId={config.tenantId} onComplete={()=>setStep(1)}/>}
+                  {step===0&&<Step0 googleAuthed={googleAuthed} setGoogleAuthed={setGoogleAuthed} msAuthed={msAuthed} setMsAuthed={setMsAuthed} googleUsers={googleUsers} setGoogleUsers={setGoogleUsers} msUsers={msUsers} setMsUsers={setMsUsers} googleAccounts={googleAccounts} setGoogleAccounts={setGoogleAccounts} msAccounts={msAccounts} setMsAccounts={setMsAccounts} tenantId={config.tenantId} onComplete={()=>setStep(1)}/>}
                   {/* Step 1: Direction picker */}
                   {step===1&&<StepDirection onSelect={dir=>{
                     setMigDir(dir);
@@ -5136,7 +5900,7 @@ function App(){
                     }else{
                       setStep(2);
                     }
-                  }} onBack={()=>setStep(0)} googleAuthed={googleAuthed} msAuthed={msAuthed} googleAccounts={googleAccounts}/>}
+                  }} onBack={()=>setStep(0)} googleAuthed={googleAuthed} msAuthed={msAuthed} googleAccounts={googleAccounts} msAccounts={msAccounts}/>}
                   {/* Gemini → Copilot steps */}
                   {step===2&&migDir==='gemini-copilot'&&<Step1 googleUsers={googleUsers} googleAuthed={googleAuthed} onComplete={handleImportComplete} onBack={()=>setStep(1)} showToast={showToast} uploadData={uploadData}/>}
                   {step===3&&migDir==='gemini-copilot'&&<Step2 uploadData={uploadData} msUsers={msUsers} mappings={mappings} setMappings={setMappings} selectedUsers={selectedUsers} setSelectedUsers={setSelectedUsers} onNext={()=>{addLog('info',`User mappings ready — ${selectedUsers.size||Object.keys(mappings).length} users selected`);setStep(4);}} onBack={()=>setStep(2)} showToast={showToast}/>}
@@ -5162,6 +5926,11 @@ function App(){
                   {step===3&&migDir==='claude-copilot'&&<StepCL2CMap cl2cUploadData={cl2cUploadData} msUsers={msUsers} cl2cMappings={cl2cMappings} setCl2cMappings={setCl2cMappings} cl2cSelectedUuids={cl2cSelectedUuids} setCl2cSelectedUuids={setCl2cSelectedUuids} onNext={()=>setStep(4)} onBack={()=>setStep(2)} showToast={showToast}/>}
                   {step===4&&migDir==='claude-copilot'&&<StepCL2COptions cl2cOptions={cl2cOptions} setCl2cOptions={setCl2cOptions} cl2cConfig={cl2cConfig} setCl2cConfig={setCl2cConfig} msAuthed={msAuthed} onRun={runCL2CMigration} onBack={()=>setStep(3)}/>}
                   {(step===5||step===6)&&migDir==='claude-copilot'&&<StepCL2CMigrate cl2cStats={cl2cStats} cl2cDone={cl2cDone} onRunAnother={()=>{setCl2cDone(false);setCl2cStats({users:0,files:0,errors:0});setCl2cOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(4)} onStart={runCL2CMigration} cl2cLive={cl2cLive} onChangeDirection={handleChangeDirection} lastRunWasDry={cl2cLastDry} onStartLive={()=>runCL2CMigration(true)} cl2cTotal={cl2cTotal} folderName={cl2cConfig.folderName||'ClaudeChats'}/>}
+                  {/* C2C (Copilot → Copilot, cross-tenant) panels */}
+                  {step===2&&migDir==='copilot-copilot'&&<StepC2CTenantSelect c2cConfig={c2cConfig} setC2cConfig={setC2cConfig} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast}/>}
+                  {step===3&&migDir==='copilot-copilot'&&<StepC2CUserMap c2cConfig={c2cConfig} c2cMappings={c2cMappings} setC2cMappings={setC2cMappings} c2cSelectedUsers={c2cSelectedUsers} setC2cSelectedUsers={setC2cSelectedUsers} onNext={()=>setStep(4)} onBack={()=>setStep(2)} showToast={showToast}/>}
+                  {step===4&&migDir==='copilot-copilot'&&<StepC2COptions c2cConfig={c2cConfig} setC2cConfig={setC2cConfig} c2cOptions={c2cOptions} setC2cOptions={setC2cOptions} onRun={()=>{setStep(5);runC2CMigrationRef.current?.()}} onBack={()=>setStep(3)}/>}
+                  {(step===5||step===6)&&migDir==='copilot-copilot'&&<StepC2CMigrate c2cStats={c2cStats} c2cDone={c2cDone} c2cLive={c2cLive} c2cTotal={c2cSelectedUsers.size} onRunAnother={()=>{setC2cDone(false);setC2cStats({users:0,files:0,errors:0,conversationCount:0});setC2cOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(4)} onChangeDirection={handleChangeDirection} lastRunWasDry={c2cLastDry} onStartLive={()=>runC2CMigration(true)}/>}
                 </div>
               );
             })()}
