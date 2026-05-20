@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import https from 'node:https';
+import { spawn } from 'node:child_process';
 import { parseStringPromise } from 'xml2js';
 import { connectMongo, getDb } from '../../db/mongo.js';
 
@@ -34,7 +35,78 @@ function setCachedSession(email, session) {
   wsSessionCache.set(email, { session, capturedAt: Date.now() });
 }
 
-// In-memory job store: token → job
+// ── VNC session manager ───────────────────────────────────────────────────────
+// Single websockify on port 6080 with token-file routing.
+// Each session gets its own Xvfb display + x11vnc on localhost only.
+// Only ONE external port (6080) is ever needed regardless of user count.
+
+const VNC_PORT        = parseInt(process.env.VNC_PORT || '6080', 10);
+const VNC_TOKEN_FILE  = process.env.VNC_TOKEN_FILE || '/tmp/novnc-tokens.cfg';
+const NOVNC_PATH      = process.env.NOVNC_PATH || '/usr/share/novnc';
+const VNC_SLOTS       = 20; // max concurrent VNC sessions
+const vncSessions     = new Map(); // jobToken → { displayNum, vncPort, xvfb, x11vnc }
+let   vncNextSlot     = 0;
+let   sharedWsify     = null; // single shared websockify process
+
+function allocateVncSlot() {
+  const slot      = vncNextSlot++ % VNC_SLOTS;
+  const displayNum = 99 + slot;
+  const vncPort    = 5900 + slot;
+  return { displayNum, vncPort };
+}
+
+function writeTokenFile() {
+  // Format: token: host:port
+  const lines = [...vncSessions.entries()]
+    .map(([tok, s]) => `${tok}: localhost:${s.vncPort}`)
+    .join('\n');
+  fs.writeFileSync(VNC_TOKEN_FILE, lines + '\n');
+}
+
+function ensureSharedWsify() {
+  if (sharedWsify && !sharedWsify.killed) return;
+  sharedWsify = spawn('websockify', [
+    '--web', NOVNC_PATH,
+    '--token-plugin', 'TokenFile',
+    '--token-source', VNC_TOKEN_FILE,
+    String(VNC_PORT),
+  ], { stdio: 'ignore' });
+  sharedWsify.on('exit', () => { sharedWsify = null; });
+}
+
+async function startVncProcesses(token, displayNum, vncPort) {
+  const xvfb = spawn('Xvfb', [`:${displayNum}`, '-screen', '0', '1280x800x24', '-ac'], { stdio: 'ignore' });
+  await new Promise(r => setTimeout(r, 1200));
+
+  const x11vnc = spawn('x11vnc', [
+    '-display', `:${displayNum}`, '-rfbport', String(vncPort),
+    '-nopw', '-localhost', '-quiet', '-forever',
+  ], { stdio: 'ignore' });
+  await new Promise(r => setTimeout(r, 800));
+
+  vncSessions.set(token, { displayNum, vncPort, xvfb, x11vnc });
+  writeTokenFile();
+  ensureSharedWsify();
+  await new Promise(r => setTimeout(r, 600));
+  log(token, `VNC started — display :${displayNum}, internal port ${vncPort}, ws token ${token.slice(0,8)}`);
+}
+
+function stopVncProcesses(token) {
+  const s = vncSessions.get(token);
+  if (!s) return;
+  try { s.x11vnc.kill('SIGTERM'); } catch {}
+  try { s.xvfb.kill('SIGTERM'); } catch {}
+  vncSessions.delete(token);
+  writeTokenFile(); // remove token from routing table
+  // Stop shared websockify only when no sessions remain
+  if (vncSessions.size === 0 && sharedWsify) {
+    try { sharedWsify.kill('SIGTERM'); } catch {}
+    sharedWsify = null;
+  }
+  log(token, 'VNC session stopped');
+}
+
+// ── In-memory job store: token → job ─────────────────────────────────────────
 const jobs = new Map();
 
 // Ring buffer of recent log lines (last 200)
@@ -140,6 +212,108 @@ export function buildCopilotAuthUrl(token) {
   });
 }
 
+// ── noVNC page builder ────────────────────────────────────────────────────────
+function buildVncPage(token, userEmail, vncWsPort, reqHost) {
+  // token-plugin routes this connection to the right x11vnc instance
+  const vncUrl = vncWsPort
+    ? `http://${reqHost}:${vncWsPort}/vnc.html?autoconnect=true&resize=scale&quality=6&path=websockify%3Ftoken%3D${token}`
+    : '';
+  return `<!DOCTYPE html>
+<html>
+<head>
+<title>CloudFuze — Sign in to Microsoft</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Segoe UI, sans-serif; background: #f3f2f1; }
+  .bar { background: #0078d4; color: white; padding: 12px 20px; font-size: 14px; font-weight: 600;
+         display: flex; align-items: center; gap: 10px; }
+  .bar small { font-weight: 400; opacity: .8; font-size: 12px; }
+  #loading { text-align: center; padding: 60px 20px; }
+  .spinner { width: 36px; height: 36px; border: 3px solid #e0e0e0; border-top: 3px solid #0078d4;
+             border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 16px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #status-msg { font-size: 14px; color: #444; }
+  #vnc-wrap { display: none; width: 100%; height: calc(100vh - 46px); }
+  #vnc-frame { width: 100%; height: 100%; border: none; }
+  #migrating { display: none; text-align: center; padding: 40px 20px; }
+  .conv { padding: 8px 0; font-size: 13px; border-bottom: 1px solid #f0f0f0; text-align: left; max-width: 520px; margin: 0 auto; }
+  .conv .title { font-weight: 600; }
+  .ok { color: #107c10; font-size: 12px; }
+  .warn { color: #8a6914; font-size: 12px; }
+  .fail { color: #d83b01; font-size: 12px; }
+  #convs { margin-top: 16px; }
+</style>
+</head>
+<body>
+<div class="bar">
+  CloudFuze Copilot Migration
+  <small>Signed in as ${userEmail}</small>
+</div>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <p id="status-msg">Starting browser session...</p>
+</div>
+
+<div id="vnc-wrap">
+  <iframe id="vnc-frame" src="${vncUrl}"></iframe>
+</div>
+
+<div id="migrating">
+  <div class="spinner"></div>
+  <p id="mig-msg">Migrating conversations...</p>
+  <div id="convs"></div>
+</div>
+
+<script>
+const poll = setInterval(async () => {
+  try {
+    const r = await fetch('/copilot/status/${token}');
+    const d = await r.json();
+    const msg = d.message || d.status;
+
+    document.getElementById('status-msg').textContent = msg;
+    document.getElementById('mig-msg').textContent = msg;
+
+    if (d.status === 'vnc_ready') {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('vnc-wrap').style.display = 'block';
+    }
+
+    if (d.status === 'session_captured' || d.status === 'migrating') {
+      document.getElementById('vnc-wrap').style.display = 'none';
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('migrating').style.display = 'block';
+    }
+
+    if (d.results?.length) {
+      const html = d.results.map(r => {
+        const cls = r.ok ? (r.reason ? 'warn' : 'ok') : 'fail';
+        const label = r.ok ? (r.reason ? '✓ Migrated (Basic license)' : '✓ Migrated') : '✗ ' + (r.reason || 'failed');
+        return '<div class="conv"><div class="title">' + r.geminiTitle + '</div><div class="' + cls + '">' + label + (r.title ? ' → ' + r.title : '') + '</div></div>';
+      }).join('');
+      document.getElementById('convs').innerHTML = html;
+    }
+
+    if (d.status === 'done') {
+      clearInterval(poll);
+      document.getElementById('mig-msg').textContent = '✅ All done! Redirecting to Copilot...';
+      setTimeout(() => window.location.href = 'https://m365.cloud.microsoft/chat', 2500);
+    }
+    if (d.status === 'failed') {
+      clearInterval(poll);
+      document.getElementById('mig-msg').textContent = '❌ ' + (msg || 'Migration failed');
+      document.getElementById('migrating').style.display = 'block';
+      document.getElementById('loading').style.display = 'none';
+    }
+  } catch {}
+}, 2000);
+</script>
+</body>
+</html>`;
+}
+
 // Called from server.js /auth/callback when flow === 'copilot'
 export async function handleCopilotCallback(req, res, code, stateData) {
   const { token } = stateData;
@@ -161,90 +335,55 @@ export async function handleCopilotCallback(req, res, code, stateData) {
     console.error('[copilot] Token exchange failed:', e.message);
   }
 
-  // SSO cookies captured from MSAL back-channel — used to authenticate headless Playwright
   job.msalCookies = ssoStore.get(token) || [];
   ssoStore.delete(token);
-  log(token, `SSO cookies captured: ${job.msalCookies.length}`);
-
-  job.status = 'authorized';
   job.userEmail = userEmail;
-  job.message = 'Starting migration...';
-  log(token, `OAuth callback — user: ${userEmail}`);
+  log(token, `OAuth callback — user: ${userEmail}, SSO cookies: ${job.msalCookies.length}`);
 
-  res.send(`<!DOCTYPE html>
-<html>
-<head>
-<title>Migration in Progress</title>
-<style>
-  body { font-family: Segoe UI, sans-serif; max-width: 560px; margin: 60px auto; padding: 20px; color: #242424; }
-  h2 { margin-bottom: 6px; }
-  .sub { color: #616161; font-size: 13px; margin-bottom: 24px; }
-  .spinner { width: 36px; height: 36px; border: 3px solid #e0e0e0; border-top: 3px solid #0078d4;
-             border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 12px; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  #status { font-size: 13px; color: #444; text-align: center; min-height: 20px; }
-  #convs { margin-top: 20px; }
-  .conv { padding: 8px 0; font-size: 13px; border-bottom: 1px solid #f0f0f0; }
-  .conv .title { font-weight: 600; }
-  .conv .result { color: #107c10; font-size: 12px; }
-  .conv .warn   { color: #8a6914; font-size: 12px; }
-  .conv .fail   { color: #d83b01; font-size: 12px; }
-  #taskbar-banner { display:none; background:#fff4ce; border:1px solid #f0c44a; border-radius:4px;
-    padding:12px 16px; margin-bottom:16px; font-size:13px; color:#3d3000; line-height:1.5; }
-  #taskbar-banner b { color:#8a6200; }
-</style>
-<script>
-const poll = setInterval(async () => {
-  const r = await fetch('/copilot/status/${token}');
-  const d = await r.json();
-  const msg = d.message || d.status;
-  document.getElementById('status').textContent = msg;
-  const banner = document.getElementById('taskbar-banner');
-  banner.style.display = (msg && msg.includes('browser window just opened')) ? 'block' : 'none';
-  if (d.results?.length) {
-    const html = d.results.map(function(r) {
-      const label = r.ok
-        ? (r.reason ? '✓ Migrated (Basic license) → ' + (r.title||'') : '✓ Migrated → ' + (r.title||''))
-        : '✗ ' + (r.reason||'failed');
-      const cls = r.ok ? (r.reason ? 'warn' : 'result') : 'fail';
-      return '<div class="conv"><div class="title">' + r.geminiTitle + '</div>'
-           + '<div class="' + cls + '">' + label + '</div></div>';
-    }).join('');
-    document.getElementById('convs').innerHTML = html;
-  }
-  if (d.status === 'done' || d.status === 'failed') {
-    clearInterval(poll);
-    document.getElementById('spinner').style.display = 'none';
-    if (d.status === 'done') {
-      document.getElementById('status').textContent = '✅ All done! Redirecting to Copilot...';
-      setTimeout(function() { window.location.href = 'https://m365.cloud.microsoft/chat'; }, 2000);
-    } else {
-      document.getElementById('status').textContent = '❌ Migration failed: ' + (msg || '');
-    }
-  }
-}, 2000);
-</script>
-</head>
-<body>
-  <h2>Migration in Progress</h2>
-  <p class="sub">Signed in as <b>${userEmail}</b></p>
-  <div id="taskbar-banner">
-    <b>⚠ Action needed:</b> A sign-in window opened in your taskbar.<br>
-    Look at the bottom of your screen, click the Chrome icon and sign in to
-    Microsoft Copilot there. It will close automatically.
-  </div>
-  <div class="spinner" id="spinner"></div>
-  <div id="status">Starting migration...</div>
-  <div id="convs"></div>
-</body>
-</html>`);
+  const sessionFile = sessionFileFor(userEmail);
+  const hasSession  = fs.existsSync(sessionFile);
 
-  // Run in background
-  runMigrationJob(job).catch(e => {
-    job.status = 'failed';
+  if (hasSession) {
+    // Returning user — headless, no VNC needed
+    job.status  = 'authorized';
+    job.message = 'Session found. Starting migration...';
+    log(token, 'Returning user — headless migration starting');
+    res.send(buildVncPage(token, userEmail, null, req.hostname));
+    runMigrationJob(job).catch(e => { job.status = 'failed'; job.message = e.message; });
+    return;
+  }
+
+  // New user — start Xvfb + noVNC so they can sign in via browser
+  const { displayNum, vncPort } = allocateVncSlot();
+  job.status  = 'starting_vnc';
+  job.message = 'Starting browser session...';
+  res.send(buildVncPage(token, userEmail, VNC_PORT, req.hostname));
+
+  startVncAndCapture(token, job, sessionFile, displayNum, vncPort).catch(e => {
+    job.status  = 'failed';
     job.message = e.message;
-    console.error('[copilot] Job failed:', e);
+    stopVncProcesses(token);
+    console.error('[copilot] VNC capture failed:', e);
   });
+}
+
+async function startVncAndCapture(token, job, sessionFile, displayNum, vncPort) {
+  await startVncProcesses(token, displayNum, vncPort);
+
+  job.status  = 'vnc_ready';
+  job.message = 'Sign in to Microsoft in the window below';
+  log(token, `VNC ready on port ${wsPort} — waiting for user to sign in`);
+
+  // Launch visible Playwright on the Xvfb display
+  const session = await getSubstrateSession(job.userEmail, sessionFile, job.msalCookies || [], displayNum);
+  setCachedSession(job.userEmail, session);
+  log(token, `Session captured via VNC — OID: ${session.oid}`);
+
+  job.status  = 'session_captured';
+  job.message = 'Signed in! Starting migration...';
+  stopVncProcesses(token);
+
+  await runMigrationJob(job);
 }
 
 // ── Routes ────────────────────────────────────────────────────────────────────
@@ -406,22 +545,22 @@ async function runMigrationJob(job) {
 
 // ── Playwright session capture ────────────────────────────────────────────────
 
-async function getSubstrateSession(userEmail = null, sessionFile = null, ssoCookies = []) {
+async function getSubstrateSession(userEmail = null, sessionFile = null, ssoCookies = [], displayNum = null) {
   if (!sessionFile) sessionFile = sessionFileFor(userEmail);
   const hasSession = fs.existsSync(sessionFile);
-  // PLAYWRIGHT_HEADLESS=false → allow visible browser (local dev only).
-  // Default (and always in Docker): headless=true.
   const forceHeadless = process.env.PLAYWRIGHT_HEADLESS !== 'false';
   const headless = forceHeadless || hasSession;
 
-  const browser = await chromium.launch({
+  const launchOpts = {
     headless,
-    args: [
-      '--disable-blink-features=AutomationControlled',
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-    ],
-  });
+    args: ['--disable-blink-features=AutomationControlled', '--no-sandbox', '--disable-setuid-sandbox'],
+  };
+  // Point Chromium at the Xvfb virtual display when running VNC session
+  if (!headless && displayNum !== null) {
+    launchOpts.env = { ...process.env, DISPLAY: `:${displayNum}` };
+  }
+
+  const browser = await chromium.launch(launchOpts);
   const ctxOptions = {
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
     ...(hasSession ? { storageState: sessionFile } : {}),

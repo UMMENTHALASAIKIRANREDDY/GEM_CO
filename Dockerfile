@@ -1,42 +1,17 @@
-# Playwright-capable image with Chromium pre-installed
-FROM node:20-bookworm-slim
+FROM mcr.microsoft.com/playwright:v1.52.0-noble
 
-# Install Chromium system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    fonts-liberation \
-    libatk-bridge2.0-0 \
-    libatk1.0-0 \
-    libcairo2 \
-    libcups2 \
-    libdbus-1-3 \
-    libdrm2 \
-    libgbm1 \
-    libglib2.0-0 \
-    libgtk-3-0 \
-    libnspr4 \
-    libnss3 \
-    libpango-1.0-0 \
-    libx11-6 \
-    libx11-xcb1 \
-    libxcb1 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxext6 \
-    libxfixes3 \
-    libxkbcommon0 \
-    libxrandr2 \
-    libxshmfence1 \
-    wget \
-    xdg-utils \
+    xvfb \
+    x11vnc \
+    novnc \
+    websockify \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY package.json package-lock.json ./
+COPY package*.json ./
 RUN npm ci --omit=dev
-
-# Download Chromium browser binary
+# Install the Chromium version matching the installed npm package
 RUN npx playwright install chromium
 
 COPY server.js migrate.js ./
@@ -47,8 +22,10 @@ RUN mkdir -p /app/sessions /app/uploads /app/customers
 
 ENV NODE_ENV=production
 ENV SESSION_DIR=/app/sessions
-ENV PLAYWRIGHT_HEADLESS=true
+# false = use Xvfb display for new users, headless auto-applies for returning users
+ENV PLAYWRIGHT_HEADLESS=false
+ENV NOVNC_PATH=/usr/share/novnc
 ENV PORT=4000
 
-EXPOSE 4000
+EXPOSE 4000 6080
 CMD ["node", "server.js"]

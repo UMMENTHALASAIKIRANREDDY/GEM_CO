@@ -6,6 +6,7 @@ services:
     container_name: gem-co-migration
     ports:
       - "4000:4000"
+      - "6080:6080"
     env_file:
       - .env
     volumes:
