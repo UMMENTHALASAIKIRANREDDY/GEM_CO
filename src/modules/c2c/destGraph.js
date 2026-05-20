@@ -37,6 +37,29 @@ export async function resolveDestUser(destTenantId, destUserEmail) {
 }
 
 /**
+ * Fetch the destination user's OneDrive root webUrl. Used to derive the
+ * destination MySite host (e.g. "trydemos-my.sharepoint.com") so we can
+ * rewrite source-OneDrive URLs to point at the equivalent destination path
+ * for files that CloudFuze Content Migration handles separately.
+ *
+ * @param {string} destTenantId
+ * @param {string} destUserId
+ * @returns {Promise<{ webUrl: string }>}
+ */
+export async function getDestDriveRoot(destTenantId, destUserId) {
+  const token = await getTenantAccessToken(destTenantId);
+  const res = await fetch(`${GRAPH_BASE}/users/${destUserId}/drive/root?$select=webUrl`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Failed to fetch dest drive root (${res.status}): ${body.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  return { webUrl: data.webUrl || '' };
+}
+
+/**
  * List all users in the destination tenant (admin directory). Used for the
  * "destination user dropdown" in the user-mapping UI.
  *

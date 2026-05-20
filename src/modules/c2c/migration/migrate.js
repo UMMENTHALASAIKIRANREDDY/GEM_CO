@@ -16,8 +16,20 @@
 import { fetchAllEnterpriseInteractions } from '../../c2g/graph.js';
 import { isCopilotChatSurface, buildCopilotChatOnlyFilter } from '../../c2g/appClass.js';
 import { getTenantAccessToken } from '../multiTenantAuth.js';
-import { resolveDestUser, createOneDriveFolder, uploadFileToOneDrive } from '../destGraph.js';
+import { resolveDestUser, createOneDriveFolder, uploadFileToOneDrive, getDestDriveRoot } from '../destGraph.js';
 import { OneNotePagesCreator } from '../oneNotePages.js';
+import {
+  extractAttachments,
+  downloadBinary,
+  guessExtension,
+  guessMime,
+} from '../fileMigrator.js';
+import {
+  regenerateFilesFromInteraction,
+  pickRegeneratedFileByName,
+  cleanupRegen,
+} from '../codeRegenerator.js';
+import fs from 'fs';
 import { getLogger } from '../../../utils/logger.js';
 
 const logger = getLogger('c2c:migrate');
@@ -104,18 +116,67 @@ function conversationTitle(items) {
   return 'Untitled';
 }
 
-// Light-weight attachment extraction — flag-only, no download (Phase 1).
-// Future enhancement: fully download + reupload like C2G does.
-function extractAttachmentNames(item) {
-  const out = [];
-  for (const a of (item.attachments || [])) {
-    if (a.name) out.push({ name: a.name, url: a.contentUrl || '' });
+// Check whether an attachment URL points at source-tenant PERSONAL OneDrive.
+// True only for URLs like `<tenant>-my.sharepoint.com/personal/<user>/...`
+// — these are user-personal OneDrive files that CloudFuze Content Migration
+// copies to the destination's equivalent personal OneDrive path, so C2C
+// SKIPS the upload to avoid duplicating.
+//
+// Returns false for:
+//  - SharePoint site URLs (`*.sharepoint.com/sites/...`) — Content Migration
+//    may not cover them or may put them in a different path. Safer to
+//    download + re-upload via C2C.
+//  - `_layouts/15/Doc.aspx?sourcedoc=...` viewer URLs — the sourcedoc GUID
+//    references the source tenant; rewriting the host alone breaks the link.
+//  - asyncgw URLs — those are ephemeral, never in OneDrive.
+function _isInSourceOneDrive(url) {
+  if (!url) return false;
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    if (!host.endsWith('-my.sharepoint.com')) return false;
+    // Must be a personal site, with a real Documents path (not a Doc.aspx
+    // viewer URL whose sourcedoc references the source tenant).
+    if (!/^\/personal\/[^/]+\//i.test(u.pathname)) return false;
+    if (/_layouts\/15\/Doc\.aspx/i.test(u.pathname)) return false;
+    return true;
+  } catch {
+    return false;
   }
-  for (const c of (item.contexts || [])) {
-    const ref = c.contextReference;
-    if (ref?.name) out.push({ name: ref.name, url: ref.webUrl || ref['@odata.id'] || '' });
+}
+
+// Rewrite a source-OneDrive URL to its predicted destination URL.
+// CloudFuze Content Migration preserves the path structure, only the
+// MySite host + personal site segment change between tenants. We swap:
+//   <source>-my.sharepoint.com/personal/<source_user>/...
+// → <dest>-my.sharepoint.com/personal/<dest_user>/...
+// If OneDrive renames the file on the destination side (dup handling),
+// it still resolves to a real file because OneDrive keeps both copies.
+function _rewriteSourceUrlForDest(sourceUrl, destMySiteHost, destPersonalSegment) {
+  if (!sourceUrl || !destMySiteHost || !destPersonalSegment) return sourceUrl;
+  try {
+    const u = new URL(sourceUrl);
+    u.hostname = destMySiteHost;
+    // Replace the /personal/<...>/ segment if present
+    u.pathname = u.pathname.replace(
+      /\/personal\/[^/]+\//i,
+      `/personal/${destPersonalSegment}/`
+    );
+    return u.toString();
+  } catch {
+    return sourceUrl;
   }
-  return out;
+}
+
+// Build a safe filename for OneDrive upload — keeps the original name when it
+// already has an extension, otherwise infers from contentType.
+function _safeFileName(name, contentType) {
+  const trimmed = String(name || '').trim() || 'attachment';
+  // Strip characters OneDrive doesn't allow
+  const cleaned = trimmed.replace(/[\\/:*?"<>|]/g, '_').slice(0, 200);
+  if (/\.[a-z0-9]{2,5}$/i.test(cleaned)) return cleaned;
+  const ext = guessExtension(contentType, '');
+  return cleaned + ext;
 }
 
 // ── Source fetch ─────────────────────────────────────────────────────
@@ -171,6 +232,7 @@ export async function migrateC2CUserPair(
     conversationsCount: 0,
     pagesCreated: 0,
     filesUploaded: 0,
+    filesSkipped: 0,  // counts files already in source OneDrive (Content Migration handles)
     errors: [],
     pages: [],
   };
@@ -235,6 +297,23 @@ export async function migrateC2CUserPair(
       return result;
     }
 
+    // 6.5 Resolve destination MySite host + personal-site segment once.
+    // Used to rewrite source-OneDrive URLs to predicted destination paths
+    // (Content Migration preserves folder structure between tenants).
+    let destMySiteHost = '';
+    let destPersonalSegment = destUserEmail.replace('@', '_').replace(/\./g, '_');
+    try {
+      const driveRoot = await getDestDriveRoot(destTenantId, destUser.id);
+      if (driveRoot.webUrl) {
+        const u = new URL(driveRoot.webUrl);
+        destMySiteHost = u.hostname;
+        const m = u.pathname.match(/\/personal\/([^/]+)\//i);
+        if (m) destPersonalSegment = m[1];
+      }
+    } catch (e) {
+      logger.warn(`Could not resolve dest MySite host (URL rewrite for source-OneDrive files disabled): ${e.message}`);
+    }
+
     // 7. Set up OneNote pages creator. Uses the destination admin's DELEGATED
     //    token (app-only OneNote API is deprecated by Microsoft).
     if (!destDelegatedAuth?.appUserId) {
@@ -267,7 +346,10 @@ export async function migrateC2CUserPair(
     }
 
     const customerName = runOpts.folderName || 'Copilot';
-    const sourceFolderName = `Migrated from ${sourceLabel || 'Copilot'}`;
+    // OneDrive folder for migrated attachments — fixed name per product spec
+    // so the agent manifest can reference a stable path. The OneNote page
+    // footer still says "Migrated from <sourceLabel>" for source identification.
+    const sourceFolderName = 'Migrated from Copilot';
     const pagesCreator = new OneNotePagesCreator(destTenantId, customerName, sourceLabel || 'Copilot', destDelegatedAuth);
 
     // 8. Lazy: create attachments folder only if we actually have files to upload
@@ -278,40 +360,198 @@ export async function migrateC2CUserPair(
       return attachmentsFolder;
     };
 
-    // 9. For each conversation, optionally upload attached files + create OneNote page
-    const fileLinks = new Map(); // original URL → uploaded OneDrive URL (per-user, used by pages)
+    // 9. For each conversation: extract attachments, download from source,
+    //    upload to destination user's "Migrated from <Source>" OneDrive folder,
+    //    then create a OneNote page that links to the new copies (not the
+    //    source tenant URLs).
+    const fileLinks = new Map();      // source URL → uploaded OneDrive webUrl (used by OneNote page renderer)
+    const uploadedByUrl = new Map();  // source URL → true (so we don't re-download)
     for (const [, items] of sessions.entries()) {
       const title = conversationTitle(items);
 
-      // Build the turn-shape that OneNotePagesCreator expects
+      // Build turn-shape + collect this conversation's attachment refs.
+      // We track WHICH interaction each attachment came from so we can re-run
+      // its Python code if direct download fails (Copilot Analysis-tool case).
       const turns = [];
-      const conversationAttachments = [];
+      const conversationAttachments = []; // { att, sourceItem }
       for (const item of items) {
         const text = extractText(item);
         const isUser = item.interactionType === 'userPrompt';
-        const attachments = extractAttachmentNames(item);
+        const attachments = extractAttachments(item);
         if (!text && attachments.length === 0) continue;
         turns.push({
-          isUser,
-          text,
+          isUser, text,
           timestamp: item.createdDateTime,
           attachments,
         });
-        for (const a of attachments) conversationAttachments.push(a);
+        for (const a of attachments) {
+          if (a.url) conversationAttachments.push({ att: a, sourceItem: item });
+        }
+      }
+      if (turns.length === 0) continue;
+
+      // Cache regen results per SESSION — one Python run can produce many files;
+      // and the Python source for a given session is often in a different
+      // interaction than the one carrying the asyncgw URL. Caching at session
+      // level avoids redundant Python execution and finds the code reliably.
+      let sessionRegen = null;
+      let sessionRegenAttempted = false;
+      const uploadedRegenPaths = new Set();  // fullPath of every regen file already uploaded this session
+
+      // Download each unique attachment from source tenant + upload to dest
+      // user's OneDrive. Idempotent across conversations (dedup by source URL).
+      //
+      // We attempt to download EVERY referenced URL (SharePoint, asyncgw, etc.).
+      // SharePoint URLs succeed via Graph's /shares/u!{base64} download endpoint
+      // using our app-only Files.ReadWrite.All token. asyncgw URLs typically
+      // fail because Microsoft locks them behind Teams session auth that bearer
+      // tokens can't replicate — those files remain referenced as source-URL
+      // links in the OneNote page (user can open in Copilot to grab them).
+      for (const { att, sourceItem } of conversationAttachments) {
+        if (!att.url || uploadedByUrl.has(att.url)) continue;
+        uploadedByUrl.set(att.url, true);
+
+        // Inline data:image/... URLs — user-uploaded screenshots embedded
+        // in the chat content as base64. Decode and upload directly; no
+        // network fetch needed.
+        if (att.url.startsWith('data:')) {
+          try {
+            const m = att.url.match(/^data:([^;]+);base64,(.+)$/);
+            if (!m) {
+              logger.warn(`Skip inline image "${att.name}" — malformed data URL`);
+              continue;
+            }
+            const mime = m[1];
+            const buf = Buffer.from(m[2], 'base64');
+            if (buf.length === 0) {
+              logger.warn(`Skip inline image "${att.name}" — empty buffer`);
+              continue;
+            }
+            const fileName = _safeFileName(att.name, mime);
+            const folder = await ensureAttachmentsFolder();
+            const uploaded = await uploadFileToOneDrive(
+              destTenantId, destUser.id, folder.id, fileName, mime, buf
+            );
+            const link = uploaded?.webUrl || '';
+            if (link) fileLinks.set(att.url, link);
+            result.filesUploaded++;
+            logger.info(`Uploaded inline image "${fileName}" (${buf.length} bytes)`);
+            if (onProgress) onProgress({
+              pagesCreated: result.pagesCreated,
+              filesUploaded: result.filesUploaded,
+              totalConvs: sessions.size,
+            });
+          } catch (e) {
+            result.errors.push(`Inline image "${att.name}": ${e.message}`);
+          }
+          continue;
+        }
+
+        // Files already living in source OneDrive/SharePoint are moved by
+        // CloudFuze Content Migration. C2C does NOT re-migrate them (would
+        // duplicate). Instead, rewrite the URL to point at the predicted
+        // destination location and let the OneNote page link there.
+        if (_isInSourceOneDrive(att.url) && destMySiteHost) {
+          const rewritten = _rewriteSourceUrlForDest(att.url, destMySiteHost, destPersonalSegment);
+          fileLinks.set(att.url, rewritten);
+          result.filesSkipped++;
+          logger.info(`Skip "${att.name}" — source OneDrive (Content Migration handles). Link rewritten to ${rewritten.slice(0, 100)}`);
+          continue;
+        }
+
+        try {
+          const dl = await downloadBinary(att.url, sourceToken);
+
+          // Direct download worked (SharePoint or directly-accessible URL).
+          if (dl) {
+            const fileName = _safeFileName(att.name, dl.contentType);
+            const mime = dl.contentType || guessMime(fileName.slice(fileName.lastIndexOf('.')));
+            const folder = await ensureAttachmentsFolder();
+            const uploaded = await uploadFileToOneDrive(
+              destTenantId, destUser.id, folder.id, fileName, mime, dl.buffer
+            );
+            const link = uploaded?.webUrl || '';
+            if (link) fileLinks.set(att.url, link);
+            result.filesUploaded++;
+            if (onProgress) onProgress({
+              pagesCreated: result.pagesCreated,
+              filesUploaded: result.filesUploaded,
+              totalConvs: sessions.size,
+            });
+            continue;
+          }
+
+          // Direct download failed (asyncgw URLs are locked behind Teams session
+          // auth; SharePoint URLs may 401/404 for various reasons). For ANY
+          // download failure, try the code-regeneration fallback: if Copilot's
+          // Python code that generated the file is anywhere in this session,
+          // re-run it and use the regenerated file. This way no attachment
+          // referenced in chat is silently lost.
+
+          // Lazy: do regen for the whole session once, reuse for all attachments.
+          if (!sessionRegenAttempted) {
+            sessionRegenAttempted = true;
+            try {
+              sessionRegen = await regenerateFilesFromInteraction(items);
+            } catch (e) {
+              logger.warn(`Session regen failed: ${e.message}`);
+            }
+          }
+          const regen = sessionRegen;
+          if (!regen || (regen.files.length === 0)) {
+            logger.warn(`Skip attachment "${att.name}" — direct download failed and code-regen produced no files`);
+            continue;
+          }
+
+          // Match the asyncgw filename to a regen output
+          let expectedName = att.name;
+          // The URL often ends with the actual filename — prefer that
+          const lastSeg = att.url.split('/').pop()?.split('?')[0] || '';
+          if (lastSeg && lastSeg.includes('.')) expectedName = lastSeg;
+          let match = pickRegeneratedFileByName(regen, expectedName);
+          if (!match) {
+            // Fallback: pick any regen file we haven't uploaded yet. Better to
+            // migrate a file under its true generated name than to skip it.
+            match = regen.files.find(f => !uploadedRegenPaths.has(f.fullPath));
+            if (match) {
+              logger.info(`Attachment "${att.name}" — name match failed for "${expectedName}", uploading unmatched regen file "${match.name}" instead`);
+            }
+          }
+          if (!match) {
+            logger.warn(`Skip attachment "${att.name}" — regen produced [${regen.files.map(f => f.name).join(', ')}] but none unused for "${expectedName}"`);
+            continue;
+          }
+          uploadedRegenPaths.add(match.fullPath);
+
+          const fileBuf = fs.readFileSync(match.fullPath);
+          const fileName = _safeFileName(match.name, '');
+          const mime = guessMime(fileName.slice(fileName.lastIndexOf('.')));
+          const folder = await ensureAttachmentsFolder();
+          const uploaded = await uploadFileToOneDrive(
+            destTenantId, destUser.id, folder.id, fileName, mime, fileBuf
+          );
+          const link = uploaded?.webUrl || '';
+          if (link) fileLinks.set(att.url, link);
+          result.filesUploaded++;
+          logger.info(`Regenerated + uploaded "${fileName}" (${match.size} bytes) for "${att.name}"`);
+          if (onProgress) onProgress({
+            pagesCreated: result.pagesCreated,
+            filesUploaded: result.filesUploaded,
+            totalConvs: sessions.size,
+          });
+        } catch (e) {
+          result.errors.push(`Attachment "${att.name}": ${e.message}`);
+        }
       }
 
-      // Skip empty conversations (no readable content)
-      if (turns.length === 0) continue;
+      // Cleanup any regen temp dir for this session
+      if (sessionRegen) cleanupRegen(sessionRegen);
 
       const conv = {
         title,
         createdDateTime: items[0]?.createdDateTime,
         turns,
       };
-
-      // Try to upload attached files (best-effort — Phase 1 doesn't fetch binary content,
-      // it just stores the original Copilot URL). Future enhancement: fully download + reupload.
-      // For now we skip the upload step but still surface the file name as a link in the page.
 
       try {
         const pageId = await pagesCreator.createConversationPage(destUserEmail, conv, fileLinks);
@@ -325,7 +565,6 @@ export async function migrateC2CUserPair(
       } catch (err) {
         result.errors.push(`Page "${title.slice(0, 50)}": ${err.message}`);
         if (err.message?.includes('ONENOTE_NOT_PROVISIONED')) {
-          // Stop further attempts for this user — OneNote isn't activated
           break;
         }
       }

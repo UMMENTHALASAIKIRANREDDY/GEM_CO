@@ -540,7 +540,9 @@ export function createC2CRouter(deps) {
                   sourceLabel: sourceLabel || 'Copilot',
                   notebookName: c2cFolderName,
                   sectionName: `${c2cFolderName} Conversations`,
-                  driveFolder: `Migrated from ${sourceLabel || 'Copilot'}`,
+                  // Must match the folder name created by migrate.js so the
+                  // agent's instructions point users to the right place.
+                  driveFolder: 'Migrated from Copilot',
                   declarativeAgentId: 'copilotConversationAgent',
                   starterTopic: `What did I discuss in my migrated Copilot conversations?`,
                   starterCompare: `Summarize my most recent migrated Copilot conversation`,
