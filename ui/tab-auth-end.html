@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>Auth complete</title>
+  <script src="https://res.cdn.office.net/teams-js/2.22.0/js/MicrosoftTeams.min.js"></script>
+</head>
+<body>
+<script>
+(async () => {
+  await microsoftTeams.app.initialize();
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  const token = params.get('access_token');
+  const error = params.get('error');
+  if (token) {
+    microsoftTeams.authentication.notifySuccess(token);
+  } else {
+    microsoftTeams.authentication.notifyFailure(error || 'No token received');
+  }
+})();
+</script>
+</body>
+</html>

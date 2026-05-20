@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>Signing in...</title>
+  <script src="https://res.cdn.office.net/teams-js/2.22.0/js/MicrosoftTeams.min.js"></script>
+</head>
+<body>
+<script>
+(async () => {
+  await microsoftTeams.app.initialize();
+  const CLIENT_ID = '68beff40-49fb-4e36-82fe-317bc839a344';
+  const redirectUri = encodeURIComponent(location.origin + '/tab-auth-end.html');
+  const scopes = encodeURIComponent('Notes.Read Files.ReadWrite');
+  const url = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize` +
+    `?client_id=${CLIENT_ID}&response_type=token&redirect_uri=${redirectUri}` +
+    `&scope=${scopes}&response_mode=fragment&prompt=select_account`;
+  window.location.href = url;
+})();
+</script>
+</body>
+</html>

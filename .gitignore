@@ -25,3 +25,7 @@ Files_testing-result-counts.csv
 
 # Claude Code session files
 .claude/
+
+# Playwright browser session files — contain auth tokens
+playwright-session*.json
+.playwright-mcp/

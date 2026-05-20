@@ -12,6 +12,7 @@ services:
       - ./uploads:/app/uploads
       - ./customers:/app/customers
       - ./service_account.json:/app/service_account.json:ro
+      - copilot_sessions:/app/sessions
     depends_on:
       mongodb:
         condition: service_healthy
@@ -47,4 +48,6 @@ volumes:
   mongodb_data:
     driver: local
   mongodb_config:
+    driver: local
+  copilot_sessions:
     driver: local

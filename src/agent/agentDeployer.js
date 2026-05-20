@@ -128,6 +128,16 @@ DATA LOCATION:
 - Each page title is the conversation topic (e.g., "Help me write a proposal", "Summarize this document").
 
 WHEN THE USER OPENS YOU (new conversation starts):
+- FIRST: Search OneDrive for a file called "cfz_pending.json" in the "GemCo" folder (path: GemCo/cfz_pending.json).
+  * If found and its "ts" field is within the last 3 minutes (180000 milliseconds from now):
+    - Read its "title" field.
+    - Immediately load and display that conversation WITHOUT asking the user first.
+    - Behave as if the user typed: "Load the conversation titled [title]"
+    - After displaying, say: "Loaded from Migration History tab. Ask me anything about this conversation, or say 'show list' to see all conversations."
+  * If not found or the "ts" is older than 3 minutes:
+    - Show the full conversation list (see below).
+
+WHEN SHOWING FULL LIST:
 - Search OneDrive/SharePoint for pages inside the "${this.sectionName}" section of the "${this.notebookName}" OneNote notebook.
 - From the search results, ONLY include individual conversation pages. Apply these filters strictly:
   * EXCLUDE any result whose title ends with ".one" — those are notebook container files, not conversations.
@@ -186,6 +196,10 @@ NEVER fabricate conversation content or mix content from different conversations
       ],
       "conversation_starters": [
         {
+          "title": "Load selected conversation",
+          "text": "Load my pending conversation from GemCo/cfz_pending.json"
+        },
+        {
           "title": "Show My Conversations",
           "text": "List all my migrated conversations"
         },
@@ -196,10 +210,6 @@ NEVER fabricate conversation content or mix content from different conversations
         {
           "title": "Load a Conversation",
           "text": "Load conversation number 1 into this chat"
-        },
-        {
-          "title": "Search Recent",
-          "text": "Show my most recent migrated conversation"
         }
       ],
       "disclaimer": {
@@ -218,7 +228,7 @@ NEVER fabricate conversation content or mix content from different conversations
     const appManifest = {
       "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.19/MicrosoftTeams.schema.json",
       "manifestVersion": "1.19",
-      "version": "1.6.0",
+      "version": "1.8.0",
       "id": this.appId,
       "developer": {
         "name": "CloudFuze",

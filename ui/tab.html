@@ -4,178 +4,197 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Migration History</title>
-  <script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
+  <script src="https://res.cdn.office.net/teams-js/2.22.0/js/MicrosoftTeams.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; color: #333; }
-    #header { background: #0129AC; color: white; padding: 14px 20px; display: flex; align-items: center; gap: 12px; }
-    #header h1 { font-size: 16px; font-weight: 600; }
-    #content { padding: 16px; max-width: 900px; margin: 0 auto; }
-    #signin-section { text-align: center; padding: 60px 20px; }
-    #signin-btn { background: #0078d4; color: white; border: none; padding: 12px 24px; border-radius: 4px; font-size: 14px; cursor: pointer; }
+    body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #ffffff; color: #242424; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+    #header { background: #ffffff; border-bottom: 1px solid #e8e8e8; padding: 12px 20px; display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+    #header-icon { color: #0078d4; }
+    #header h1 { font-size: 15px; font-weight: 600; flex: 1; }
+    #signout-btn { background: none; border: none; color: #616161; font-size: 12px; cursor: pointer; padding: 4px 10px; border-radius: 4px; }
+    #signout-btn:hover { background: #f0f0f0; }
+
+    #body { flex: 1; overflow-y: auto; max-width: 600px; padding: 8px 0; }
+
+    #signin-section { padding: 60px 24px; text-align: center; }
+    #signin-section p { font-size: 13px; color: #616161; margin-bottom: 16px; line-height: 1.5; }
+    #signin-btn { background: #0078d4; color: white; border: none; padding: 10px 20px; border-radius: 4px; font-size: 13px; cursor: pointer; font-family: inherit; }
     #signin-btn:hover { background: #106ebe; }
-    .source-group { margin-bottom: 24px; }
-    .source-title { font-size: 13px; font-weight: 600; color: #605e5c; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid #e1dfdd; }
-    .conv-item { background: white; border: 1px solid #e1dfdd; border-radius: 4px; padding: 12px 16px; margin-bottom: 6px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
-    .conv-item:hover { border-color: #0078d4; background: #f0f6ff; }
-    .conv-title { font-size: 14px; color: #201f1e; }
-    .conv-date { font-size: 12px; color: #a19f9d; white-space: nowrap; margin-left: 12px; }
-    #viewer { position: fixed; top: 0; right: 0; width: 50%; height: 100vh; background: white; border-left: 2px solid #0078d4; overflow-y: auto; padding: 20px; display: none; z-index: 10; }
-    #viewer-close { float: right; background: none; border: none; font-size: 20px; cursor: pointer; color: #605e5c; }
-    #viewer-title { font-size: 18px; color: #0078d4; margin-bottom: 16px; margin-top: 4px; }
-    #viewer-body { font-size: 14px; line-height: 1.6; }
-    #loading { text-align: center; padding: 40px; color: #605e5c; }
-    #error-msg { color: #d83b01; padding: 16px; background: #fff4ce; border-radius: 4px; }
+
+    #loading { padding: 20px 24px; color: #616161; font-size: 13px; }
+    #error-msg { background: #fde7e9; color: #a4262c; padding: 12px 16px; margin: 12px; border-radius: 4px; font-size: 13px; }
+
+    .source-header { font-size: 11px; font-weight: 600; color: #616161; text-transform: uppercase; letter-spacing: 0.5px; padding: 12px 16px 4px; }
+    .conv-item { padding: 9px 16px; cursor: pointer; border-radius: 4px; margin: 1px 8px; transition: background 0.1s; }
+    .conv-item:hover { background: #f5f5f5; }
+    .conv-item.sent { background: #eff6fc; }
+    .conv-title { font-size: 14px; color: #242424; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    #toast { display: none; position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      background: #0129AC; color: white; padding: 10px 20px; border-radius: 6px;
+      font-size: 13px; z-index: 9999; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
   </style>
 </head>
 <body>
   <div id="header">
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="white"><path d="M10 2L3 6v8l7 4 7-4V6L10 2zm0 2.2l5 2.85V13l-5 2.85L5 13V7.05L10 4.2z"/></svg>
-    <h1>CloudFuze Migration History</h1>
+    <svg id="header-icon" width="18" height="18" viewBox="0 0 20 20" fill="currentColor"><path d="M10 2L3 6v8l7 4 7-4V6L10 2zm0 2.2l5 2.85V13l-5 2.85L5 13V7.05L10 4.2z"/></svg>
+    <h1>Migration History</h1>
+    <button id="signout-btn" style="display:none">Sign out</button>
   </div>
 
-  <div id="content">
+  <div id="body">
     <div id="signin-section">
-      <p style="margin-bottom:16px;color:#605e5c">Sign in with your Microsoft account to view migrated conversations.</p>
+      <p>Sign in with your Microsoft account to view migrated conversations.</p>
       <button id="signin-btn">Sign in with Microsoft</button>
     </div>
-    <div id="loading" style="display:none">Loading conversations...</div>
+    <div id="loading" style="display:none">Loading...</div>
     <div id="error-msg" style="display:none"></div>
     <div id="list-section" style="display:none"></div>
   </div>
 
-  <div id="viewer">
-    <button id="viewer-close" title="Close">&times;</button>
-    <div id="viewer-title"></div>
-    <div id="viewer-body"></div>
-  </div>
+  <div id="toast"></div>
 
   <script>
     const GRAPH = 'https://graph.microsoft.com/v1.0';
-    let msalApp = null;
-    let graphToken = null;
+    let graphToken = sessionStorage.getItem('cfz_tab_token') || null;
+    let agentCatalogId = null;
+    let tenantId = null;
 
     async function init() {
-      const cfg = await fetch('/api/tab-config').then(r => r.json());
-      msalApp = new msal.PublicClientApplication({
-        auth: {
-          clientId: cfg.clientId,
-          authority: 'https://login.microsoftonline.com/common',
-          redirectUri: cfg.redirectUri,
-        },
-        cache: { cacheLocation: 'localStorage' },
-      });
-      await msalApp.initialize();
-
-      const accounts = msalApp.getAllAccounts();
-      if (accounts.length > 0) {
-        await acquireToken(accounts[0]);
-        loadConversations();
-      }
-
+      await microsoftTeams.app.initialize();
+      try {
+        const ctx = await microsoftTeams.app.getContext();
+        tenantId = ctx.user?.tenant?.id || null;
+      } catch(_) {}
+      if (graphToken) { showSignedIn(); loadConversations(); }
       document.getElementById('signin-btn').onclick = signIn;
+      document.getElementById('signout-btn').onclick = signOut;
     }
 
     async function signIn() {
       try {
-        const result = await msalApp.loginPopup({ scopes: ['Notes.Read', 'Files.Read'] });
-        await acquireToken(result.account);
+        const token = await new Promise((resolve, reject) => {
+          microsoftTeams.authentication.authenticate({
+            url: location.origin + '/tab-auth-start.html',
+            width: 600, height: 535,
+            successCallback: resolve,
+            failureCallback: reject,
+          });
+        });
+        graphToken = token;
+        sessionStorage.setItem('cfz_tab_token', token);
+        showSignedIn();
         loadConversations();
-      } catch (e) {
-        showError('Sign-in failed: ' + e.message);
-      }
+      } catch (e) { showError('Sign-in failed: ' + e); }
     }
 
-    async function acquireToken(account) {
-      const result = await msalApp.acquireTokenSilent({
-        scopes: ['Notes.Read', 'Files.Read'],
-        account,
-      }).catch(() => msalApp.acquireTokenPopup({ scopes: ['Notes.Read', 'Files.Read'] }));
-      graphToken = result.accessToken;
+    function signOut() {
+      graphToken = null;
+      sessionStorage.removeItem('cfz_tab_token');
+      document.getElementById('signout-btn').style.display = 'none';
+      document.getElementById('signin-section').style.display = 'block';
+      document.getElementById('list-section').style.display = 'none';
+    }
+
+    function showSignedIn() {
+      document.getElementById('signin-section').style.display = 'none';
+      document.getElementById('signout-btn').style.display = 'block';
     }
 
     async function loadConversations() {
-      document.getElementById('signin-section').style.display = 'none';
       document.getElementById('loading').style.display = 'block';
+      document.getElementById('list-section').style.display = 'none';
       try {
-        const indexRes = await fetch(
-          `${GRAPH}/me/drive/root:/GemCo/index.json:/content`,
-          { headers: { Authorization: `Bearer ${graphToken}` } }
-        );
-        if (!indexRes.ok) {
-          showError(indexRes.status === 404
-            ? 'No migrated conversations found yet. Run a migration first.'
-            : `Could not load index: ${indexRes.status}`);
+        const res = await fetch(`${GRAPH}/me/drive/root:/GemCo/index.json:/content`, {
+          headers: { Authorization: `Bearer ${graphToken}` },
+        });
+        if (res.status === 401) {
+          graphToken = null;
+          sessionStorage.removeItem('cfz_tab_token');
+          signOut();
+          showError('Session expired. Please sign in again.');
           return;
         }
-        const index = await indexRes.json();
+        if (res.status === 404) { showError('No migrated conversations found. Run a migration first.'); return; }
+        if (!res.ok) { showError(`Error loading index: ${res.status}`); return; }
+        const index = await res.json();
+        agentCatalogId = index.agentCatalogId || null;
         renderList(index.migrations || []);
-      } catch (e) {
-        showError('Error loading conversations: ' + e.message);
-      } finally {
-        document.getElementById('loading').style.display = 'none';
-      }
+      } catch (e) { showError('Failed to load: ' + e.message); }
+      finally { document.getElementById('loading').style.display = 'none'; }
     }
 
     function renderList(migrations) {
       const section = document.getElementById('list-section');
-      section.style.display = 'block';
       if (!migrations.length) {
-        section.innerHTML = '<p style="color:#605e5c;padding:20px 0">No migrations found.</p>';
+        section.innerHTML = '<p style="padding:16px;color:#616161;font-size:13px">No migrations found.</p>';
+        section.style.display = 'block';
         return;
       }
       section.innerHTML = migrations.map(m => `
         <div class="source-group">
-          <div class="source-title">${m.source} Conversations (${m.conversations.length})</div>
+          <div class="source-header">${esc(m.source)} · ${m.conversations.length}</div>
           ${(m.conversations || []).map(c => `
-            <div class="conv-item" data-page-id="${escHtml(c.pageId)}" data-title="${escHtml(c.title)}">
-              <span class="conv-title">${escHtml(c.title)}</span>
-              <span class="conv-date">${c.migratedAt ? new Date(c.migratedAt).toLocaleDateString() : ''}</span>
+            <div class="conv-item" data-title="${esc(c.title)}">
+              <div class="conv-title">${esc(c.title)}</div>
             </div>
           `).join('')}
         </div>
       `).join('');
-
       section.querySelectorAll('.conv-item').forEach(el => {
-        el.onclick = () => openConversation(el.dataset.pageId, el.dataset.title);
+        el.onclick = () => sendToCopilot(el);
       });
+      section.style.display = 'block';
     }
 
-    async function openConversation(pageId, title) {
-      const viewer = document.getElementById('viewer');
-      const body = document.getElementById('viewer-body');
-      document.getElementById('viewer-title').textContent = title;
-      body.innerHTML = '<p style="color:#605e5c">Loading...</p>';
-      viewer.style.display = 'block';
+    async function sendToCopilot(el) {
+      const title = el.dataset.title;
 
+      // Copy to clipboard so user can paste manually if needed
+      try { await navigator.clipboard.writeText(title); } catch(_) {}
+
+      // Write pending file so agent can load this conversation via starter
       try {
-        const res = await fetch(`${GRAPH}/me/onenote/pages/${pageId}/content`, {
-          headers: { Authorization: `Bearer ${graphToken}` },
+        await fetch(`${GRAPH}/me/drive/root:/GemCo/cfz_pending.json:/content`, {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${graphToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, ts: Date.now() }),
         });
-        if (!res.ok) throw new Error(`OneNote ${res.status}`);
-        const html = await res.text();
-        const match = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-        body.innerHTML = `<div style="font-size:14px;line-height:1.6;max-width:800px">${match ? match[1] : html}</div>`;
-      } catch (e) {
-        body.innerHTML = `<p style="color:#d83b01">Could not load content: ${e.message}</p>`;
-      }
+      } catch(_) {}
+
+      el.classList.add('sent');
+      el.querySelector('.conv-title').textContent = '✓ ' + title;
+      setTimeout(() => {
+        el.classList.remove('sent');
+        el.querySelector('.conv-title').textContent = title;
+      }, 1500);
+
+      const url = agentCatalogId
+        ? (tenantId
+            ? `https://teams.microsoft.com/l/app/${agentCatalogId}?tenantId=${tenantId}`
+            : `https://teams.microsoft.com/l/app/${agentCatalogId}`)
+        : `https://m365.cloud.microsoft/chat/`;
+      showToast('Copied — opening agent (paste or click "Load selected conversation")');
+      microsoftTeams.app.openLink(url);
+    }
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.style.display = 'block';
+      setTimeout(() => { t.style.display = 'none'; }, 3000);
     }
 
     function showError(msg) {
-      document.getElementById('signin-section').style.display = 'none';
       document.getElementById('loading').style.display = 'none';
       const el = document.getElementById('error-msg');
-      el.textContent = msg;
-      el.style.display = 'block';
+      el.textContent = msg; el.style.display = 'block';
     }
 
-    function escHtml(s) {
-      return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    function esc(s) {
+      return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
-
-    document.getElementById('viewer-close').onclick = () => {
-      document.getElementById('viewer').style.display = 'none';
-    };
 
     init().catch(console.error);
   </script>

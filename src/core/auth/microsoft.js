@@ -11,6 +11,7 @@ const logger = getLogger('auth:microsoft');
 // - AppCatalog.ReadWrite.All → publish declarative agent to Teams catalog
 const DELEGATED_SCOPES = [
   'https://graph.microsoft.com/User.Read.All',
+  'https://graph.microsoft.com/User.ReadWrite.All',
   'https://graph.microsoft.com/Notes.ReadWrite.All',
   'https://graph.microsoft.com/Files.ReadWrite.All',
   'https://graph.microsoft.com/AppCatalog.ReadWrite.All',

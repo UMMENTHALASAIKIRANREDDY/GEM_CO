@@ -22,6 +22,40 @@ export class IndexWriter {
   }
 
   /**
+   * Store the deployed agent's catalog ID in index.json so the Teams tab can deep-link to it.
+   * @param {string} targetEmail
+   * @param {string} catalogId - Teams catalog app ID returned by deployAgent()
+   */
+  async writeAgentId(targetEmail, catalogId) {
+    const headers = await this._headers();
+    const fileUrl = `${GRAPH_V1}/users/${targetEmail}/drive/root:/${INDEX_PATH}:/content`;
+
+    let existing = { migrations: [] };
+    try {
+      const readRes = await fetch(fileUrl, { headers });
+      if (readRes.ok) existing = await readRes.json();
+      if (!Array.isArray(existing.migrations)) existing.migrations = [];
+    } catch {}
+
+    existing.agentCatalogId = catalogId;
+
+    const writeRes = await fetch(fileUrl, {
+      method: 'PUT',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify(existing, null, 2),
+    });
+
+    if (!writeRes.ok) {
+      const body = await writeRes.text();
+      logger.warn(`IndexWriter: failed to write agentCatalogId for ${targetEmail}: ${writeRes.status} — ${body.slice(0, 200)}`);
+      return false;
+    }
+
+    logger.info(`IndexWriter: wrote agentCatalogId=${catalogId} for ${targetEmail}`);
+    return true;
+  }
+
+  /**
    * Write or update index.json for one migration batch.
    * @param {string} targetEmail  - MS user whose OneDrive gets the file
    * @param {object} migrationEntry - { source, notebookName, sectionName, conversations: [{title, pageId, migratedAt}] }

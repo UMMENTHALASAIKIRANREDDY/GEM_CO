@@ -7,6 +7,7 @@
 
 import { connectMongo, getDb } from './src/db/mongo.js';
 import { AgentDeployer } from './src/agent/agentDeployer.js';
+import { IndexWriter } from './src/agent/indexWriter.js';
 import { restoreMsSessions } from './src/core/auth/microsoft.js';
 
 const APP_USER_ID  = '69d651fb1fb027942f3a9d75'; // erik@filefuze.co
@@ -40,13 +41,20 @@ if (!result.updated) {
   finalCatalogId = result?.id || CATALOG_ID;
 }
 
+const TARGET_EMAIL = 'erik@filefuze.co';
+
 if (finalCatalogId) {
   await db.collection('agentDeployments').updateOne(
     { tenantId: TENANT_ID, agentName: 'Gemini Conversation Agent 1' },
-    { $set: { catalogId: finalCatalogId, appId: deployer.appId, updatedAt: new Date(), msEmail: 'erik@filefuze.co' } },
+    { $set: { catalogId: finalCatalogId, appId: deployer.appId, updatedAt: new Date(), msEmail: TARGET_EMAIL } },
     { upsert: true },
   );
   console.log(`Deployment record updated (catalogId=${finalCatalogId}).`);
+
+  // Write catalog ID to the user's GemCo/index.json so the Teams tab can deep-link to this agent
+  const writer = new IndexWriter(APP_USER_ID, ACCOUNT_ID);
+  await writer.writeAgentId(TARGET_EMAIL, finalCatalogId);
+  console.log(`Written agentCatalogId to ${TARGET_EMAIL}'s OneDrive index.json`);
 }
 
 console.log('\n--- Result ---');

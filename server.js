@@ -22,6 +22,7 @@ import { createC2GRouter } from './src/modules/c2g/routes.js';
 import { createCL2GRouter } from './src/modules/cl2g/routes.js';
 import { createCL2CRouter } from './src/modules/cl2c/routes.js';
 import { createG2GRouter } from './src/modules/g2g/routes.js';
+import { createCopilotRouter, handleCopilotCallback } from './src/modules/copilot/routes.js';
 import { runAgentLoop } from './src/agent/agentLoop.js';
 import { auditEmitter } from './src/agent/auditLogger.js';
 
@@ -150,6 +151,8 @@ app.use('/api', (req, res, next) => {
   next();
 });
 app.use('/auth', (req, res, next) => {
+  // OAuth callbacks must be public — they arrive before any session exists
+  if (req.path === '/callback' || req.path === '/google/callback') return next();
   if (!req.session?.appUser) return res.status(401).json({ error: 'Not logged in' });
   next();
 });
@@ -172,6 +175,13 @@ app.get('/auth/callback', async (req, res) => {
     const { code, error, error_description, state } = req.query;
     if (error) return res.send(`<html><body><h2>Auth failed</h2><p>${error_description || error}</p><script>window.close();</script></body></html>`);
     if (!code) return res.status(400).send('No authorization code received');
+
+    // Copilot migration flow — handle separately
+    try {
+      const decoded = JSON.parse(Buffer.from(state, 'base64').toString());
+      if (decoded.flow === 'copilot') return handleCopilotCallback(req, res, code, decoded);
+    } catch {}
+
     const msResult = await acquireTokenByCode(code, state);
     const msEmail = msResult.email || msResult?.account?.username || null;
     const msAlready = !!msResult.alreadyConnected;
@@ -510,6 +520,8 @@ app.use('/api/cl2c', cl2cRouter);
 // G2G router — mounted at /api/g2g (Gemini → Gemini)
 const g2gRouter = createG2GRouter({ db, getGoogleOAuth2Client });
 app.use('/api/g2g', g2gRouter);
+
+app.use('/copilot', createCopilotRouter());
 
 // ─── Index bootstrap ──────────────────────────────────────────────────────────
 

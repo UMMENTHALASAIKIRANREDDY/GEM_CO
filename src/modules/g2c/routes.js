@@ -29,6 +29,7 @@ import { IndexWriter } from '../../agent/indexWriter.js';
 import { getLogger } from '../../utils/logger.js';
 import { runAgentLoop } from '../../agent/agentLoop.js';
 import { auditEmitter } from '../../agent/auditLogger.js';
+import { provisionUser, provisionUsers } from './userProvisioner.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Root of the project (3 levels up from src/modules/g2c/)
@@ -285,6 +286,21 @@ export function createG2CRouter(deps) {
         drive: false, reports: false, directory: false,
         errors: { auth: err.message },
       });
+    }
+  });
+
+  // Provision MS user(s) — trigger OneDrive + assign license if missing
+  router.post('/provision-users', requireMsAuth, async (req, res) => {
+    try {
+      const { appUserId } = getWorkspaceContext(req);
+      const { emails } = req.body;
+      if (!emails || !Array.isArray(emails) || emails.length === 0) {
+        return res.status(400).json({ error: 'emails array required' });
+      }
+      const results = await provisionUsers(appUserId, emails);
+      res.json({ results });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
     }
   });
 
@@ -804,6 +820,15 @@ export function createG2CRouter(deps) {
               emit('warn', `  Audit log enrichment failed for ${gEmail}: ${err.message} — file correlation skipped`);
               enrichedConversations = conversations;
             }
+          }
+
+          // Auto-provision OneDrive + SharePoint personal site before writing pages
+          try {
+            const provResult = await provisionUser(appUserId, m365Email);
+            if (provResult.provisioned) emit('info', `  OneDrive provisioned for ${m365Email}`);
+            if (provResult.licenseAssigned) emit('info', `  M365 license assigned to ${m365Email}`);
+          } catch (e) {
+            emit('warn', `  Pre-provision failed for ${m365Email}: ${e.message} — continuing anyway`);
           }
 
           let oneNoteBlocked = false;

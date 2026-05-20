@@ -9,6 +9,7 @@
   ],
   "host_permissions": [
     "https://copilot.microsoft.com/*",
+    "https://m365.cloud.microsoft/*",
     "https://graph.microsoft.com/*",
     "https://login.microsoftonline.com/*"
   ],
@@ -17,7 +18,10 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://copilot.microsoft.com/*"],
+      "matches": [
+        "https://copilot.microsoft.com/*",
+        "https://m365.cloud.microsoft/*"
+      ],
       "js": ["content.js"],
       "run_at": "document_idle"
     }
@@ -25,7 +29,10 @@
   "web_accessible_resources": [
     {
       "resources": ["sidebar.html", "sidebar.js", "sidebar.css"],
-      "matches": ["https://copilot.microsoft.com/*"]
+      "matches": [
+        "https://copilot.microsoft.com/*",
+        "https://m365.cloud.microsoft/*"
+      ]
     }
   ],
   "icons": {

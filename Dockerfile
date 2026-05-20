@@ -1,31 +1,54 @@
-# Use Node.js 18 Alpine for smaller image size
-FROM node:18-alpine
+# Playwright-capable image with Chromium pre-installed
+FROM node:20-bookworm-slim
 
-# Set working directory
+# Install Chromium system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    fonts-liberation \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libcairo2 \
+    libcups2 \
+    libdbus-1-3 \
+    libdrm2 \
+    libgbm1 \
+    libglib2.0-0 \
+    libgtk-3-0 \
+    libnspr4 \
+    libnss3 \
+    libpango-1.0-0 \
+    libx11-6 \
+    libx11-xcb1 \
+    libxcb1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxkbcommon0 \
+    libxrandr2 \
+    libxshmfence1 \
+    wget \
+    xdg-utils \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-# Copy package files
 COPY package.json package-lock.json ./
-
-# Install production dependencies only
 RUN npm ci --omit=dev
 
-# Copy application source
+# Download Chromium browser binary
+RUN npx playwright install chromium
+
 COPY server.js migrate.js ./
 COPY src/ ./src/
 COPY ui/ ./ui/
 
-# Service account key is volume-mounted at runtime via docker-compose
-# (service_account.json → /app/service_account.json)
+RUN mkdir -p /app/sessions /app/uploads /app/customers
 
-# Create directories for runtime data
-RUN mkdir -p uploads customers
-
-# Expose the application port
-EXPOSE 4000
-
-# Set NODE_ENV to production
 ENV NODE_ENV=production
+ENV SESSION_DIR=/app/sessions
+ENV PLAYWRIGHT_HEADLESS=true
+ENV PORT=4000
 
-# Start the server
+EXPOSE 4000
 CMD ["node", "server.js"]
