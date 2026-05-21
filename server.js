@@ -314,6 +314,16 @@ app.post('/api/chat-history', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Clear chat history (visual + agent context)
+app.delete('/api/chat-history', requireAuth, async (req, res) => {
+  try {
+    const { appUserId } = getWorkspaceContext(req);
+    if (!appUserId) return res.status(401).json({ error: 'Not authenticated' });
+    await db().collection('chatHistory').deleteMany({ appUserId });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // All migration runs for current user (all directions)
 app.get('/api/workspaces', requireAuth, async (req, res) => {
   try {
