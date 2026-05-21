@@ -367,6 +367,11 @@ function buildExtensionPage(token, userEmail, copilotUrl, _reqHost) {
     <span id="status-msg">Waiting for Copilot session...</span>
     <div id="convs"></div>
   </div>
+
+  <p style="margin-top:24px; font-size:12px; color:#888; text-align:center">
+    Don't have the extension?
+    <a href="/copilot/start-vnc/${token}" style="color:#0078d4">Use browser window instead →</a>
+  </p>
 </div>
 <script>
 document.getElementById('open-btn').addEventListener('click', () => {
@@ -394,6 +399,10 @@ const poll = setInterval(async () => {
     if (d.status === 'failed') {
       clearInterval(poll);
       document.getElementById('status-msg').textContent = '❌ ' + msg;
+    }
+    if (d.status === 'starting_vnc' || d.status === 'vnc_ready') {
+      clearInterval(poll);
+      window.location.href = '/copilot/start-vnc/${token}?redirect=1';
     }
   } catch {}
 }, 2000);
@@ -448,10 +457,20 @@ export async function handleCopilotCallback(req, res, code, stateData) {
     return;
   }
 
-  // First-time user — use extension to capture Substrate WS URL (no Playwright, no VNC)
+  // First-time user — PRIMARY: extension method; FALLBACK: VNC (linux) or visible Playwright (other)
   job.status  = 'waiting_for_ws';
   job.message = 'Open Copilot in your browser to start migration.';
-  log(token, 'First-time user — waiting for extension WS capture');
+  log(token, `First-time user — extension method primary, platform: ${process.platform}`);
+
+  // Timeout: if no WS captured within 10 min, fail the job
+  setTimeout(() => {
+    if (job.status === 'waiting_for_ws') {
+      job.status  = 'failed';
+      job.message = 'Timed out waiting for Copilot session. Please try again.';
+      log(token, 'waiting_for_ws timeout after 10 min');
+    }
+  }, 10 * 60 * 1000);
+
   const copilotUrl = `https://m365.cloud.microsoft/chat?cfz_token=${token}`;
   res.send(buildExtensionPage(token, userEmail, copilotUrl, req.hostname));
 }
@@ -567,6 +586,40 @@ export function createCopilotRouter() {
     }
   });
 
+  // VNC fallback route — launches VNC for users without the extension
+  router.get('/start-vnc/:token', async (req, res) => {
+    const token = req.params.token;
+
+    // If redirect=1 the extension page is polling and redirected here after status flipped —
+    // just serve the VNC page immediately showing current status
+    if (req.query.redirect === '1') {
+      const job = jobs.get(token);
+      if (!job) return res.status(404).send('<h2>Migration link expired or not found.</h2>');
+      const vncs = vncSessions.get(token);
+      return res.send(buildVncPage(token, job.userEmail || 'unknown', vncs ? VNC_PORT : null, req.hostname));
+    }
+
+    const job = jobs.get(token);
+    if (!job) return res.status(404).send('<h2>Migration link expired or not found.</h2>');
+
+    if (job.status !== 'waiting_for_ws') {
+      return res.status(400).send(`<h2>Cannot start VNC — job status is "${job.status}" (expected waiting_for_ws).</h2>`);
+    }
+
+    log(token, 'VNC fallback requested by user');
+    job.status  = 'starting_vnc';
+    job.message = 'Starting browser window...';
+
+    // Respond with VNC page immediately (spinner) — background process starts VNC
+    res.send(buildVncPage(token, job.userEmail || 'unknown', VNC_PORT, req.hostname));
+
+    // Launch VNC in background
+    const sessionFile = sessionFileFor(job.userEmail);
+    const { displayNum, vncPort } = allocateVncSlot();
+    startVncAndCapture(token, job, sessionFile, displayNum, vncPort)
+      .catch(e => { job.status = 'failed'; job.message = e.message; log(token, `VNC capture error: ${e.message}`); });
+  });
+
   // Debug: all recent log lines
   router.get('/logs', (req, res) => {
     res.type('text/plain').send(logBuffer.join('\n'));
@@ -665,18 +718,56 @@ async function runMigrationJob(job) {
   job.message = `Sending ${conversations.length} conversations...`;
   job.results = [];
 
-  for (const [i, conv] of conversations.entries()) {
+  for (let i = 0; i < conversations.length; i++) {
+    const conv = conversations[i];
     job.message = `[${i + 1}/${conversations.length}] Sending "${conv.title.slice(0, 40)}"...`;
     log(t, `Sending [${i + 1}/${conversations.length}]: "${conv.title.slice(0, 50)}"`);
     const text = buildCopilotMessage(conv, conv.sourceUser);
-    const result = await sendConversation(session, text);
+    let result = await sendConversation(session, text);
     log(t, `  → ${result.ok ? 'OK' : 'FAIL'} ${result.ok ? result.title : result.reason}`);
-    job.results.push({ geminiTitle: conv.title, ok: result.ok, title: result.title, reason: result.reason });
 
-    if (!result.ok && (result.reason?.includes('401') || result.reason?.includes('HTTP 401'))) {
-      log(t, 'Token expired — aborting');
-      throw new Error('Token expired during migration.');
+    // 401 token expiry: wait for fresh extension capture then resume
+    if (!result.ok && (result.statusCode === 401 || result.reason?.includes('401') || result.reason?.includes('HTTP 401 Unauthorized'))) {
+      log(t, 'Token expired (401) — switching job back to waiting_for_ws for session refresh');
+      job.status  = 'waiting_for_ws';
+      job.message = 'Session expired. Open Copilot again to resume.';
+      wsSessionCache.delete(job.userEmail);
+
+      // Poll for fresh session (up to 5 min, every 2s)
+      const resumeDeadline = Date.now() + 5 * 60 * 1000;
+      let freshSession = null;
+      while (Date.now() < resumeDeadline) {
+        await new Promise(r => setTimeout(r, 2000));
+        freshSession = getCachedSession(job.userEmail);
+        if (freshSession) break;
+      }
+
+      if (!freshSession) {
+        job.status  = 'failed';
+        job.message = 'Session expired and no refresh received within 5 minutes. Please restart.';
+        log(t, 'Session refresh timed out — aborting');
+        return;
+      }
+
+      log(t, `Session refreshed by extension — resuming from conversation ${i + 1}`);
+      session = freshSession;
+      job.status  = 'migrating';
+      job.message = `Session refreshed. Resuming from [${i + 1}/${conversations.length}]...`;
+
+      // Retry the same conversation with the new session
+      result = await sendConversation(session, text);
+      log(t, `  → (retry) ${result.ok ? 'OK' : 'FAIL'} ${result.ok ? result.title : result.reason}`);
+
+      // If still 401 after refresh, abort
+      if (!result.ok && (result.statusCode === 401 || result.reason?.includes('401') || result.reason?.includes('HTTP 401 Unauthorized'))) {
+        job.status  = 'failed';
+        job.message = 'Session still invalid after refresh. Please restart.';
+        log(t, 'Retry after refresh still 401 — aborting');
+        return;
+      }
     }
+
+    job.results.push({ geminiTitle: conv.title, ok: result.ok, title: result.title, reason: result.reason });
     await new Promise(r => setTimeout(r, 1000));
   }
 
@@ -943,11 +1034,14 @@ function sendConversation({ token, oid, tid, sessionId, xSessionId }, messageTex
       }
     });
 
-    ws.on('unexpected-response', (req, res) => {
+    ws.on('unexpected-response', (req, httpRes) => {
       clearTimeout(timer);
       let body = '';
-      res.on('data', d => body += d.toString());
-      res.on('end', () => finish({ ok: false, reason: `HTTP ${res.statusCode}: ${body.slice(0, 200)}` }));
+      httpRes.on('data', d => body += d.toString());
+      httpRes.on('end', () => {
+        const reason = `HTTP ${httpRes.statusCode} ${httpRes.statusCode === 401 ? 'Unauthorized' : ''}: ${body.slice(0, 200)}`.trim();
+        finish({ ok: false, reason, statusCode: httpRes.statusCode });
+      });
     });
     ws.on('error', err => { clearTimeout(timer); finish({ ok: false, reason: err.message }); });
     ws.on('close', code => { clearTimeout(timer); if (!done) finish({ ok: false, reason: `closed:${code}` }); });
