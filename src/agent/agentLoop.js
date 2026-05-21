@@ -26,16 +26,15 @@ function defaultChips(migrationState) {
   // No direction yet — guide toward picking one
   if (!migDir) {
     if (!googleAuthed && !msAuthed) return [
-      'Migrate Google Workspace → Microsoft 365',
+      'Migrate Microsoft 365 → Google Workspace',
       'Migrate Claude AI → Google Workspace',
       'Help me choose the right migration',
     ];
     if (googleAuthed && !msAuthed) return [
       'Migrate Claude AI → Google Workspace',
-      'Connect Microsoft 365 to unlock more migrations',
+      'Connect Microsoft 365 to unlock Copilot → Gemini migration',
     ];
     if (googleAuthed && msAuthed) return [
-      'Migrate Google Workspace → Microsoft 365',
       'Migrate Microsoft 365 → Google Workspace',
       'Migrate Claude AI → Google Workspace',
     ];
@@ -43,8 +42,8 @@ function defaultChips(migrationState) {
   }
 
   // Auth missing — guide to connect what's needed
-  const needsGoogle = ['gemini-copilot', 'copilot-gemini', 'claude-gemini'].includes(migDir);
-  const needsMs = ['gemini-copilot', 'copilot-gemini'].includes(migDir);
+  const needsGoogle = ['copilot-gemini', 'claude-gemini'].includes(migDir);
+  const needsMs = ['copilot-gemini'].includes(migDir);
   const missingGoogle = needsGoogle && !googleAuthed;
   const missingMs = needsMs && !msAuthed;
   if (missingGoogle && missingMs) return [
@@ -62,29 +61,6 @@ function defaultChips(migrationState) {
   ];
 
   // Direction-specific chips — action-forward, no generic questions
-  if (migDir === 'gemini-copilot') {
-    if (step <= 1) return [
-      'Take me to the Import Data step',
-      'What data gets migrated?',
-    ];
-    if (step === 2) return uploadData
-      ? [`${uploadData.total_users} users imported — map them now`, 'Show me what was imported']
-      : ['How do I export my Google Workspace data?', 'I have a Vault ZIP ready to upload'];
-    if (step === 3) return mappings_count === 0
-      ? ['Auto-map all users by email now', 'Why do I need to map users?']
-      : [`${mappings_count} users mapped — take me to Options`, 'Add more mappings manually'];
-    if (step === 4) return dryRunDone
-      ? ['Run the live migration now', 'What happened in the dry run?']
-      : ['Run a dry run first — safe preview', 'I understand the risk — go live now'];
-    if (migDone) return dryRunDone
-      ? activeErrors > 0
-        ? ['Retry failed users, then go live', 'Skip errors and run live migration', 'Download dry run report']
-        : ['Everything looks good — start live migration', 'Download dry run report']
-      : activeErrors > 0
-        ? ['Retry the failed items now', 'Download report with error details']
-        : ['Download the migration report', 'Migrate another set of users'];
-  }
-
   if (migDir === 'copilot-gemini') {
     if (step <= 1) return ['Take me to Map Users', 'What data gets migrated?'];
     if (step === 2) return c2g_mappings_count === 0
@@ -140,8 +116,8 @@ function buildStepContextInstruction(state) {
     : migDir === 'claude-gemini' ? cl2g_done && cl2gLastDry
     : migDone && lastRunWasDry);
 
-  const needsGoogle = migDir && (migDir === 'gemini-copilot' || migDir === 'copilot-gemini' || migDir === 'claude-gemini');
-  const needsMs = migDir && (migDir === 'gemini-copilot' || migDir === 'copilot-gemini');
+  const needsGoogle = migDir && (migDir === 'copilot-gemini' || migDir === 'claude-gemini');
+  const needsMs = migDir && (migDir === 'copilot-gemini');
   const missingGoogle = needsGoogle && !googleAuthed;
   const missingMs = needsMs && !msAuthed;
 
@@ -160,17 +136,6 @@ function buildStepContextInstruction(state) {
   if (step === 0) return `\n\n[AUTO CONTEXT] User is on Connect Clouds. Direction: ${migDir}. Google: ${googleAuthed ? '✓' : '✗'}. MS365: ${msAuthed ? '✓' : '✗'}. Tell them exactly which button to click next. 1 sentence max.`;
   if (step === 1) return `\n\n[AUTO CONTEXT] User is choosing direction. Direction "${migDir}" is already selected. Tell them to confirm or change it. 1 sentence.`;
 
-  if (migDir === 'gemini-copilot') {
-    if (step === 2) {
-      if (!uploadData) return `\n\n[BLOCKER] User is at Import Data but has NOT uploaded anything yet. Explain clearly: "Before mapping users or starting migration, you need to import your Google Workspace data. You can either select users directly from Google Workspace (left tab) or upload a Google Vault export ZIP file (right tab). Without this, there's nothing to migrate." Then tell them which option is easier.`;
-      return `\n\n[AUTO CONTEXT] Import Data done — ${uploadData.total_users} users loaded. Tell them the import is complete and they can click "Continue →" to map users. DO NOT call navigate_to_step.`;
-    }
-    if (step === 3) {
-      if (mappings_count === 0) return `\n\n[BLOCKER] User is at Map Users but 0 users are mapped. Explain: "You need to match each Google Workspace user to their Microsoft 365 account. Without mappings, migration can't start — the system won't know where to send each person's data. I can auto-map everyone by email right now, or you can set them manually." Offer auto-map as the fast option.`;
-      return `\n\n[AUTO CONTEXT] Map Users — ${mappings_count} users mapped. Tell them mappings look good and they can click "Continue →" when ready. DO NOT call navigate_to_step — let the user click the button themselves.`;
-    }
-    if (step === 4) return `\n\n[AUTO CONTEXT] Options step. ${dryRunDone ? 'Dry run already done — primary action is live migration now.' : 'First time here — explain dry run briefly: it previews what will happen without writing any data. Recommend it before going live.'}`;
-  }
   if (migDir === 'copilot-gemini') {
     if (step === 2) {
       if (c2g_mappings_count === 0) return `\n\n[BLOCKER] User is at Map Users (Copilot→Gemini) but 0 users mapped. Explain: "You need to match each Microsoft 365 user to their Google Workspace destination. Without this, the migration engine doesn't know which Google account to write data into. Auto-map will match them by email instantly." Offer auto-map.`;
@@ -265,7 +230,7 @@ export async function runAgentLoop(req, res, { message, migrationState: _migrati
     const isReturnGreet  = message === '__step_context__' && isReturningUser && history.length === 0;
 
     const greetingInstruction = isFirstMessage
-      ? `\n\n[GREETING — FIRST VISIT] Welcome ${migrationState.appUserName ?? 'the user'} by name. Introduce yourself as GEM, CloudFuze's migration assistant. In 3-4 sentences: (1) greet them by first name, (2) say what GEM can do — migrate Google Workspace, Microsoft 365 Copilot, and Claude AI conversations, (3) tell them the first step is connecting their cloud accounts on the ${migrationState.panelSwapped ? 'left' : 'right'} panel. Professional, warm, not robotic.`
+      ? `\n\n[GREETING — FIRST VISIT] Welcome ${migrationState.appUserName ?? 'the user'} by name. Introduce yourself as GEM, CloudFuze's migration assistant. In 3-4 sentences: (1) greet them by first name, (2) say what GEM can do — migrate Microsoft 365 Copilot and Claude AI conversations into Google Workspace, (3) tell them the first step is connecting their cloud accounts on the ${migrationState.panelSwapped ? 'left' : 'right'} panel. Professional, warm, not robotic.`
       : isReturnGreet
         ? `\n\n[GREETING — RETURNING USER] Welcome ${migrationState.appUserName ?? 'back'} back by name. 1 sentence warm greeting, then immediately tell them where they left off based on current state. Be specific. No generic intros.`
         : '';

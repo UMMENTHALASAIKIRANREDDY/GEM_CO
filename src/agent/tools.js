@@ -90,10 +90,10 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'select_direction',
-      description: 'Set the migration direction and advance the left panel to the next step. Call when user says which direction they want. "claude-gemini" = Claude (Anthropic) → Google. "gemini-copilot" = Google → Microsoft 365. "copilot-gemini" = Microsoft 365 → Google.',
+      description: 'Set the migration direction and advance the left panel to the next step. Call when user says which direction they want. "claude-gemini" = Claude (Anthropic) → Google. "copilot-gemini" = Microsoft 365 → Google.',
       parameters: {
         type: 'object',
-        properties: { migDir: { type: 'string', enum: ['gemini-copilot', 'copilot-gemini', 'claude-gemini'], description: 'claude-gemini for Claude→Google, gemini-copilot for Google→Microsoft, copilot-gemini for Microsoft→Google' } },
+        properties: { migDir: { type: 'string', enum: ['copilot-gemini', 'claude-gemini'], description: 'claude-gemini for Claude→Google, copilot-gemini for Microsoft→Google' } },
         required: ['migDir'],
       },
     },
@@ -194,7 +194,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'show_upload_widget',
-      description: 'Inject an upload widget into the chat for the user to upload a file. Use widgetType="zip" when the user needs to upload a ZIP export file (Claude export for CL2G, Google Vault for G2C). Use widgetType="csv" when the user needs to upload a CSV to bulk-import user mappings. Only call this when the user is at the correct step and needs to upload.',
+      description: 'Inject an upload widget into the chat for the user to upload a file. Use widgetType="zip" when the user needs to upload a ZIP export file (Claude export for CL2G). Use widgetType="csv" when the user needs to upload a CSV to bulk-import user mappings. Only call this when the user is at the correct step and needs to upload.',
       parameters: {
         type: 'object',
         properties: {

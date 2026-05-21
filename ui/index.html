@@ -258,8 +258,8 @@ const StepDirection=({onSelect,onBack,googleAuthed,msAuthed})=>{
   const [hovered,setHovered]=useState(null);
   const bothConnected=googleAuthed&&msAuthed;
   const dirs=bothConnected?[
-    {id:'gemini-copilot',label:'Gemini → Copilot',sub:'Google Workspace to Microsoft 365',srcIcon:<GoogleIcon/>,tgtIcon:<MsIcon/>},
     {id:'copilot-gemini',label:'Copilot → Gemini',sub:'Microsoft 365 to Google Workspace',srcIcon:<MsIcon/>,tgtIcon:<GoogleIcon/>},
+    {id:'claude-gemini',label:'Claude → Gemini',sub:'Claude export ZIP to Google Drive',srcIcon:<ClaudeIcon/>,tgtIcon:<GoogleIcon/>},
   ]:[
     {id:'claude-gemini',label:'Claude → Gemini',sub:'Claude export ZIP to Google Drive',srcIcon:<ClaudeIcon/>,tgtIcon:<GoogleIcon/>},
   ];
@@ -273,7 +273,7 @@ const StepDirection=({onSelect,onBack,googleAuthed,msAuthed})=>{
         {dirs.map(d=><DirCard key={d.id} d={d} hovered={hovered} setHovered={setHovered} onSelect={onSelect}/>)}
       </div>
       {googleAuthed&&!msAuthed&&<div style={{fontSize:12,color:C.muted,marginBottom:20,padding:'10px 14px',background:C.bg,borderRadius:8}}>
-        • Connect <strong>Microsoft 365</strong> on the previous step to unlock G2C and C2G directions.
+        • Connect <strong>Microsoft 365</strong> on the previous step to unlock the Copilot → Gemini direction.
       </div>}
       <Btn variant="ghost" onClick={onBack}>← Back</Btn>
     </div>
@@ -1039,13 +1039,8 @@ const PHASE_LABELS=['Connect Clouds','Import Data','Map Users','Configure','Migr
 
 const STEP_GUIDE={
   any:{
-    0:"Connect your cloud accounts. Google Workspace and Microsoft 365 are both needed for Gemini↔Copilot migration. Only Google is needed for Claude → Gemini.",
-    1:"Choose your migration direction. Gemini→Copilot and Copilot→Gemini both require both accounts connected.",
-  },
-  'gemini-copilot':{
-    2:"Import your Gemini data — upload a Vault ZIP file or export directly from Google Drive.",
-    3:"Map each Google user to their Microsoft 365 destination. Use Auto-map to fill matches by email, then review.",
-    4:"All set. Start with a dry run first to preview — no data changes until you go live.",
+    0:"Connect your cloud accounts. Google Workspace is required. Microsoft 365 is also needed for Copilot → Gemini migration.",
+    1:"Choose your migration direction. Copilot → Gemini requires both accounts connected.",
   },
   'copilot-gemini':{
     2:"Map each Microsoft 365 user to their Google Drive destination. Use Auto-map to fill matches by email, then review.",
@@ -1143,7 +1138,7 @@ function AgentUploadWidget({widgetType,label,migDir,onDone}){
 
   const accept=widgetType==='zip'?'.zip':'.csv';
   const endpoint=widgetType==='csv'
-    ?`/api/user-mappings-csv?migDir=${migDir||'gemini-copilot'}`
+    ?`/api/user-mappings-csv?migDir=${migDir||'copilot-gemini'}`
     :migDir==='claude-gemini'
       ?'/api/cl2g-upload'
       :'/api/upload';
@@ -1347,7 +1342,7 @@ const AgentChat=({msgs,typing,input,onInput,onSend,onLogLineClick,onQuickReply,w
           <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',color:C.muted,textAlign:'center',padding:'40px 20px',gap:12}}>
             <BotAv s={52}/>
             <div style={{fontSize:14,fontWeight:500,color:C.dark}}>Migration Agent</div>
-            <div style={{fontSize:12,color:C.muted,maxWidth:240}}>Your AI guide for migrating Google Gemini conversations to Microsoft Copilot. Ask me anything or let me guide you through the process.</div>
+            <div style={{fontSize:12,color:C.muted,maxWidth:240}}>Your AI guide for migrating to Google Workspace from Microsoft 365 or Claude. Ask me anything or let me guide you through the process.</div>
           </div>
         )}
         {msgs.filter(m=>!m.shellBlock).map((m,i)=>{
@@ -2198,25 +2193,6 @@ const PostMigrationWidget=({migDir})=>{
   const widgetSourceLabel=migDir==='copilot-gemini'?'Copilot':migDir==='claude-gemini'?'Claude':'Claude';
   const widgetInstructions=buildGemInstructions(widgetSourceLabel);
   const copy=()=>{navigator.clipboard.writeText(widgetInstructions).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500)}).catch(()=>{})};
-  if(migDir==='gemini-copilot'){
-    return(
-      <div style={{borderRadius:10,border:'1px solid #e2e8f0',padding:'14px 16px',marginTop:8,background:'#f8fafc'}}>
-        <div style={{fontSize:12,fontWeight:700,color:'#0129AC',marginBottom:10}}>✅ What happens next</div>
-        <div style={{display:'flex',flexDirection:'column',gap:8}}>
-          {[
-            {n:1,text:'Users open Microsoft Copilot or Teams'},
-            {n:2,text:'The CloudFuze agent is already pinned in their sidebar'},
-            {n:3,text:'All migrated conversations are accessible — no install needed'},
-          ].map(s=>(
-            <div key={s.n} style={{display:'flex',gap:10,alignItems:'flex-start'}}>
-              <div style={{minWidth:22,height:22,borderRadius:'50%',background:'#0129AC',color:'white',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,flexShrink:0}}>{s.n}</div>
-              <div style={{fontSize:12,color:'#1e293b',paddingTop:3}}>{s.text}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
   const steps=[
     {n:1,icon:'🌐',title:'Open Gemini Gems',desc:'Go to gemini.google.com → click Gems in the left sidebar → New Gem'},
     {n:2,icon:'📁',title:'Add Knowledge from Google Drive',desc:'Under Knowledge, click "Add from Google Drive" → navigate to your migrated folder → select all files → Insert'},
@@ -2427,7 +2403,7 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
                       <span style={{fontSize:11,padding:'2px 8px',borderRadius:20,fontWeight:600,background:ss.bg,color:ss.color}}>{ss.label}</span>
                       {(r.direction==='c2g'||r.direction==='copilot-gemini')&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#EFF6FF',color:'#1D4ED8',fontWeight:600}}>C2G</span>}
                       {r.direction==='claude-gemini'&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#FFF7ED',color:'#C2410C',fontWeight:600}}>CL2G</span>}
-                      {(!r.direction||r.direction==='gemini-copilot')&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#F0FDF4',color:'#166534',fontWeight:600}}>G2C</span>}
+                      {(!r.direction)&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#F0FDF4',color:'#166534',fontWeight:600}}>Legacy</span>}
                     </div>
                     <div style={{fontSize:12,color:C.muted,display:'flex',gap:12}}>
                       <span>{fmtDate(r.startTime)}</span>
@@ -2543,7 +2519,7 @@ function App(){
   const [agentInput,setAgentInput]=useState('');
   const [agentMode,setAgentMode]=useState('guide');
   const [leftMode,setLeftMode]=useState(()=>lsGet(LS_PREFS,{}).leftMode||'viz'); // 'viz' | 'mapping'
-  const [migDir,setMigDir]=useState(()=>lsGet(LS_PREFS,{}).migDir||null); // 'gemini-copilot' | 'copilot-gemini' | 'claude-gemini' | null
+  const [migDir,setMigDir]=useState(()=>lsGet(LS_PREFS,{}).migDir||null); // 'copilot-gemini' | 'claude-gemini' | null
   const [c2gMappings,setC2gMappings]=useState(()=>lsGet(LS_MAPPING,{}).c2g||{});
   const [c2gSelectedUsers,setC2gSelectedUsers]=useState(()=>new Set());
   const [c2gStats,setC2gStats]=useState(()=>lsGet(LS_PREFS,{}).c2gStats||{users:0,files:0,errors:0});
@@ -2668,10 +2644,8 @@ function App(){
           }
 
           // DB mappings override localStorage (DB is authoritative for mappings)
-          const g2cMap=initData.mappings?.find(m=>m.migDir==='gemini-copilot');
           const c2gMap=initData.mappings?.find(m=>m.migDir==='copilot-gemini');
           const cl2gMap=initData.mappings?.find(m=>m.migDir==='claude-gemini');
-          if(g2cMap?.mappings&&Object.keys(g2cMap.mappings).length) setMappings(g2cMap.mappings);
           if(c2gMap?.mappings&&Object.keys(c2gMap.mappings).length) setC2gMappings(c2gMap.mappings);
           if(cl2gMap?.mappings&&Object.keys(cl2gMap.mappings).length) setCl2gMappings(cl2gMap.mappings);
 
@@ -2683,20 +2657,6 @@ function App(){
             const dirMap={};
             for(const ws of workspaces){
               if(!dirMap[ws.migDir])dirMap[ws.migDir]=ws;
-            }
-            // G2C recovery: step 5/6 but migDone=false → check DB
-            const g2cWs=dirMap['gemini-copilot'];
-            if(g2cWs&&g2cWs.status==='completed'){
-              const r=g2cWs.report?.summary||{};
-              setMigDone(true);setLive(false);
-              setStats({users:r.total_users||g2cWs.migratedUsers||0,pages:r.total_pages_created||(g2cWs.dryRun?g2cWs.totalConversations:g2cWs.migratedConversations)||0,errors:r.total_errors||g2cWs.failedUsers||0,flagged:0});
-              setCurrentBatchId(g2cWs._id);setLastRunWasDry(!!g2cWs.dryRun);
-              // Advance to done step if stuck mid-migration
-              setStep(prev=>prev>=5&&prev<7?6:prev);
-            } else if(g2cWs&&g2cWs.status==='running'){
-              // Migration still running on server — clear stuck state, user must restart
-              setMigDone(false);setLive(false);
-              setStep(prev=>prev>=5?4:prev); // back to options so they can restart
             }
             // C2G recovery
             const c2gWs=dirMap['copilot-gemini'];
@@ -2878,17 +2838,7 @@ function App(){
   runMigrationRef.current=runMigration;
 
   const triggerAutoMap=useCallback(()=>{
-    if(migDir==='gemini-copilot'){
-      const newMappings={...mappings};
-      (uploadData?.users||[]).forEach(u=>{
-        const match=msUsers.find(m=>m.email?.toLowerCase()===u.email?.toLowerCase());
-        if(match&&!newMappings[u.email])newMappings[u.email]=match.email;
-      });
-      setMappings(newMappings);
-      const mapped=Object.values(newMappings).filter(Boolean).length;
-      const total=(uploadData?.users||[]).length;
-      addAgentMsg('bot',`Auto-mapped **${mapped}** of **${total}** users by email match.${mapped<total?` **${total-mapped}** have no match — fill them in on the right.`:' All users mapped!'}`);
-    } else if(migDir==='copilot-gemini'){
+    if(migDir==='copilot-gemini'){
       const newMappings={...c2gMappings};
       msUsers.forEach(u=>{
         const match=googleUsers.find(g=>g.email?.toLowerCase()===u.email?.toLowerCase());
@@ -3125,8 +3075,7 @@ function App(){
     const{migDir:dir,dryRun}=agentMigrationTrigger;
     // Pass agent's explicit dryRun decision so UI checkbox can't override it
     const opts={dryRun:dryRun!==false};
-    if(dir==='gemini-copilot')runMigrationRef.current?.(opts);
-    else if(dir==='copilot-gemini')runC2GMigrationRef.current?.(opts);
+    if(dir==='copilot-gemini')runC2GMigrationRef.current?.(opts);
     else if(dir==='claude-gemini')runCL2GMigrationRef.current?.(opts);
   },[agentMigrationTrigger]);
 
@@ -3204,14 +3153,11 @@ function App(){
       const uiContext=(()=>{
         const sp=panelSwapped?'Left':'Right';
         if(step===0){const g=googleAuthed?'✓ Google connected':'✗ Google not connected';const m=msAuthed?'✓ Microsoft 365 connected':'✗ Microsoft 365 not connected';return `${sp} panel: Connect Clouds. ${g}. ${m}.`;}
-        if(step===1){const opts=[];if(googleAuthed&&msAuthed)opts.push('Gemini→Copilot','Copilot→Gemini','Claude→Gemini');else if(googleAuthed)opts.push('Claude→Gemini (available)','Gemini→Copilot (needs MS)');else if(msAuthed)opts.push('Gemini→Copilot (needs Google)','Copilot→Gemini (needs Google)');else opts.push('All directions locked');return `${sp} panel: Choose Direction. Options: ${opts.join(', ')}.`;}
-        if(step===2&&migDir==='gemini-copilot'){return `${sp} panel: Import Data (Gemini→Copilot). Upload status: ${uploadData?`${uploadData.total_users} users loaded`:'not uploaded'}.`;}
+        if(step===1){const opts=[];if(googleAuthed&&msAuthed)opts.push('Copilot→Gemini','Claude→Gemini');else if(googleAuthed)opts.push('Claude→Gemini (available)','Copilot→Gemini (needs MS)');else opts.push('All directions locked');return `${sp} panel: Choose Direction. Options: ${opts.join(', ')}.`;}
         if(step===2&&migDir==='copilot-gemini'){return `${sp} panel: Map Users (Copilot→Gemini). ${Object.keys(c2gMappings).length} users mapped.`;}
         if(step===2&&migDir==='claude-gemini'){const u=cl2gUploadData?.users?.length||0;return `${sp} panel: Upload ZIP (Claude→Gemini). ${u>0?`${u} users loaded`:'No ZIP uploaded'}.`;}
-        if(step===3&&migDir==='gemini-copilot'){return `${sp} panel: Map Users (Gemini→Copilot). ${Object.keys(mappings).length} users mapped.`;}
         if(step===3&&migDir==='claude-gemini'){return `${sp} panel: Map Users (Claude→Gemini). ${Object.keys(cl2gMappings).length} users mapped.`;}
         if(step===3&&migDir==='copilot-gemini'){return `${sp} panel: Options (Copilot→Gemini). Start Migration visible.`;}
-        if(step===4&&migDir==='gemini-copilot'){return `${sp} panel: Options (Gemini→Copilot). Dry run: ${options.dryRun?'ON':'OFF'}.`;}
         if(step===4&&migDir==='claude-gemini'){return `${sp} panel: Options (Claude→Gemini). Dry run: ${cl2gOptions?.dryRun?'ON':'OFF'}.`;}
         if(live||c2gLive||cl2gLive)return `${sp} panel: Migration in progress.`;
         if(migDone||c2gDone||cl2gDone)return `${sp} panel: Migration complete. Stats: ${stats?.users||0} users, ${stats?.pages||0} files, ${stats?.errors||0} errors.`;
@@ -3219,17 +3165,6 @@ function App(){
       })();
       // Build direction-scoped state — only include stats for the active direction to avoid stale cross-direction confusion
       const migrationState={step,migDir,live,agentMode,googleAuthed,msAuthed,uiContext,panelSwapped,
-        // G2C (gemini-copilot) fields
-        ...(migDir==='gemini-copilot'||migDir===null?{
-          migDone,stats,lastRunWasDry,currentBatchId,
-          uploadData:uploadData?{id:uploadData.id,total_users:uploadData.total_users,total_conversations:uploadData.total_conversations}:null,
-          uploadExtractPath:uploadData?.extract_path||null,
-          tenantId:config.tenantId||null,
-          customerName:config.filePath||'Gemini',
-          mappings_count:Object.keys(mappings).length,
-          selected_users_count:selectedUsers.size,
-          options:{dryRun:options.dryRun,hasFilePath:!!config.filePath},
-        }:{}),
         // C2G (copilot-gemini) fields
         ...(migDir==='copilot-gemini'?{
           c2g_done:c2gDone,c2g_live:c2gLive,c2g_stats:c2gStats,c2gLastDry:c2gLastDry,
@@ -3294,11 +3229,9 @@ function App(){
     if(!qr)return;
 
     // Direction selection chips — resolve to agent message so select_direction tool fires
-    const G2C_CHIPS=['Gemini → Copilot','Google to Microsoft','Migrate Google Workspace → Microsoft 365','Migrate Google → Microsoft 365','I want to migrate Google Workspace → Microsoft 365','Migrate Google Workspace'];
     const C2G_CHIPS=['Copilot → Gemini','Microsoft to Google','Migrate Microsoft 365 → Google Workspace','Migrate Microsoft 365 → Google','Migrate Microsoft 365'];
-    const CL2G_CHIPS=['Claude → Gemini','Claude to Google','Teams/Copilot ZIP → Google','Migrate Claude AI → Google Workspace','Migrate Claude AI → Google','Start Claude → Google migration now','Start Claude → Google migration (Google only needed)'];
+    const CL2G_CHIPS=['Claude → Gemini','Claude to Google','Migrate Claude AI → Google Workspace','Migrate Claude AI → Google','Start Claude → Google migration now','Start Claude → Google migration (Google only needed)'];
 
-    if(G2C_CHIPS.includes(qr)){addAgentMsg('user',qr);setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current('I want to migrate from Google Workspace to Microsoft 365'),300);return;}
     if(C2G_CHIPS.includes(qr)){addAgentMsg('user',qr);setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current('I want to migrate from Microsoft 365 Copilot to Google Workspace'),300);return;}
     if(CL2G_CHIPS.includes(qr)){addAgentMsg('user',qr);setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current('I want to migrate from Claude AI to Google Workspace'),300);return;}
 
@@ -3332,8 +3265,8 @@ function App(){
                 ?`Google Workspace connected! Both accounts ready. Choose a direction to get started.`
                 :migDir==='claude-gemini'
                   ?`Google connected! You're all set for Claude → Gemini. Ready to upload your Claude ZIP?`
-                  :`Google connected! Now connect Microsoft 365 to unlock Gemini↔Copilot migration — or choose Claude → Gemini which only needs Google.`;
-              addAgentMsg('bot',msg,{quickReplies:msAuthed?['Migrate Google → Microsoft 365','Migrate Microsoft 365 → Google','Migrate Claude AI → Google']:['Connect Microsoft 365 to unlock more migrations','Start Claude → Google migration now']});
+                  :`Google connected! Now connect Microsoft 365 to unlock Copilot → Gemini migration — or choose Claude → Gemini which only needs Google.`;
+              addAgentMsg('bot',msg,{quickReplies:msAuthed?['Migrate Microsoft 365 → Google Workspace','Migrate Claude AI → Google Workspace']:['Connect Microsoft 365 to unlock Copilot → Gemini','Start Claude → Google migration now']});
             }
           }).catch(()=>{setGoogleAuthed(true);setChatGLoading(false);});
         },500);
@@ -3356,7 +3289,7 @@ function App(){
               const msg=googleAuthed
                 ?`Microsoft 365 connected! Both accounts ready — choose your migration direction.`
                 :`Microsoft 365 connected! Now connect Google Workspace to complete setup.`;
-              addAgentMsg('bot',msg,{quickReplies:googleAuthed?['Migrate Google → Microsoft 365','Migrate Microsoft 365 → Google']:['Connect Google Workspace to continue']});
+              addAgentMsg('bot',msg,{quickReplies:googleAuthed?['Migrate Microsoft 365 → Google Workspace','Migrate Claude AI → Google Workspace']:['Connect Google Workspace to continue']});
             }
           }).catch(()=>{setMsAuthed(true);setChatMLoading(false);});
         },500);
@@ -3457,7 +3390,7 @@ function App(){
             </div>
             {/* Step content */}
             {(()=>{
-              const isMapStep=(step===3&&migDir==='gemini-copilot')||(step===2&&migDir==='copilot-gemini');
+              const isMapStep=(step===2&&migDir==='copilot-gemini');
               return(
                 <div style={{flex:1,overflowY:isMapStep?'hidden':'auto',padding:'16px 20px',display:isMapStep?'flex':'block',flexDirection:isMapStep?'column':undefined,minHeight:0}}>
                   {/* Fallback: if step > 1 but no direction chosen, show connect */}
@@ -3467,7 +3400,7 @@ function App(){
                   {/* Step 1: Direction picker */}
                   {step===1&&<StepDirection onSelect={dir=>{
                     setMigDir(dir);
-                    const needsMs=dir==='gemini-copilot'||dir==='copilot-gemini';
+                    const needsMs=dir==='copilot-gemini';
                     const missingGoogle=!googleAuthed;
                     const missingMs=needsMs&&!msAuthed;
                     if(missingGoogle||missingMs){
@@ -3479,11 +3412,6 @@ function App(){
                       setStep(2);
                     }
                   }} onBack={()=>setStep(0)} googleAuthed={googleAuthed} msAuthed={msAuthed}/>}
-                  {/* Gemini → Copilot steps */}
-                  {step===2&&migDir==='gemini-copilot'&&<Step1 googleUsers={googleUsers} googleAuthed={googleAuthed} onComplete={handleImportComplete} onBack={()=>setStep(1)} showToast={showToast} uploadData={uploadData}/>}
-                  {step===3&&migDir==='gemini-copilot'&&<Step2 uploadData={uploadData} msUsers={msUsers} mappings={mappings} setMappings={setMappings} selectedUsers={selectedUsers} setSelectedUsers={setSelectedUsers} onNext={()=>{addLog('info',`User mappings ready — ${selectedUsers.size||Object.keys(mappings).length} users selected`);setStep(4);}} onBack={()=>setStep(2)} showToast={showToast}/>}
-                  {step===4&&migDir==='gemini-copilot'&&<Step3 options={options} setOptions={setOptions} config={config} setConfig={setConfig} msAuthed={msAuthed} googleAuthed={googleAuthed} onRun={retryMode?(()=>retryFailed(config.filePath||undefined)):runMigration} onBack={()=>{setRetryMode(false);setStep(retryMode?5:3)}} retryMode={retryMode}/>}
-                  {(step===5||step===6)&&migDir==='gemini-copilot'&&<StepMigrate stats={stats} done={migDone} live={live} lastRunWasDry={lastRunWasDry} batchId={currentBatchId} onStartLive={()=>runMigration(true)} onRunAnother={runAnotherBatch} onRetry={retryFailed} retrying={retrying} hasUploadData={!!uploadData} onGoToConnect={handleGoToConnect} onRetryWithPath={handleRetryWithPath} onChangeDirection={handleChangeDirection} totalExpected={(()=>{if(!uploadData?.users)return 0;const sel=selectedUsers.size>0?[...selectedUsers]:Object.keys(mappings);const emails=sel.length>0?new Set(sel):new Set(uploadData.users.map(u=>u.email));return uploadData.users.filter(u=>emails.has(u.email)).reduce((s,u)=>s+(u.conversation_count||0),0)})()}/>}
                   {/* Copilot → Gemini steps */}
                   {step===2&&migDir==='copilot-gemini'&&<StepC2GMap msUsers={msUsers} googleUsers={googleUsers} c2gMappings={c2gMappings} setC2gMappings={setC2gMappings} c2gSelectedUsers={c2gSelectedUsers} setC2gSelectedUsers={setC2gSelectedUsers} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast}/>}
                   {step===3&&migDir==='copilot-gemini'&&<StepC2GOptions c2gOptions={c2gOptions} setC2gOptions={setC2gOptions} c2gConfig={c2gConfig} setC2gConfig={setC2gConfig} googleAuthed={googleAuthed} msAuthed={msAuthed} onRun={runC2GMigration} onBack={()=>setStep(2)}/>}
@@ -3513,7 +3441,6 @@ function App(){
                     <span style={{fontSize:9,fontWeight:700,letterSpacing:.5,color:'#6366f1',background:'#ede9fe',borderRadius:4,padding:'1px 5px',textTransform:'uppercase'}}>Beta</span>
                   </div>
                   {migDir&&<div style={{display:'flex',alignItems:'center',gap:4,marginTop:1}}>
-                    {migDir==='gemini-copilot'&&<><GoogleIcon/><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg><MsIcon/><span style={{fontSize:10,color:C.muted,marginLeft:2}}>Google → Microsoft</span></>}
                     {migDir==='copilot-gemini'&&<><MsIcon/><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg><GoogleIcon/><span style={{fontSize:10,color:C.muted,marginLeft:2}}>Microsoft → Google</span></>}
                     {migDir==='claude-gemini'&&<><ClaudeIcon/><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg><GoogleIcon/><span style={{fontSize:10,color:C.muted,marginLeft:2}}>Claude → Gemini</span></>}
                   </div>}

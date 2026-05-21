@@ -14,14 +14,6 @@ function checkStepPrerequisites(targetStep, migDir, migrationState) {
     cl2g_upload_users = 0,
   } = migrationState ?? {};
 
-  if (migDir === 'gemini-copilot') {
-    if (targetStep >= 3 && !uploadData)
-      return 'Upload your Google Workspace data first (Step 2 — Import Data).';
-    // Allow if either explicit mappings OR users have been selected
-    if (targetStep >= 4 && mappings_count === 0 && selected_users_count === 0)
-      return 'Map your users first (Step 3 — Map Users). Select at least one user to migrate.';
-  }
-
   if (migDir === 'copilot-gemini') {
     if (targetStep >= 3 && c2g_mappings_count === 0)
       return 'Map your users first (Step 2 — Map Users). At least one mapping is required.';
@@ -55,8 +47,9 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
     case 'select_direction': {
       const dir = args.migDir;
       const { googleAuthed = false, msAuthed = false } = migrationState ?? {};
-      const missingGoogle = !googleAuthed; // all directions need Google
-      const missingMs = (dir === 'gemini-copilot' || dir === 'copilot-gemini') && !msAuthed;
+      const needsGoogle = dir === 'copilot-gemini' || dir === 'claude-gemini';
+      const missingGoogle = needsGoogle && !googleAuthed;
+      const missingMs = (dir === 'copilot-gemini') && !msAuthed;
 
       // Set direction first so UI shows the right context
       streamEvent('select_direction', { direction: dir, step: missingGoogle || missingMs ? 0 : 2 });
@@ -163,18 +156,11 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
       } else {
         blockers.push(...combo.authCheck(migrationState));
         const effectiveMappings = combo.mappingsCount(migrationState);
-        if (combo.hasUpload && migDir === 'gemini-copilot' && !migrationState.uploadData) {
-          blockers.push('No data uploaded or imported yet');
-        }
         if (migDir === 'claude-gemini' && (migrationState.cl2g_upload_users ?? 0) === 0) {
           blockers.push('No ZIP uploaded yet');
         }
         if (effectiveMappings === 0) blockers.push('No users mapped');
         if (combo.isLive(migrationState)) blockers.push('Migration already running');
-        const selectedCount = migrationState.selected_users_count;
-        if (migDir === 'gemini-copilot' && selectedCount != null && selectedCount < effectiveMappings) {
-          warnings.push(`${effectiveMappings - selectedCount} users have no destination — they will be skipped`);
-        }
       }
       return { blockers, warnings, ready: blockers.length === 0 };
     }

@@ -1,20 +1,5 @@
 // src/agent/combinations.js
 export const COMBINATIONS = {
-  'gemini-copilot': {
-    label: 'Google Workspace → Microsoft 365',
-    auth: ['google', 'microsoft'],
-    hasUpload: true,
-    steps: ['Connect', 'Direction', 'Import Data', 'Map Users', 'Options', 'Migration'],
-    authCheck: (state) => {
-      const blockers = [];
-      if (!state.googleAuthed) blockers.push('Google Workspace not connected');
-      if (!state.msAuthed) blockers.push('Microsoft 365 not connected');
-      return blockers;
-    },
-    mappingsCount: (state) => state.mappings_count ?? 0,
-    isLive: (state) => !!state.live,
-    isDone: (state) => !!state.migDone,
-  },
   'copilot-gemini': {
     label: 'Microsoft 365 Copilot → Google Workspace',
     auth: ['microsoft', 'google'],
