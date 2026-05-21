@@ -214,9 +214,9 @@ export function buildCopilotAuthUrl(token) {
 
 // ── noVNC page builder ────────────────────────────────────────────────────────
 function buildVncPage(token, userEmail, vncWsPort, reqHost) {
-  // token-plugin routes this connection to the right x11vnc instance
+  // Proxied via NGINX /novnc/ — same origin, no direct port 6080 needed
   const vncUrl = vncWsPort
-    ? `http://${reqHost}:${vncWsPort}/vnc.html?autoconnect=true&resize=scale&quality=6&path=websockify%3Ftoken%3D${token}`
+    ? `/novnc/vnc.html?autoconnect=true&resize=scale&quality=6&path=novnc%2Fwebsockify%3Ftoken%3D${token}`
     : '';
   return `<!DOCTYPE html>
 <html>
@@ -353,18 +353,27 @@ export async function handleCopilotCallback(req, res, code, stateData) {
     return;
   }
 
-  // New user — start Xvfb + noVNC so they can sign in via browser
-  const { displayNum, vncPort } = allocateVncSlot();
-  job.status  = 'starting_vnc';
-  job.message = 'Starting browser session...';
-  res.send(buildVncPage(token, userEmail, VNC_PORT, req.hostname));
+  // New user — Linux/Docker: use Xvfb + noVNC. Windows (local dev): open visible browser directly.
+  const useVnc = process.platform === 'linux';
 
-  startVncAndCapture(token, job, sessionFile, displayNum, vncPort).catch(e => {
-    job.status  = 'failed';
-    job.message = e.message;
-    stopVncProcesses(token);
-    console.error('[copilot] VNC capture failed:', e);
-  });
+  if (useVnc) {
+    const { displayNum, vncPort } = allocateVncSlot();
+    job.status  = 'starting_vnc';
+    job.message = 'Starting browser session...';
+    res.send(buildVncPage(token, userEmail, VNC_PORT, req.hostname));
+    startVncAndCapture(token, job, sessionFile, displayNum, vncPort).catch(e => {
+      job.status  = 'failed';
+      job.message = e.message;
+      stopVncProcesses(token);
+      console.error('[copilot] VNC capture failed:', e);
+    });
+  } else {
+    // Local dev (Windows/Mac) — Playwright opens a visible Chrome window on the desktop
+    job.status  = 'authorized';
+    job.message = '⚠ A browser window just opened — sign in to Microsoft Copilot there, then return here.';
+    res.send(buildVncPage(token, userEmail, null, req.hostname));
+    runMigrationJob(job).catch(e => { job.status = 'failed'; job.message = e.message; });
+  }
 }
 
 async function startVncAndCapture(token, job, sessionFile, displayNum, vncPort) {
@@ -372,7 +381,7 @@ async function startVncAndCapture(token, job, sessionFile, displayNum, vncPort) 
 
   job.status  = 'vnc_ready';
   job.message = 'Sign in to Microsoft in the window below';
-  log(token, `VNC ready on port ${wsPort} — waiting for user to sign in`);
+  log(token, `VNC ready on port ${VNC_PORT} — waiting for user to sign in`);
 
   // Launch visible Playwright on the Xvfb display
   const session = await getSubstrateSession(job.userEmail, sessionFile, job.msalCookies || [], displayNum);
@@ -553,7 +562,7 @@ async function getSubstrateSession(userEmail = null, sessionFile = null, ssoCook
 
   const launchOpts = {
     headless,
-    args: ['--disable-blink-features=AutomationControlled', '--no-sandbox', '--disable-setuid-sandbox'],
+    args: ['--disable-blink-features=AutomationControlled', '--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
   };
   // Point Chromium at the Xvfb virtual display when running VNC session
   if (!headless && displayNum !== null) {
@@ -641,10 +650,13 @@ async function getSubstrateSession(userEmail = null, sessionFile = null, ssoCook
     }
   }
 
+  if (capturedWsUrls.length === 0) {
+    await browser.close();
+    throw new Error('No substrate WebSocket URL captured. Your Microsoft 365 account may not have Copilot access.');
+  }
+
   await context.storageState({ path: sessionFile });
   await browser.close();
-
-  if (capturedWsUrls.length === 0) throw new Error('No substrate WebSocket URL captured.');
 
   const wsUrl = capturedWsUrls[0];
   const urlObj = new URL(wsUrl);
@@ -723,7 +735,7 @@ function sendConversation({ token, oid, tid, sessionId, xSessionId }, messageTex
           // (Copilot can't AI-respond) but the conversation IS in the sidebar
           const migrated = !!msg.item?.defaultChatName;
           const isLicense = r?.value === 'ForbiddenRequest';
-          const ok = migrated;
+          const ok = migrated || isLicense; // ForbiddenRequest = Basic license, conversation IS in sidebar
           finish({
             ok,
             title: msg.item?.defaultChatName,

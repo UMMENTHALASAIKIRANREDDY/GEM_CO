@@ -40,5 +40,10 @@ jobs:
             echo "Starting containers..."
             echo "${{ secrets.SSH_PASSWORD }}" | sudo -S docker compose up -d
 
+            echo "Applying nginx config..."
+            echo "${{ secrets.SSH_PASSWORD }}" | sudo -S cp /data/migration-combinations/nginx.conf /etc/nginx/sites-available/gemco
+            echo "${{ secrets.SSH_PASSWORD }}" | sudo -S ln -sf /etc/nginx/sites-available/gemco /etc/nginx/sites-enabled/gemco
+            echo "${{ secrets.SSH_PASSWORD }}" | sudo -S nginx -t && echo "${{ secrets.SSH_PASSWORD }}" | sudo -S nginx -s reload || true
+
             echo "Deployment complete!"
             echo "${{ secrets.SSH_PASSWORD }}" | sudo -S docker compose ps
