@@ -201,9 +201,9 @@ function makeMsalApp(captureKey = null) {
   return new ConfidentialClientApplication(config);
 }
 
-export function buildCopilotAuthUrl(token) {
+export function buildCopilotAuthUrl(token, method = 'extension') {
   const baseUrl = process.env.BASE_URL || 'http://localhost:4000';
-  const state = Buffer.from(JSON.stringify({ flow: 'copilot', token })).toString('base64');
+  const state = Buffer.from(JSON.stringify({ flow: 'copilot', token, method })).toString('base64');
   return makeMsalApp().getAuthCodeUrl({
     scopes: ['openid', 'profile', 'email'],
     redirectUri: `${baseUrl}/auth/callback`,
@@ -212,109 +212,149 @@ export function buildCopilotAuthUrl(token) {
   });
 }
 
+// ── Page builders — shared helpers ───────────────────────────────────────────
+const sharedCss = `
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:Segoe UI,sans-serif;background:#f3f2f1}
+  .bar{background:#0078d4;color:#fff;padding:12px 20px;font-size:14px;font-weight:600;display:flex;align-items:center;gap:10px}
+  .bar small{font-weight:400;opacity:.8;font-size:12px}
+  .wrap{max-width:560px;margin:0 auto;padding:40px 20px}
+  .spinner{width:32px;height:32px;border:3px solid #e0e0e0;border-top:3px solid #0078d4;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 16px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .status-msg{font-size:14px;color:#444;text-align:center}
+  .conv{padding:8px 0;font-size:13px;border-bottom:1px solid #eee}
+  .conv .title{font-weight:600}
+  .ok{color:#107c10;font-size:12px}
+  .warn{color:#8a6914;font-size:12px}
+  .fail{color:#d83b01;font-size:12px}
+  #convs{margin-top:16px}
+`;
+
+function pollScript(token) {
+  return `
+const _pollInterval = setInterval(async () => {
+  try {
+    const r = await fetch('/copilot/status/${token}');
+    const d = await r.json();
+    const msg = d.message || d.status;
+    document.querySelectorAll('.status-msg').forEach(el => el.textContent = msg);
+    if (d.results?.length) {
+      const html = d.results.map(r => {
+        const cls = r.ok ? (r.reason ? 'warn' : 'ok') : 'fail';
+        const label = r.ok ? (r.reason ? '✓ (Basic license)' : '✓ Migrated') : '✗ ' + (r.reason || 'failed');
+        return '<div class="conv"><div class="title">' + r.geminiTitle + '</div>'
+             + '<div class="' + cls + '">' + label + (r.title ? ' → ' + r.title : '') + '</div></div>';
+      }).join('');
+      const convEl = document.getElementById('convs');
+      if (convEl) convEl.innerHTML = html;
+    }
+    if (d.status === 'done') {
+      clearInterval(_pollInterval);
+      document.querySelectorAll('.status-msg').forEach(el => el.textContent = '✅ Done! Redirecting to Copilot...');
+      setTimeout(() => window.location.href = 'https://m365.cloud.microsoft/chat', 2500);
+    }
+    if (d.status === 'failed') {
+      clearInterval(_pollInterval);
+      document.querySelectorAll('.status-msg').forEach(el => el.textContent = '❌ ' + msg);
+    }
+    if ((d.status === 'vnc_ready' || d.status === 'starting_vnc') && document.getElementById('vnc-wrap')) {
+      document.getElementById('loading') && (document.getElementById('loading').style.display = 'none');
+      document.getElementById('vnc-wrap').style.display = 'block';
+    }
+    if ((d.status === 'session_captured' || d.status === 'migrating') && document.getElementById('vnc-wrap')) {
+      document.getElementById('vnc-wrap').style.display = 'none';
+    }
+  } catch {}
+}, 2000);`;
+}
+
 // ── noVNC page builder ────────────────────────────────────────────────────────
-function buildVncPage(token, userEmail, vncWsPort, reqHost) {
-  // Proxied via NGINX /novnc/ — same origin, no direct port 6080 needed
+function buildVncPage(token, userEmail, vncWsPort, _reqHost) {
   const vncUrl = vncWsPort
     ? `/novnc/vnc.html?autoconnect=true&resize=scale&quality=6&path=novnc%2Fwebsockify%3Ftoken%3D${token}`
     : '';
   return `<!DOCTYPE html>
 <html>
 <head>
-<title>CloudFuze — Sign in to Microsoft</title>
+<title>CloudFuze — Browser Window</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: Segoe UI, sans-serif; background: #f3f2f1; }
-  .bar { background: #0078d4; color: white; padding: 12px 20px; font-size: 14px; font-weight: 600;
-         display: flex; align-items: center; gap: 10px; }
-  .bar small { font-weight: 400; opacity: .8; font-size: 12px; }
-  #loading { text-align: center; padding: 60px 20px; }
-  .spinner { width: 36px; height: 36px; border: 3px solid #e0e0e0; border-top: 3px solid #0078d4;
-             border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 16px; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  #status-msg { font-size: 14px; color: #444; }
-  #vnc-wrap { display: none; width: 100%; height: calc(100vh - 46px); }
-  #vnc-frame { width: 100%; height: 100%; border: none; }
-  #migrating { display: none; text-align: center; padding: 40px 20px; }
-  .conv { padding: 8px 0; font-size: 13px; border-bottom: 1px solid #f0f0f0; text-align: left; max-width: 520px; margin: 0 auto; }
-  .conv .title { font-weight: 600; }
-  .ok { color: #107c10; font-size: 12px; }
-  .warn { color: #8a6914; font-size: 12px; }
-  .fail { color: #d83b01; font-size: 12px; }
-  #convs { margin-top: 16px; }
+  ${sharedCss}
+  #loading{text-align:center;padding:60px 20px}
+  #vnc-wrap{display:none;width:100%;height:calc(100vh - 46px)}
+  #vnc-frame{width:100%;height:100%;border:none}
 </style>
 </head>
 <body>
-<div class="bar">
-  CloudFuze Copilot Migration
-  <small>Signed in as ${userEmail}</small>
-</div>
-
+<div class="bar">CloudFuze Copilot Migration<small>Signed in as ${userEmail}</small></div>
 <div id="loading">
-  <div class="spinner"></div>
-  <p id="status-msg">Starting browser session...</p>
+  <div class="spinner" style="margin-top:60px"></div>
+  <p class="status-msg" style="margin-top:12px">Starting browser window...</p>
+  <p style="font-size:12px;color:#999;margin-top:8px">Sign in to Microsoft Copilot in the window below.</p>
 </div>
-
 <div id="vnc-wrap">
   <iframe id="vnc-frame" src="${vncUrl}"></iframe>
 </div>
+<div id="convs" style="max-width:520px;margin:24px auto;padding:0 20px"></div>
+<script>${pollScript(token)}</script>
+</body>
+</html>`;
+}
 
-<div id="migrating">
+// Auto-opens Copilot tab immediately after OAuth — extension method
+function buildAutoOpenPage(token, userEmail, copilotUrl) {
+  return `<!DOCTYPE html>
+<html>
+<head>
+<title>CloudFuze — Migrating</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>${sharedCss}</style>
+</head>
+<body>
+<div class="bar">CloudFuze Copilot Migration<small>Signed in as ${userEmail}</small></div>
+<div class="wrap" style="text-align:center;padding-top:60px">
   <div class="spinner"></div>
-  <p id="mig-msg">Migrating conversations...</p>
-  <div id="convs"></div>
+  <p class="status-msg">Opening Copilot...</p>
+  <p style="font-size:12px;color:#999;margin-top:12px">
+    A Copilot tab will open automatically. You can close it once it loads.
+  </p>
+  <p style="margin-top:20px;font-size:13px;color:#555">
+    Copilot didn't open?
+    <a href="${copilotUrl}" target="_blank" style="color:#0078d4">Click here</a>
+  </p>
+  <div id="convs" style="text-align:left;margin-top:24px"></div>
 </div>
-
 <script>
-const poll = setInterval(async () => {
-  try {
-    const r = await fetch('/copilot/status/${token}');
-    const d = await r.json();
-    const msg = d.message || d.status;
-
-    document.getElementById('status-msg').textContent = msg;
-    document.getElementById('mig-msg').textContent = msg;
-
-    if (d.status === 'vnc_ready') {
-      document.getElementById('loading').style.display = 'none';
-      document.getElementById('vnc-wrap').style.display = 'block';
-    }
-
-    if (d.status === 'session_captured' || d.status === 'migrating') {
-      document.getElementById('vnc-wrap').style.display = 'none';
-      document.getElementById('loading').style.display = 'none';
-      document.getElementById('migrating').style.display = 'block';
-    }
-
-    if (d.results?.length) {
-      const html = d.results.map(r => {
-        const cls = r.ok ? (r.reason ? 'warn' : 'ok') : 'fail';
-        const label = r.ok ? (r.reason ? '✓ Migrated (Basic license)' : '✓ Migrated') : '✗ ' + (r.reason || 'failed');
-        return '<div class="conv"><div class="title">' + r.geminiTitle + '</div><div class="' + cls + '">' + label + (r.title ? ' → ' + r.title : '') + '</div></div>';
-      }).join('');
-      document.getElementById('convs').innerHTML = html;
-    }
-
-    if (d.status === 'done') {
-      clearInterval(poll);
-      document.getElementById('mig-msg').textContent = '✅ All done! Redirecting to Copilot...';
-      setTimeout(() => window.location.href = 'https://m365.cloud.microsoft/chat', 2500);
-    }
-    if (d.status === 'failed') {
-      clearInterval(poll);
-      document.getElementById('mig-msg').textContent = '❌ ' + (msg || 'Migration failed');
-      document.getElementById('migrating').style.display = 'block';
-      document.getElementById('loading').style.display = 'none';
-    }
-  } catch {}
-}, 2000);
+// Auto-open Copilot in new tab immediately
+window.open(${JSON.stringify(copilotUrl)}, '_blank');
+${pollScript(token)}
 </script>
 </body>
 </html>`;
 }
 
-// ── Extension WS-capture page ─────────────────────────────────────────────────
+// Simple progress page — no VNC iframe, no open button (returning user / local dev)
+function buildProgressPage(token, userEmail) {
+  return `<!DOCTYPE html>
+<html>
+<head>
+<title>CloudFuze — Migrating</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>${sharedCss}</style>
+</head>
+<body>
+<div class="bar">CloudFuze Copilot Migration<small>Signed in as ${userEmail}</small></div>
+<div class="wrap" style="text-align:center;padding-top:60px">
+  <div class="spinner"></div>
+  <p class="status-msg">Starting migration...</p>
+  <div id="convs" style="text-align:left;margin-top:24px"></div>
+</div>
+<script>${pollScript(token)}</script>
+</body>
+</html>`;
+}
+
+// VNC page — embeds noVNC iframe, polls for VNC ready
 function buildExtensionPage(token, userEmail, copilotUrl, _reqHost) {
   return `<!DOCTYPE html>
 <html>
@@ -448,31 +488,54 @@ export async function handleCopilotCallback(req, res, code, stateData) {
   const hasSession  = fs.existsSync(sessionFile);
 
   if (hasSession) {
-    // Returning user — session file exists, go headless immediately
+    // Returning user — session file exists, go headless immediately (no method needed)
     job.status  = 'authorized';
     job.message = 'Session found. Starting migration...';
     log(token, 'Returning user — headless via session file');
-    res.send(buildVncPage(token, userEmail, null, req.hostname));
+    res.send(buildProgressPage(token, userEmail));
     runMigrationJob(job).catch(e => { job.status = 'failed'; job.message = e.message; });
     return;
   }
 
-  // First-time user — PRIMARY: extension method; FALLBACK: VNC (linux) or visible Playwright (other)
+  const method = job.method || 'extension';
+  log(token, `First-time user — method: ${method}`);
+
+  if (method === 'vnc') {
+    // User chose browser window — start VNC immediately
+    if (process.platform === 'linux') {
+      job.status  = 'starting_vnc';
+      job.message = 'Starting browser window...';
+      res.send(buildVncPage(token, userEmail, VNC_PORT, req.hostname));
+      const sessionFile = sessionFileFor(userEmail);
+      const { displayNum, vncPort } = allocateVncSlot();
+      startVncAndCapture(token, job, sessionFile, displayNum, vncPort)
+        .catch(e => { job.status = 'failed'; job.message = e.message; stopVncProcesses(token); });
+    } else {
+      // Local dev — visible Playwright window
+      job.status  = 'authorized';
+      job.message = 'A browser window opened — sign in to Copilot there.';
+      res.send(buildProgressPage(token, userEmail));
+      runMigrationJob(job).catch(e => { job.status = 'failed'; job.message = e.message; });
+    }
+    return;
+  }
+
+  // Extension method — auto-open Copilot in new tab after sign-in
   job.status  = 'waiting_for_ws';
-  job.message = 'Open Copilot in your browser to start migration.';
-  log(token, `First-time user — extension method primary, platform: ${process.platform}`);
+  job.message = 'Opening Copilot...';
+  log(token, 'Extension method — auto-opening Copilot tab');
 
   // Timeout: if no WS captured within 10 min, fail the job
   setTimeout(() => {
     if (job.status === 'waiting_for_ws') {
       job.status  = 'failed';
-      job.message = 'Timed out waiting for Copilot session. Please try again.';
+      job.message = 'Timed out. Please try again or use the browser window option.';
       log(token, 'waiting_for_ws timeout after 10 min');
     }
   }, 10 * 60 * 1000);
 
   const copilotUrl = `https://m365.cloud.microsoft/chat?cfz_token=${token}`;
-  res.send(buildExtensionPage(token, userEmail, copilotUrl, req.hostname));
+  res.send(buildAutoOpenPage(token, userEmail, copilotUrl));
 }
 
 async function startVncAndCapture(token, job, sessionFile, displayNum, vncPort) {
@@ -499,43 +562,75 @@ async function startVncAndCapture(token, job, sessionFile, displayNum, vncPort) 
 export function createCopilotRouter() {
   const router = express.Router();
 
-  // Start test migration — open this in browser
-  router.get('/start', async (req, res) => {
-    const token = randomUUID();
+  // Step 1: method selection page
+  router.get('/start', (req, res) => {
     const uploadId = req.query.uploadId || 'a5b50ed1da10e3a3b58aeb518c51115b';
-    const limit = parseInt(req.query.limit || '3', 10);
-
-    jobs.set(token, { token, uploadId, limit, status: 'pending', message: 'Waiting for auth...' });
-
-    const authUrl = await buildCopilotAuthUrl(token);
-
+    const limit    = parseInt(req.query.limit || '3', 10);
     res.send(`<!DOCTYPE html>
 <html>
 <head>
-<title>Copilot Migration</title>
+<title>CloudFuze — Copilot Migration</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-  body { font-family: Segoe UI, sans-serif; max-width: 560px; margin: 60px auto; padding: 20px; color: #242424; }
-  .btn { display: inline-block; background: #0078d4; color: white; padding: 12px 24px;
-         border-radius: 4px; text-decoration: none; font-size: 14px; font-weight: 600; }
-  .btn:hover { background: #106ebe; }
-  .box { background: #f0f6ff; border-radius: 4px; padding: 14px 16px; margin-top: 20px; font-size: 13px; color: #444; }
-  .box b { color: #0078d4; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:Segoe UI,sans-serif;background:#f3f2f1;min-height:100vh;display:flex;align-items:center;justify-content:center}
+  .wrap{width:100%;max-width:560px;padding:32px 20px}
+  h2{font-size:22px;color:#242424;margin-bottom:6px}
+  .sub{font-size:14px;color:#666;margin-bottom:28px}
+  .cards{display:flex;gap:14px;flex-wrap:wrap}
+  .card{flex:1;min-width:220px;background:#fff;border:2px solid #e0e0e0;border-radius:8px;padding:20px;cursor:pointer;transition:border-color .15s,box-shadow .15s;text-decoration:none;color:inherit;display:block}
+  .card:hover{border-color:#0078d4;box-shadow:0 2px 8px rgba(0,120,212,.15)}
+  .card.selected{border-color:#0078d4;background:#f0f6ff}
+  .card-icon{font-size:28px;margin-bottom:10px}
+  .card-title{font-size:15px;font-weight:600;color:#242424;margin-bottom:4px}
+  .card-desc{font-size:12px;color:#666;line-height:1.5}
+  .card-badge{display:inline-block;background:#dff6dd;color:#107c10;font-size:10px;font-weight:600;padding:2px 7px;border-radius:10px;margin-top:8px}
+  .card-badge.warn{background:#fff4ce;color:#8a6914}
+  .signin-wrap{margin-top:24px}
+  .btn-ms{display:inline-flex;align-items:center;gap:10px;background:#0078d4;color:#fff;padding:12px 22px;border-radius:4px;font-size:14px;font-weight:600;text-decoration:none;border:none;cursor:pointer;width:100%;justify-content:center}
+  .btn-ms:hover{background:#106ebe}
+  .btn-ms:disabled{background:#a0c4e8;cursor:not-allowed}
+  .ms-logo{width:18px;height:18px;flex-shrink:0}
+  .hint{font-size:12px;color:#888;margin-top:10px;text-align:center}
+  #method-hint{font-size:13px;color:#444;background:#f0f6ff;border-radius:6px;padding:10px 14px;margin-top:16px;display:none}
 </style>
 </head>
 <body>
-  <h2>CloudFuze Copilot Migration</h2>
-  <p>Click below to sign in with Microsoft. After sign-in you'll be brought back here
-     and <b>${limit} Gemini conversations</b> will be migrated to your Copilot sidebar.</p>
-  <a class="btn" href="${authUrl}">Sign in with Microsoft →</a>
-  <div class="box">
-    <b>What happens:</b><br>
-    1. Sign in with Microsoft (same tab)<br>
-    2. Backend captures your Copilot session<br>
-    3. ${limit} conversations migrated via WebSocket<br>
-    4. Page redirects to your Copilot sidebar
+<div class="wrap">
+  <h2>Migrate Gemini to Copilot</h2>
+  <p class="sub">Choose how you want to connect your Copilot account — then sign in with Microsoft.</p>
+
+  <div class="cards">
+    <a class="card" id="card-ext" href="/copilot/begin?method=extension&uploadId=${uploadId}&limit=${limit}">
+      <div class="card-icon">🧩</div>
+      <div class="card-title">CloudFuze Extension</div>
+      <div class="card-desc">Install the Chrome extension once. After sign-in, Copilot opens automatically — no extra steps.</div>
+      <span class="card-badge">Recommended</span>
+    </a>
+    <a class="card" id="card-vnc" href="/copilot/begin?method=vnc&uploadId=${uploadId}&limit=${limit}">
+      <div class="card-icon">🖥</div>
+      <div class="card-title">Browser Window</div>
+      <div class="card-desc">No extension needed. A browser window opens on our server — sign in to Copilot there.</div>
+      <span class="card-badge warn">Requires display</span>
+    </a>
   </div>
+</div>
 </body>
 </html>`);
+  });
+
+  // Step 2: create job for chosen method and redirect to Microsoft OAuth
+  router.get('/begin', async (req, res) => {
+    const method   = req.query.method === 'vnc' ? 'vnc' : 'extension';
+    const uploadId = req.query.uploadId || 'a5b50ed1da10e3a3b58aeb518c51115b';
+    const limit    = parseInt(req.query.limit || '3', 10);
+    const token    = randomUUID();
+
+    jobs.set(token, { token, uploadId, limit, method, status: 'pending', message: 'Waiting for auth...' });
+    log(token, `Job created — method: ${method}, upload: ${uploadId}, limit: ${limit}`);
+
+    const authUrl = await buildCopilotAuthUrl(token, method);
+    res.redirect(authUrl);
   });
 
   // Status poll
