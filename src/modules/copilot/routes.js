@@ -507,7 +507,6 @@ async function runMigrationJob(job) {
 
   let upload = await db.collection('uploads').findOne({ _id: job.uploadId });
   if (!upload) {
-    // Fall back to filesystem path convention
     const fallbackPath = path.join('uploads', `extracted_${job.uploadId}`);
     if (fs.existsSync(fallbackPath)) {
       upload = { _id: job.uploadId, extractPath: fallbackPath };
@@ -516,11 +515,24 @@ async function runMigrationJob(job) {
       throw new Error(`Upload not found: ${job.uploadId}`);
     }
   }
-  log(t, `Upload found: ${job.uploadId}, extractPath: ${upload.extractPath}`);
 
-  const xmlFiles = fs.readdirSync(upload.extractPath)
+  // Normalize extractPath — DB may store an absolute Windows path from local dev
+  let extractPath = upload.extractPath;
+  if (!fs.existsSync(extractPath)) {
+    const dockerPath = path.join('uploads', `extracted_${job.uploadId}`);
+    if (fs.existsSync(dockerPath)) {
+      extractPath = dockerPath;
+      log(t, `Path normalized to: ${dockerPath}`);
+    } else {
+      throw new Error(`Upload files not found: ${job.uploadId}`);
+    }
+  }
+
+  log(t, `Upload ready: ${job.uploadId}, path: ${extractPath}`);
+
+  const xmlFiles = fs.readdirSync(extractPath)
     .filter(f => f.endsWith('.xml'))
-    .map(f => ({ file: path.join(upload.extractPath, f), email: f.split('-')[0] }));
+    .map(f => ({ file: path.join(extractPath, f), email: f.split('-')[0] }));
   log(t, `XML files: ${xmlFiles.map(x => x.email).join(', ')}`);
 
   let conversations = [];
