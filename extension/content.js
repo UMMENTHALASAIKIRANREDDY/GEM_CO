@@ -45,8 +45,14 @@ window.addEventListener('message', async (e) => {
   }
 });
 
-// On first visit: click New Chat to force an immediate WS connection
-if (cfzToken) {
+// Click New Chat whenever migration is active — works on first load AND after Copilot's own login redirect
+// (cfz_token may not be in URL after redirect, but IS in storage)
+chrome.storage.local.get(['cfz_token', 'cfz_token_ts'], (stored) => {
+  if (!stored.cfz_token) return;
+  if (Date.now() - (stored.cfz_token_ts || 0) > TOKEN_TTL_MS) {
+    chrome.storage.local.remove(['cfz_token', 'cfz_token_ts']);
+    return;
+  }
   setTimeout(() => {
     const newBtn = document.querySelector(
       '[aria-label*="new chat" i], [data-testid*="new-chat"], button[title*="New chat"]'
@@ -55,8 +61,8 @@ if (cfzToken) {
       console.log('[CFZ] Clicking New Chat to force WS capture');
       newBtn.click();
     }
-  }, 1500);
-}
+  }, 2000);
+});
 
 function showCfzToast(msg) {
   const existing = document.getElementById('cfz-toast');
