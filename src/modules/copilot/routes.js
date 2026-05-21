@@ -314,6 +314,94 @@ const poll = setInterval(async () => {
 </html>`;
 }
 
+// ── Extension WS-capture page ─────────────────────────────────────────────────
+function buildExtensionPage(token, userEmail, copilotUrl, _reqHost) {
+  return `<!DOCTYPE html>
+<html>
+<head>
+<title>CloudFuze — Open Copilot</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Segoe UI, sans-serif; background: #f3f2f1; }
+  .bar { background: #0078d4; color: white; padding: 12px 20px; font-size: 14px; font-weight: 600;
+         display: flex; align-items: center; gap: 10px; }
+  .bar small { font-weight: 400; opacity: .8; font-size: 12px; }
+  .wrap { max-width: 560px; margin: 60px auto; padding: 20px; }
+  h2 { font-size: 20px; margin-bottom: 10px; color: #242424; }
+  p { font-size: 14px; color: #555; margin-bottom: 20px; line-height: 1.5; }
+  .btn { display: inline-block; background: #0078d4; color: white; padding: 12px 24px;
+         border-radius: 4px; text-decoration: none; font-size: 14px; font-weight: 600; cursor: pointer; border: none; }
+  .btn:hover { background: #106ebe; }
+  .spinner { width: 28px; height: 28px; border: 3px solid #e0e0e0; border-top: 3px solid #0078d4;
+             border-radius: 50%; animation: spin 1s linear infinite; display: inline-block; vertical-align: middle; margin-right: 10px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #status-row { display: none; margin-top: 24px; font-size: 14px; color: #444; }
+  .conv { padding: 8px 0; font-size: 13px; border-bottom: 1px solid #eee; }
+  .conv .title { font-weight: 600; }
+  .ok { color: #107c10; font-size: 12px; }
+  .warn { color: #8a6914; font-size: 12px; }
+  .fail { color: #d83b01; font-size: 12px; }
+  #convs { margin-top: 12px; }
+  .step { background: #f0f6ff; border-radius: 6px; padding: 12px 16px; margin-bottom: 10px; font-size: 13px; color: #333; }
+  .step b { color: #0078d4; }
+</style>
+</head>
+<body>
+<div class="bar">
+  CloudFuze Copilot Migration
+  <small>Signed in as ${userEmail}</small>
+</div>
+<div class="wrap">
+  <h2>One more step</h2>
+  <p>Click the button below to open Copilot. The <b>CloudFuze extension</b> will automatically
+     capture your session and start migrating conversations.</p>
+  <div class="step"><b>Step 1:</b> Make sure the <b>CloudFuze Migration Viewer</b> extension is installed in your browser.</div>
+  <div class="step"><b>Step 2:</b> Click the button — it opens Copilot in a new tab.</div>
+  <div class="step"><b>Step 3:</b> Come back here and watch progress. ✅</div>
+  <br>
+  <a class="btn" href="${copilotUrl}" target="_blank" id="open-btn">Open Copilot →</a>
+
+  <div id="status-row">
+    <span class="spinner"></span>
+    <span id="status-msg">Waiting for Copilot session...</span>
+    <div id="convs"></div>
+  </div>
+</div>
+<script>
+document.getElementById('open-btn').addEventListener('click', () => {
+  document.getElementById('status-row').style.display = 'block';
+});
+const poll = setInterval(async () => {
+  try {
+    const r = await fetch('/copilot/status/${token}');
+    const d = await r.json();
+    const msg = d.message || d.status;
+    document.getElementById('status-msg').textContent = msg;
+    document.getElementById('status-row').style.display = 'block';
+    if (d.results?.length) {
+      const html = d.results.map(r => {
+        const cls = r.ok ? (r.reason ? 'warn' : 'ok') : 'fail';
+        const label = r.ok ? (r.reason ? '✓ Migrated (Basic license)' : '✓ Migrated') : '✗ ' + (r.reason || 'failed');
+        return '<div class="conv"><div class="title">' + r.geminiTitle + '</div><div class="' + cls + '">' + label + (r.title ? ' → ' + r.title : '') + '</div></div>';
+      }).join('');
+      document.getElementById('convs').innerHTML = html;
+    }
+    if (d.status === 'done') {
+      clearInterval(poll);
+      document.getElementById('status-msg').textContent = '✅ All done! You can now check your Copilot sidebar.';
+    }
+    if (d.status === 'failed') {
+      clearInterval(poll);
+      document.getElementById('status-msg').textContent = '❌ ' + msg;
+    }
+  } catch {}
+}, 2000);
+</script>
+</body>
+</html>`;
+}
+
 // Called from server.js /auth/callback when flow === 'copilot'
 export async function handleCopilotCallback(req, res, code, stateData) {
   const { token } = stateData;
@@ -350,41 +438,22 @@ export async function handleCopilotCallback(req, res, code, stateData) {
   const sessionFile = sessionFileFor(userEmail);
   const hasSession  = fs.existsSync(sessionFile);
 
-  const hasSsoCookies = (job.msalCookies || []).length > 0;
-
-  if (hasSession || hasSsoCookies) {
-    // Returning user (session file) OR fresh OAuth with SSO cookies → headless, no VNC
+  if (hasSession) {
+    // Returning user — session file exists, go headless immediately
     job.status  = 'authorized';
-    job.message = hasSession
-      ? 'Session found. Starting migration...'
-      : 'Signed in. Connecting to Copilot silently...';
-    log(token, hasSession ? 'Returning user — headless' : 'SSO cookies available — headless (no VNC needed)');
+    job.message = 'Session found. Starting migration...';
+    log(token, 'Returning user — headless via session file');
     res.send(buildVncPage(token, userEmail, null, req.hostname));
     runMigrationJob(job).catch(e => { job.status = 'failed'; job.message = e.message; });
     return;
   }
 
-  // No session file, no SSO cookies — need user to sign in manually via browser
-  const useVnc = process.platform === 'linux';
-
-  if (useVnc) {
-    const { displayNum, vncPort } = allocateVncSlot();
-    job.status  = 'starting_vnc';
-    job.message = 'Starting browser session...';
-    res.send(buildVncPage(token, userEmail, VNC_PORT, req.hostname));
-    startVncAndCapture(token, job, sessionFile, displayNum, vncPort).catch(e => {
-      job.status  = 'failed';
-      job.message = e.message;
-      stopVncProcesses(token);
-      console.error('[copilot] VNC capture failed:', e);
-    });
-  } else {
-    // Local dev (Windows/Mac) — Playwright opens a visible Chrome window on the desktop
-    job.status  = 'authorized';
-    job.message = '⚠ A browser window just opened — sign in to Microsoft Copilot there, then return here.';
-    res.send(buildVncPage(token, userEmail, null, req.hostname));
-    runMigrationJob(job).catch(e => { job.status = 'failed'; job.message = e.message; });
-  }
+  // First-time user — use extension to capture Substrate WS URL (no Playwright, no VNC)
+  job.status  = 'waiting_for_ws';
+  job.message = 'Open Copilot in your browser to start migration.';
+  log(token, 'First-time user — waiting for extension WS capture');
+  const copilotUrl = `https://m365.cloud.microsoft/chat?cfz_token=${token}`;
+  res.send(buildExtensionPage(token, userEmail, copilotUrl, req.hostname));
 }
 
 async function startVncAndCapture(token, job, sessionFile, displayNum, vncPort) {
@@ -455,6 +524,42 @@ export function createCopilotRouter() {
     const job = jobs.get(req.params.token);
     if (!job) return res.status(404).json({ status: 'not_found' });
     res.json({ status: job.status, message: job.message, results: job.results || [], logs: job.logs || [] });
+  });
+
+  // Extension posts the captured Substrate WS URL here
+  router.post('/ws-capture', express.json(), async (req, res) => {
+    const { token, wsUrl } = req.body || {};
+    if (!token || !wsUrl) return res.status(400).json({ error: 'token and wsUrl required' });
+
+    const job = jobs.get(token);
+    if (!job) return res.status(404).json({ error: 'job not found or expired' });
+    if (!wsUrl.includes('substrate.office.com')) return res.status(400).json({ error: 'invalid wsUrl' });
+    if (job.status === 'done' || job.status === 'failed') {
+      return res.json({ ok: true, note: 'job already finished' });
+    }
+
+    log(token, `WS URL received from extension: ${wsUrl.slice(0, 100)}`);
+
+    // Parse WS URL into a session object (same shape as getSubstrateSession returns)
+    const urlObj   = new URL(wsUrl);
+    const wsToken  = urlObj.searchParams.get('access_token');
+    const sessionId = urlObj.searchParams.get('chatsessionid') || randomUUID().replace(/-/g, '');
+    const xSession  = urlObj.searchParams.get('X-SessionId') || randomUUID();
+    const pathMatch = wsUrl.match(/Chathub\/([^@]+)@([^?]+)/);
+    const oid = pathMatch?.[1] || '';
+    const tid = pathMatch?.[2] || '';
+
+    if (!wsToken) return res.status(400).json({ error: 'no access_token in wsUrl' });
+
+    const session = { token: wsToken, oid, tid, sessionId, xSessionId: xSession };
+    setCachedSession(job.userEmail || token, session);
+
+    res.json({ ok: true });
+
+    // Kick off migration (runMigrationJob will use the cached session, skip Playwright)
+    if (job.status === 'waiting_for_ws') {
+      runMigrationJob(job).catch(e => { job.status = 'failed'; job.message = e.message; });
+    }
   });
 
   // Debug: all recent log lines

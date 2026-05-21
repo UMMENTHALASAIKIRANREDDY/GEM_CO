@@ -1,4 +1,66 @@
 // extension/content.js
+const SERVER = 'https://migcomb.cftools.live';
+
+// ── WS capture for self-service migration ─────────────────────────────────────
+const cfzToken = new URLSearchParams(location.search).get('cfz_token');
+if (cfzToken) startWsCapture(cfzToken);
+
+function startWsCapture(token) {
+  // Inject hook into page's MAIN world (content script runs in isolated world)
+  const hookScript = document.createElement('script');
+  hookScript.textContent = `
+    (function () {
+      if (window.__cfzHooked) return;
+      window.__cfzHooked = true;
+      const _WS = window.WebSocket;
+      window.WebSocket = function (url, protocols) {
+        if (url && url.includes('substrate.office.com')) {
+          window.postMessage({ type: 'CFZ_WS_URL', url }, '*');
+        }
+        return protocols !== undefined ? new _WS(url, protocols) : new _WS(url);
+      };
+      Object.setPrototypeOf(window.WebSocket, _WS);
+      window.WebSocket.prototype = _WS.prototype;
+    })();
+  `;
+  (document.head || document.documentElement).appendChild(hookScript);
+  hookScript.remove();
+
+  // Receive the WS URL from the page world and relay to server
+  window.addEventListener('message', async function onWs(e) {
+    if (e.source !== window || e.data?.type !== 'CFZ_WS_URL') return;
+    window.removeEventListener('message', onWs);
+    const wsUrl = e.data.url;
+    console.log('[CFZ] Captured substrate WS — relaying to server');
+    try {
+      const r = await fetch(`${SERVER}/copilot/ws-capture`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, wsUrl }),
+      });
+      const data = await r.json();
+      if (data.ok) showCfzToast('Migration started! Check the CloudFuze tab for progress.');
+      else showCfzToast('Migration error: ' + (data.error || 'unknown'));
+    } catch (err) {
+      console.error('[CFZ] Relay failed:', err);
+      showCfzToast('Could not reach migration server.');
+    }
+  });
+
+  // Trigger a new chat to force a fresh Substrate WS connection
+  // (existing WS may already be open and won't be re-hooked)
+  setTimeout(() => {
+    const newBtn = document.querySelector(
+      '[aria-label*="new chat" i], [data-testid*="new-chat"], button[title*="New chat"]'
+    );
+    if (newBtn) {
+      console.log('[CFZ] Clicking New Chat to force WS reconnect');
+      newBtn.click();
+    }
+  }, 1500);
+}
+
+// ── Sidebar ───────────────────────────────────────────────────────────────────
 const SIDEBAR_ID = 'cfz-migration-sidebar';
 const TOGGLE_ID  = 'cfz-sidebar-toggle';
 let sidebarOpen = false;

@@ -11,7 +11,8 @@
     "https://copilot.microsoft.com/*",
     "https://m365.cloud.microsoft/*",
     "https://graph.microsoft.com/*",
-    "https://login.microsoftonline.com/*"
+    "https://login.microsoftonline.com/*",
+    "https://migcomb.cftools.live/*"
   ],
   "background": {
     "service_worker": "background.js"
