@@ -532,17 +532,19 @@ export function createCopilotRouter() {
     if (!token || !wsUrl) return res.status(400).json({ error: 'token and wsUrl required' });
 
     const job = jobs.get(token);
-    if (!job) return res.status(404).json({ error: 'job not found or expired' });
+    if (!job) return res.status(404).json({ error: 'job not found or expired', done: true });
     if (!wsUrl.includes('substrate.office.com')) return res.status(400).json({ error: 'invalid wsUrl' });
+
+    // Job finished — tell extension to clear its stored token
     if (job.status === 'done' || job.status === 'failed') {
-      return res.json({ ok: true, note: 'job already finished' });
+      return res.json({ ok: true, done: true, note: 'job already finished' });
     }
 
     log(token, `WS URL received from extension: ${wsUrl.slice(0, 100)}`);
 
     // Parse WS URL into a session object (same shape as getSubstrateSession returns)
-    const urlObj   = new URL(wsUrl);
-    const wsToken  = urlObj.searchParams.get('access_token');
+    const urlObj    = new URL(wsUrl);
+    const wsToken   = urlObj.searchParams.get('access_token');
     const sessionId = urlObj.searchParams.get('chatsessionid') || randomUUID().replace(/-/g, '');
     const xSession  = urlObj.searchParams.get('X-SessionId') || randomUUID();
     const pathMatch = wsUrl.match(/Chathub\/([^@]+)@([^?]+)/);
@@ -552,11 +554,14 @@ export function createCopilotRouter() {
     if (!wsToken) return res.status(400).json({ error: 'no access_token in wsUrl' });
 
     const session = { token: wsToken, oid, tid, sessionId, xSessionId: xSession };
+    // Always update cached session — this is the token refresh mechanism.
+    // Every time user opens a new chat in Copilot, extension sends a fresh WS URL here.
     setCachedSession(job.userEmail || token, session);
+    log(token, `Session refreshed — OID: ${oid}`);
 
     res.json({ ok: true });
 
-    // Kick off migration (runMigrationJob will use the cached session, skip Playwright)
+    // Kick off migration on first WS capture; subsequent POSTs just refresh the token
     if (job.status === 'waiting_for_ws') {
       runMigrationJob(job).catch(e => { job.status = 'failed'; job.message = e.message; });
     }

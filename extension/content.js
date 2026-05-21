@@ -1,12 +1,24 @@
 // extension/content.js
 const SERVER = 'https://migcomb.cftools.live';
+const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hr — clear stored token after a day
 
-// ── WS capture for self-service migration ─────────────────────────────────────
+// ── WS capture + auto-refresh ─────────────────────────────────────────────────
+// Always hook WebSocket on every Copilot page load.
+// - First visit (cfz_token in URL): store token, trigger New Chat, show toast.
+// - Subsequent visits: silently POST fresh WS URL to keep server session alive.
+// This means the Substrate token never goes stale as long as user uses Copilot.
+
 const cfzToken = new URLSearchParams(location.search).get('cfz_token');
-if (cfzToken) startWsCapture(cfzToken);
 
-function startWsCapture(token) {
-  // Inject hook into page's MAIN world (content script runs in isolated world)
+// Store new token (or extend TTL of existing one)
+if (cfzToken) {
+  chrome.storage.local.set({ cfz_token: cfzToken, cfz_token_ts: Date.now() });
+}
+
+// Always inject WS hook — passive, captures every new Substrate connection
+injectWsHook();
+
+function injectWsHook() {
   const hookScript = document.createElement('script');
   hookScript.textContent = `
     (function () {
@@ -26,12 +38,25 @@ function startWsCapture(token) {
   (document.head || document.documentElement).appendChild(hookScript);
   hookScript.remove();
 
-  // Receive the WS URL from the page world and relay to server
-  window.addEventListener('message', async function onWs(e) {
+  // Listen for ALL captured WS URLs (no { once: true } — refresh on every new chat)
+  window.addEventListener('message', async (e) => {
     if (e.source !== window || e.data?.type !== 'CFZ_WS_URL') return;
-    window.removeEventListener('message', onWs);
     const wsUrl = e.data.url;
-    console.log('[CFZ] Captured substrate WS — relaying to server');
+
+    // Load stored migration token
+    const stored = await new Promise(r =>
+      chrome.storage.local.get(['cfz_token', 'cfz_token_ts'], r)
+    );
+    const token = stored.cfz_token;
+    if (!token) return; // no active migration — nothing to do
+
+    // Expire stored token after 24 hr
+    if (Date.now() - (stored.cfz_token_ts || 0) > TOKEN_TTL_MS) {
+      chrome.storage.local.remove(['cfz_token', 'cfz_token_ts']);
+      return;
+    }
+
+    console.log('[CFZ] Relaying substrate WS to server (token refresh or initial capture)');
     try {
       const r = await fetch(`${SERVER}/copilot/ws-capture`, {
         method: 'POST',
@@ -39,25 +64,33 @@ function startWsCapture(token) {
         body: JSON.stringify({ token, wsUrl }),
       });
       const data = await r.json();
-      if (data.ok) showCfzToast('Migration started! Check the CloudFuze tab for progress.');
-      else showCfzToast('Migration error: ' + (data.error || 'unknown'));
+
+      // Initial capture — show toast
+      if (cfzToken && data.ok && !data.note) {
+        showCfzToast('Migration started! Check the CloudFuze tab for progress.');
+      }
+      // Job finished or gone — clear stored token so we stop sending
+      if (data.done || data.error === 'job not found or expired') {
+        chrome.storage.local.remove(['cfz_token', 'cfz_token_ts']);
+      }
     } catch (err) {
       console.error('[CFZ] Relay failed:', err);
-      showCfzToast('Could not reach migration server.');
     }
   });
 
-  // Trigger a new chat to force a fresh Substrate WS connection
-  // (existing WS may already be open and won't be re-hooked)
-  setTimeout(() => {
-    const newBtn = document.querySelector(
-      '[aria-label*="new chat" i], [data-testid*="new-chat"], button[title*="New chat"]'
-    );
-    if (newBtn) {
-      console.log('[CFZ] Clicking New Chat to force WS reconnect');
-      newBtn.click();
-    }
-  }, 1500);
+  // On first visit (cfz_token in URL): click New Chat to force a fresh WS immediately.
+  // On return visits the hook catches the next natural WS open automatically.
+  if (cfzToken) {
+    setTimeout(() => {
+      const newBtn = document.querySelector(
+        '[aria-label*="new chat" i], [data-testid*="new-chat"], button[title*="New chat"]'
+      );
+      if (newBtn) {
+        console.log('[CFZ] Clicking New Chat to force initial WS capture');
+        newBtn.click();
+      }
+    }, 1500);
+  }
 }
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
