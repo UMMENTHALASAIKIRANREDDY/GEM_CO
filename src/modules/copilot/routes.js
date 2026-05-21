@@ -320,6 +320,13 @@ export async function handleCopilotCallback(req, res, code, stateData) {
   const job = jobs.get(token);
   if (!job) return res.status(404).send('<h2>Migration link expired or not found.</h2>');
 
+  // Guard against duplicate callback (browser retry / double redirect)
+  if (job.status !== 'pending') {
+    log(token, `Duplicate callback ignored (status: ${job.status})`);
+    return res.send(buildVncPage(token, job.userEmail || 'unknown', null, req.hostname));
+  }
+  job.status = 'processing_auth';
+
   const baseUrl = process.env.BASE_URL || 'http://localhost:4000';
 
   let userEmail = 'unknown';
@@ -602,7 +609,8 @@ async function getSubstrateSession(userEmail = null, sessionFile = null, ssoCook
   if (ssoCookies.length > 0 && !hasSession) {
     try {
       await context.addCookies(ssoCookies);
-      log(null, `Injected ${ssoCookies.length} SSO cookies into Playwright context`);
+      const names = ssoCookies.map(c => `${c.name}@${c.domain}`).join(', ');
+      log(null, `Injected ${ssoCookies.length} SSO cookies: ${names}`);
     } catch (e) {
       log(null, `SSO cookie injection warning: ${e.message}`);
     }
@@ -633,14 +641,67 @@ async function getSubstrateSession(userEmail = null, sessionFile = null, ssoCook
     // Now wait for user to complete sign-in manually (up to 5 min)
   }
 
-  // Wait for chat to load: 60s if headless (saved session), 5min if non-headless (manual sign-in)
-  const deadline = Date.now() + (headless ? 60000 : 300000);
+  // Wait for chat to load: 90s if headless, 5min if non-headless (manual sign-in)
+  const deadline = Date.now() + (headless ? 90000 : 300000);
+  let lastLoggedUrl = '';
   while (Date.now() < deadline) {
     const url = page.url();
+    if (url !== lastLoggedUrl) {
+      log(null, `[auth-nav] ${url.slice(0, 180)}`);
+      lastLoggedUrl = url;
+    }
+
+    // Reached Copilot chat — done
     if (url.includes('m365.cloud.microsoft') && !url.includes('login')) break;
-    const btn = page.locator('button#idSIButton9');
-    if (await btn.isVisible().catch(() => false)) await btn.click();
+
+    // "Stay signed in?" or "Next" button
+    const actionBtn = page.locator('button#idSIButton9, input#idSIButton9').first();
+    if (await actionBtn.isVisible({ timeout: 500 }).catch(() => false)) {
+      log(null, '[auth-nav] Clicking idSIButton9 (Stay signed in / Next)');
+      await actionBtn.click();
+      await page.waitForTimeout(1500);
+      continue;
+    }
+
+    if (url.includes('login.microsoftonline.com') || url.includes('login.microsoft.com')) {
+      // Account picker — click matching account tile
+      if (userEmail && userEmail !== 'unknown') {
+        const tile = page.locator([
+          `[data-test-id="${userEmail}"]`,
+          `div[title="${userEmail}"]`,
+          `div[data-email="${userEmail}"]`,
+          `[aria-label*="${userEmail}"]`,
+        ].join(', ')).first();
+        if (await tile.isVisible({ timeout: 500 }).catch(() => false)) {
+          log(null, `[auth-nav] Clicking account tile for ${userEmail}`);
+          await tile.click();
+          await page.waitForTimeout(1500);
+          continue;
+        }
+      }
+
+      // Email input — fill if empty
+      const emailInput = page.locator('input[name="loginfmt"]').first();
+      if (await emailInput.isVisible({ timeout: 500 }).catch(() => false)) {
+        const cur = await emailInput.inputValue().catch(() => '');
+        if (!cur && userEmail && userEmail !== 'unknown') {
+          log(null, `[auth-nav] Filling email: ${userEmail}`);
+          await emailInput.fill(userEmail);
+          await emailInput.press('Enter');
+          await page.waitForTimeout(2000);
+          continue;
+        }
+      }
+    }
+
     await page.waitForTimeout(2000);
+  }
+
+  const finalUrl = page.url();
+  log(null, `[auth-nav] Final URL: ${finalUrl.slice(0, 180)}`);
+  if (!finalUrl.includes('m365.cloud.microsoft') || finalUrl.includes('login')) {
+    await browser.close();
+    throw new Error(`Headless auth did not reach Copilot. Stuck at: ${finalUrl.slice(0, 120)}`);
   }
 
   await page.waitForSelector('[role="textbox"]', { timeout: 30000 });
