@@ -489,10 +489,11 @@ async function runMigrationJob(job) {
     job.message = 'Session ready (cached). Loading conversations...';
   } else {
     const hasSession = fs.existsSync(sessionFile);
-    job.message = hasSession
-      ? 'Capturing Copilot session (headless)...'
+    const willBeHeadless = process.env.PLAYWRIGHT_HEADLESS !== 'false' || hasSession || (job.msalCookies || []).length > 0;
+    job.message = willBeHeadless
+      ? 'Connecting to Copilot silently...'
       : '⚠ A browser window just opened — sign in to Microsoft Copilot there, then return here.';
-    log(t, `Playwright session capture starting — file: ${sessionFile}, headless: ${hasSession}`);
+    log(t, `Playwright session capture starting — file: ${sessionFile}, headless: ${willBeHeadless}`);
     try {
       session = await getSubstrateSession(job.userEmail, sessionFile, job.msalCookies || []);
       setCachedSession(job.userEmail, session);
