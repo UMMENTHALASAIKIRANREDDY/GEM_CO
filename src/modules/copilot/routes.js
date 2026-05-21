@@ -343,17 +343,21 @@ export async function handleCopilotCallback(req, res, code, stateData) {
   const sessionFile = sessionFileFor(userEmail);
   const hasSession  = fs.existsSync(sessionFile);
 
-  if (hasSession) {
-    // Returning user — headless, no VNC needed
+  const hasSsoCookies = (job.msalCookies || []).length > 0;
+
+  if (hasSession || hasSsoCookies) {
+    // Returning user (session file) OR fresh OAuth with SSO cookies → headless, no VNC
     job.status  = 'authorized';
-    job.message = 'Session found. Starting migration...';
-    log(token, 'Returning user — headless migration starting');
+    job.message = hasSession
+      ? 'Session found. Starting migration...'
+      : 'Signed in. Connecting to Copilot silently...';
+    log(token, hasSession ? 'Returning user — headless' : 'SSO cookies available — headless (no VNC needed)');
     res.send(buildVncPage(token, userEmail, null, req.hostname));
     runMigrationJob(job).catch(e => { job.status = 'failed'; job.message = e.message; });
     return;
   }
 
-  // New user — Linux/Docker: use Xvfb + noVNC. Windows (local dev): open visible browser directly.
+  // No session file, no SSO cookies — need user to sign in manually via browser
   const useVnc = process.platform === 'linux';
 
   if (useVnc) {
@@ -558,11 +562,16 @@ async function getSubstrateSession(userEmail = null, sessionFile = null, ssoCook
   if (!sessionFile) sessionFile = sessionFileFor(userEmail);
   const hasSession = fs.existsSync(sessionFile);
   const forceHeadless = process.env.PLAYWRIGHT_HEADLESS !== 'false';
-  const headless = forceHeadless || hasSession;
+  const headless = forceHeadless || hasSession || ssoCookies.length > 0;
 
   const launchOpts = {
     headless,
-    args: ['--disable-blink-features=AutomationControlled', '--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
+    args: [
+      '--disable-blink-features=AutomationControlled',
+      '--no-sandbox', '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu', '--use-gl=swiftshader',
+    ],
   };
   // Point Chromium at the Xvfb virtual display when running VNC session
   if (!headless && displayNum !== null) {
