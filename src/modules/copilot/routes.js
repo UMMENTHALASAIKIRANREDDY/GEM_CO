@@ -478,7 +478,8 @@ async function startVncAndCapture(token, job, sessionFile, displayNum, vncPort) 
   log(token, `VNC ready on port ${VNC_PORT} — waiting for user to sign in`);
 
   // Launch visible Playwright on the Xvfb display
-  const session = await getSubstrateSession(job.userEmail, sessionFile, job.msalCookies || [], displayNum);
+  // VNC: user signs in manually — forceVisible=true prevents headless even if session file exists
+  const session = await getSubstrateSession(job.userEmail, sessionFile, [], displayNum, true);
   setCachedSession(job.userEmail, session);
   log(token, `Session captured via VNC — OID: ${session.oid}`);
 
@@ -831,11 +832,11 @@ async function runMigrationJob(job) {
 
 // ── Playwright session capture ────────────────────────────────────────────────
 
-async function getSubstrateSession(userEmail = null, sessionFile = null, ssoCookies = [], displayNum = null) {
+async function getSubstrateSession(userEmail = null, sessionFile = null, ssoCookies = [], displayNum = null, forceVisible = false) {
   if (!sessionFile) sessionFile = sessionFileFor(userEmail);
   const hasSession = fs.existsSync(sessionFile);
   const forceHeadless = process.env.PLAYWRIGHT_HEADLESS !== 'false';
-  const headless = forceHeadless || hasSession || ssoCookies.length > 0;
+  const headless = forceVisible ? false : (forceHeadless || hasSession || ssoCookies.length > 0);
 
   const launchOpts = {
     headless,
