@@ -42,6 +42,22 @@ let currentTenantId = null;
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 
+// CORS for extension — fetch from m365.cloud.microsoft to our server
+const ALLOWED_ORIGINS = [
+  'https://m365.cloud.microsoft',
+  'https://copilot.microsoft.com',
+];
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  }
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
 app.use(express.json());
 app.use(session({
   secret: process.env.SESSION_SECRET || 'gemco-session-2026',
