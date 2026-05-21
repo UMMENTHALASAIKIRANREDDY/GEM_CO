@@ -21,7 +21,7 @@ window.addEventListener('message', async (e) => {
   if (!token) return;
 
   if (Date.now() - (stored.cfz_token_ts || 0) > TOKEN_TTL_MS) {
-    chrome.storage.local.remove(['cfz_token', 'cfz_token_ts']);
+    chrome.storage.local.remove(['cfz_token', 'cfz_token_ts', 'cfz_ws_captured']);
     return;
   }
 
@@ -35,10 +35,12 @@ window.addEventListener('message', async (e) => {
     const data = await r.json();
 
     if (data.ok && !data.note) {
+      // Mark WS as captured — prevents re-probing on page refresh
+      chrome.storage.local.set({ cfz_ws_captured: true });
       showCfzToast('Migration started! Check the CloudFuze tab for progress.');
     }
     if (data.done || data.error === 'job not found or expired') {
-      chrome.storage.local.remove(['cfz_token', 'cfz_token_ts']);
+      chrome.storage.local.remove(['cfz_token', 'cfz_token_ts', 'cfz_ws_captured']);
     }
   } catch (err) {
     console.error('[CFZ] Relay failed:', err);
@@ -46,14 +48,18 @@ window.addEventListener('message', async (e) => {
 });
 
 // On every Copilot page load with an active migration token:
-// click New Chat then auto-send a probe message to trigger the Substrate WebSocket.
-chrome.storage.local.get(['cfz_token', 'cfz_token_ts'], (stored) => {
+// send a probe message to trigger the Substrate WebSocket — but ONLY if not already captured.
+chrome.storage.local.get(['cfz_token', 'cfz_token_ts', 'cfz_ws_captured'], (stored) => {
   if (!stored.cfz_token) return;
   if (Date.now() - (stored.cfz_token_ts || 0) > TOKEN_TTL_MS) {
-    chrome.storage.local.remove(['cfz_token', 'cfz_token_ts']);
+    chrome.storage.local.remove(['cfz_token', 'cfz_token_ts', 'cfz_ws_captured']);
     return;
   }
-  // Give the SPA time to render before interacting
+  // WS already captured — passive hook handles token refresh on 401, no re-probe needed
+  if (stored.cfz_ws_captured) {
+    console.log('[CFZ] WS already captured — passive hook active, no probe needed');
+    return;
+  }
   setTimeout(triggerWebSocket, 2000);
 });
 

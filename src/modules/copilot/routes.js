@@ -248,6 +248,14 @@ const _pollInterval = setInterval(async () => {
       const convEl = document.getElementById('convs');
       if (convEl) convEl.innerHTML = html;
     }
+    // Update checklist dots (only present on extension page)
+    if (['migrating','session_captured','capturing_session','done'].includes(d.status)) {
+      document.getElementById('d2')?.classList.add('done');
+    }
+    if (d.status === 'done') {
+      document.getElementById('d3')?.classList.add('done');
+    }
+
     if (d.status === 'done') {
       clearInterval(_pollInterval);
       document.querySelectorAll('.status-msg').forEach(el => el.textContent = '✅ Done! Redirecting to Copilot...');
@@ -343,13 +351,8 @@ function buildAutoOpenPage(token, userEmail, copilotUrl) {
     <div class="check-item"><span class="dot" id="d3"></span> Migration starts — progress shows here</div>
   </div>
 
-  <div id="convs" style="text-align:left;margin-top:24px;max-width:520px;margin-left:auto;margin-right:auto"></div>
-
-  <p style="margin-top:32px;font-size:12px;color:#aaa">
-    Extension not installed?
-    <a href="/copilot/extension.zip" style="color:#0078d4">Download it here</a>
-    — then reload this page and try again.
-  </p>
+  <p class="status-msg" style="font-size:13px;color:#666;margin-top:16px;min-height:20px"></p>
+  <div id="convs" style="text-align:left;margin-top:8px;max-width:520px;margin-left:auto;margin-right:auto"></div>
 </div>
 <script>
 document.getElementById('open-btn').addEventListener('click', () => {
