@@ -306,27 +306,55 @@ function buildAutoOpenPage(token, userEmail, copilotUrl) {
   return `<!DOCTYPE html>
 <html>
 <head>
-<title>CloudFuze — Migrating</title>
+<title>CloudFuze — Open Copilot</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<style>${sharedCss}</style>
+<style>
+  ${sharedCss}
+  .big-btn{display:inline-block;background:#0078d4;color:#fff;padding:14px 32px;border-radius:6px;
+    font-size:16px;font-weight:700;text-decoration:none;margin:24px 0 8px;
+    box-shadow:0 2px 8px rgba(0,120,212,.3);transition:background .15s}
+  .big-btn:hover{background:#106ebe}
+  .checklist{text-align:left;max-width:380px;margin:28px auto 0;background:#fff;
+    border:1px solid #e0e0e0;border-radius:8px;padding:16px 20px}
+  .checklist p{font-size:12px;font-weight:600;color:#242424;margin-bottom:10px}
+  .check-item{font-size:13px;color:#555;margin:6px 0;display:flex;align-items:center;gap:8px}
+  .dot{width:8px;height:8px;border-radius:50%;background:#e0e0e0;flex-shrink:0}
+  .dot.done{background:#107c10}
+</style>
 </head>
 <body>
 <div class="bar">CloudFuze Copilot Migration<small>Signed in as ${userEmail}</small></div>
-<div class="wrap" style="text-align:center;padding-top:60px">
-  <div class="spinner"></div>
-  <p class="status-msg">Opening Copilot...</p>
-  <p style="font-size:12px;color:#999;margin-top:12px">
-    A Copilot tab will open automatically. You can close it once it loads.
+<div class="wrap" style="text-align:center;padding-top:48px">
+
+  <p style="font-size:15px;font-weight:600;color:#242424;margin-bottom:4px">Signed in ✓</p>
+  <p style="font-size:13px;color:#666;margin-bottom:0">
+    Make sure the <b>CloudFuze extension</b> is installed, then open Copilot below.
   </p>
-  <p style="margin-top:20px;font-size:13px;color:#555">
-    Copilot didn't open?
-    <a href="${copilotUrl}" target="_blank" style="color:#0078d4">Click here</a>
+
+  <a class="big-btn" href="${copilotUrl}" target="_blank" id="open-btn">
+    Open Microsoft Copilot →
+  </a>
+  <p style="font-size:12px;color:#999;margin-top:4px">Opens in a new tab — come back here after it loads.</p>
+
+  <div class="checklist">
+    <p>What happens next:</p>
+    <div class="check-item"><span class="dot" id="d1"></span> Copilot tab opens with your account</div>
+    <div class="check-item"><span class="dot" id="d2"></span> Extension captures the session automatically</div>
+    <div class="check-item"><span class="dot" id="d3"></span> Migration starts — progress shows here</div>
+  </div>
+
+  <div id="convs" style="text-align:left;margin-top:24px;max-width:520px;margin-left:auto;margin-right:auto"></div>
+
+  <p style="margin-top:32px;font-size:12px;color:#aaa">
+    Extension not installed?
+    <a href="/copilot/extension.zip" style="color:#0078d4">Download it here</a>
+    — then reload this page and try again.
   </p>
-  <div id="convs" style="text-align:left;margin-top:24px"></div>
 </div>
 <script>
-// Auto-open Copilot in new tab immediately
-window.open(${JSON.stringify(copilotUrl)}, '_blank');
+document.getElementById('open-btn').addEventListener('click', () => {
+  setTimeout(() => document.getElementById('d1').classList.add('done'), 1500);
+});
 ${pollScript(token)}
 </script>
 </body>
