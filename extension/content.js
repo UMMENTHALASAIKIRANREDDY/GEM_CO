@@ -34,7 +34,7 @@ window.addEventListener('message', async (e) => {
     });
     const data = await r.json();
 
-    if (cfzToken && data.ok && !data.note) {
+    if (data.ok && !data.note) {
       showCfzToast('Migration started! Check the CloudFuze tab for progress.');
     }
     if (data.done || data.error === 'job not found or expired') {
@@ -45,24 +45,76 @@ window.addEventListener('message', async (e) => {
   }
 });
 
-// Click New Chat whenever migration is active — works on first load AND after Copilot's own login redirect
-// (cfz_token may not be in URL after redirect, but IS in storage)
+// On every Copilot page load with an active migration token:
+// click New Chat then auto-send a probe message to trigger the Substrate WebSocket.
 chrome.storage.local.get(['cfz_token', 'cfz_token_ts'], (stored) => {
   if (!stored.cfz_token) return;
   if (Date.now() - (stored.cfz_token_ts || 0) > TOKEN_TTL_MS) {
     chrome.storage.local.remove(['cfz_token', 'cfz_token_ts']);
     return;
   }
-  setTimeout(() => {
-    const newBtn = document.querySelector(
-      '[aria-label*="new chat" i], [data-testid*="new-chat"], button[title*="New chat"]'
-    );
-    if (newBtn) {
-      console.log('[CFZ] Clicking New Chat to force WS capture');
-      newBtn.click();
-    }
-  }, 2000);
+  // Give the SPA time to render before interacting
+  setTimeout(triggerWebSocket, 2000);
 });
+
+async function triggerWebSocket() {
+  // Click New Chat so we start fresh (not mid-conversation)
+  const newBtn = document.querySelector(
+    '[aria-label*="new chat" i], [data-testid*="new-chat"], button[title*="New chat"]'
+  );
+  if (newBtn) {
+    newBtn.click();
+    await sleep(1200);
+  }
+
+  // Find the chat input — try multiple selectors
+  let input = null;
+  for (let i = 0; i < 8; i++) {
+    input =
+      document.getElementById('m365-chat-editor-target-element') ||
+      document.querySelector('[placeholder="Message Copilot"]') ||
+      document.querySelector('[aria-placeholder="Message Copilot"]') ||
+      document.querySelector('[aria-label="Message Copilot"]') ||
+      [...document.querySelectorAll('[contenteditable="true"]')].find(el => {
+        const r = el.getBoundingClientRect();
+        return r.width > 100 && r.height > 20 && r.bottom > window.innerHeight * 0.4;
+      });
+    if (input) break;
+    await sleep(500);
+  }
+
+  if (!input) {
+    console.log('[CFZ] Could not find Copilot input — user must send a message manually');
+    return;
+  }
+
+  input.focus();
+
+  // Inject probe text via synthetic paste (works with most SPA editors)
+  try {
+    const dt = new DataTransfer();
+    dt.setData('text/plain', 'Hi');
+    input.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
+  } catch (_) {
+    try { document.execCommand('insertText', false, 'Hi'); } catch (_) {}
+  }
+
+  await sleep(400);
+
+  // Send — prefer the Send button, fall back to Enter key
+  const sendBtn = document.querySelector(
+    'button[aria-label*="send" i], button[data-testid*="send"], button[aria-label*="Submit" i]'
+  );
+  if (sendBtn && !sendBtn.disabled) {
+    sendBtn.click();
+    console.log('[CFZ] Probe message sent via button — WS will be captured');
+  } else {
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+    console.log('[CFZ] Probe message sent via Enter — WS will be captured');
+  }
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 function showCfzToast(msg) {
   const existing = document.getElementById('cfz-toast');
@@ -79,11 +131,3 @@ function showCfzToast(msg) {
   document.body.appendChild(toast);
   setTimeout(() => toast.remove(), 4000);
 }
-
-// Re-inject on SPA navigation (Copilot navigates without full page reload)
-let lastUrl = location.href;
-new MutationObserver(() => {
-  if (location.href !== lastUrl) {
-    lastUrl = location.href;
-  }
-}).observe(document.body, { subtree: true, childList: true });
