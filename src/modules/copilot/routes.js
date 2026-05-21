@@ -338,9 +338,9 @@ function buildAutoOpenPage(token, userEmail, copilotUrl) {
 
   <div class="checklist">
     <p>What happens next:</p>
-    <div class="check-item"><span class="dot" id="d1"></span> Copilot tab opens with your account</div>
-    <div class="check-item"><span class="dot" id="d2"></span> Extension captures the session automatically</div>
-    <div class="check-item"><span class="dot" id="d3"></span> Migration starts — progress shows here</div>
+    <div class="check-item"><span class="dot" id="d1"></span> Copilot tab opens — sign in if prompted</div>
+    <div class="check-item"><span class="dot" id="d2"></span> Send any message in Copilot (e.g. "Hi")</div>
+    <div class="check-item"><span class="dot" id="d3"></span> Migration starts automatically — progress shows here</div>
   </div>
 
   <div id="convs" style="text-align:left;margin-top:24px;max-width:520px;margin-left:auto;margin-right:auto"></div>
