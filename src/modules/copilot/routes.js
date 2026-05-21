@@ -611,8 +611,24 @@ export function createCopilotRouter() {
       <div class="card-icon">🖥</div>
       <div class="card-title">Browser Window</div>
       <div class="card-desc">No extension needed. A browser window opens on our server — sign in to Copilot there.</div>
-      <span class="card-badge warn">Requires display</span>
+      <span class="card-badge warn">No extension needed</span>
     </a>
+  </div>
+
+  <div style="margin-top:24px;background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:16px">
+    <p style="font-size:13px;font-weight:600;color:#242424;margin-bottom:8px">🧩 Don't have the extension yet?</p>
+    <p style="font-size:12px;color:#666;margin-bottom:12px;line-height:1.5">
+      Download, unzip, then load it in Chrome (takes 30 seconds):
+    </p>
+    <a href="/copilot/extension.zip" style="display:inline-block;background:#0078d4;color:#fff;padding:8px 16px;border-radius:4px;font-size:13px;font-weight:600;text-decoration:none;margin-bottom:10px">
+      ⬇ Download Extension
+    </a>
+    <ol style="font-size:12px;color:#555;line-height:1.8;padding-left:18px">
+      <li>Open <b>chrome://extensions</b></li>
+      <li>Enable <b>Developer mode</b> (top right toggle)</li>
+      <li>Click <b>Load unpacked</b> → select the unzipped folder</li>
+      <li>Come back here and click the Extension option above</li>
+    </ol>
   </div>
 </div>
 </body>
@@ -716,6 +732,15 @@ export function createCopilotRouter() {
   });
 
   // Debug: all recent log lines
+  // Download the Chrome extension zip
+  router.get('/extension.zip', (req, res) => {
+    const zipPath = path.join(process.cwd(), 'extension.zip');
+    if (!fs.existsSync(zipPath)) {
+      return res.status(404).send('Extension zip not found. Run: cd /app && zip -r extension.zip extension/');
+    }
+    res.download(zipPath, 'CloudFuze-Migration-Extension.zip');
+  });
+
   router.get('/logs', (req, res) => {
     res.type('text/plain').send(logBuffer.join('\n'));
   });

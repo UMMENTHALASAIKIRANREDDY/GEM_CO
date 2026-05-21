@@ -17,6 +17,10 @@ RUN npx playwright install chromium
 COPY server.js migrate.js ./
 COPY src/ ./src/
 COPY ui/ ./ui/
+COPY extension/ ./extension/
+
+# Pre-zip extension so users can download and load unpacked in Chrome
+RUN cd /app && zip -r extension.zip extension/
 
 RUN mkdir -p /app/sessions /app/uploads /app/customers
 
