@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import net from 'net';
 
 // Prevent unhandled rejections from crashing the server
 process.on('unhandledRejection', (reason) => {
@@ -104,6 +105,10 @@ app.get('/', (req, res) => {
 });
 
 app.use(express.static(path.join(__dirname, 'ui')));
+
+// Serve noVNC static files for Copilot self-service VNC sessions
+const NOVNC_STATIC = process.env.NOVNC_PATH || '/usr/share/novnc';
+app.use('/novnc', express.static(NOVNC_STATIC));
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -726,9 +731,27 @@ connectMongo().then(async () => {
 
   await restoreGoogleSessions();
   await restoreMsSessions();
-  app.listen(PORT, () => {
+  const httpServer = app.listen(PORT, () => {
     console.log(`\nCloudFuze Migration`);
     console.log(`Open: http://localhost:${PORT}\n`);
+  });
+
+  // Proxy /novnc/websockify WebSocket upgrades → websockify on port 6080
+  httpServer.on('upgrade', (req, socket, head) => {
+    if (!req.url.startsWith('/novnc/websockify')) return;
+    const upstream = net.createConnection(6080, '127.0.0.1');
+    upstream.on('connect', () => {
+      const upstreamPath = req.url.replace('/novnc', '');
+      let raw = `${req.method} ${upstreamPath} HTTP/1.1\r\n`;
+      for (const [k, v] of Object.entries(req.headers)) raw += `${k}: ${v}\r\n`;
+      raw += '\r\n';
+      upstream.write(raw);
+      if (head?.length) upstream.write(head);
+      upstream.pipe(socket);
+      socket.pipe(upstream);
+    });
+    upstream.on('error', () => socket.destroy());
+    socket.on('error', () => upstream.destroy());
   });
 }).catch(err => {
   console.error('Failed to connect to MongoDB:', err.message);
