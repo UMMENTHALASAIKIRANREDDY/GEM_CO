@@ -914,6 +914,63 @@ export function createG2CRouter(deps) {
                 convWithResponses = { ...convWithResponses, turns: resolvedTurns };
               }
 
+              // Phase 1 (inline data fences) + Phase 2 (Python regen) recovery
+              // from Gemini's response text. Same module as G2G. Uploads each
+              // recovered file to the destination user's OneDrive and attaches
+              // to the matching turn so the OneNote page hyperlinks it.
+              try {
+                const { recoverFilesFromConversation, cleanupWorkDirs } = await import('../gemini/fileRegenerator.js');
+                const recovered = await recoverFilesFromConversation(convWithResponses);
+                if (recovered.length > 0) {
+                  const fs = await import('fs');
+                  const msToken = await getValidToken(appUserId);
+                  let regenCount = 0;
+                  for (const f of recovered) {
+                    if (f._failed) {
+                      errors.push({ conversation: conv.title, error: `Gemini regen ${f.sourceTag}: ${f.reason}` });
+                      emit('warn', `    Gemini regen failed (${f.sourceTag}): ${f.reason}`);
+                      continue;
+                    }
+                    try {
+                      const buf = f.buffer || fs.default.readFileSync(f.fullPath);
+                      const safeName = (f.name || 'file').replace(/[\\/:*?"<>|]/g, '_');
+                      const encoded = encodeURIComponent(`GeminiMigration/${safeName}`);
+                      const url = `https://graph.microsoft.com/v1.0/users/${m365Email}/drive/root:/${encoded}:/content`;
+                      const upRes = await fetch(url, {
+                        method: 'PUT',
+                        headers: { Authorization: `Bearer ${msToken}`, 'Content-Type': f.mime || 'application/octet-stream' },
+                        body: buf,
+                      });
+                      if (!upRes.ok) {
+                        emit('warn', `    Gemini regen upload failed for "${f.name}": ${upRes.status}`);
+                        continue;
+                      }
+                      const upData = await upRes.json();
+                      const webUrl = upData.webUrl || upData['@microsoft.graph.downloadUrl'] || null;
+                      const turn = convWithResponses.turns?.[f.turnIndex];
+                      if (turn) {
+                        if (!turn.driveFiles) turn.driveFiles = [];
+                        turn.driveFiles.push({
+                          fileName: f.name,
+                          mimeType: f.mime,
+                          oneDriveUrl: webUrl,
+                          _imageBuffer: (f.mime || '').startsWith('image/') ? buf : null,
+                        });
+                      }
+                      regenCount++;
+                      emit('success', `    Gemini-regenerated: "${f.name}" (${buf.length} bytes) → ${m365Email}'s OneDrive`);
+                    } catch (e) {
+                      emit('warn', `    Gemini regen upload error for "${f.name}": ${e.message}`);
+                      errors.push({ conversation: conv.title, error: `Gemini regen upload "${f.name}": ${e.message}` });
+                    }
+                  }
+                  if (regenCount > 0) emit('info', `  Regenerated ${regenCount} file(s) from Gemini chat content for "${conv.title?.slice(0, 50)}"`);
+                  cleanupWorkDirs(recovered);
+                }
+              } catch (err) {
+                emit('warn', `  Gemini file recovery skipped for "${conv.title}": ${err.message}`);
+              }
+
               await creator.createPage(m365Email, convWithResponses, visualReports[gEmail] || []);
               pagesCreated++;
               emit('success', `  Page created: ${conv.title?.slice(0, 60)}`);
