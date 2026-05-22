@@ -1,0 +1,37 @@
+# Python libraries the Copilot / Gemini file-regeneration pipelines need
+# to re-execute generated code locally and recover the bytes.
+# Keep this in sync with the regen code's expected imports.
+
+# Data manipulation / spreadsheets
+pandas
+numpy
+openpyxl
+xlsxwriter
+
+# Office documents
+python-docx
+python-pptx
+
+# PDF generation
+weasyprint
+reportlab
+PyPDF2
+pypdf
+
+# Images
+Pillow
+matplotlib
+seaborn
+
+# Templating / markup
+jinja2
+beautifulsoup4
+lxml
+markdown
+
+# Data formats
+pyyaml
+toml
+
+# HTTP / general utility (used by some Gemini blocks for self-contained downloads)
+requests

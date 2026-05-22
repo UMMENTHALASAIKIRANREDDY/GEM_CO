@@ -369,15 +369,48 @@ export function createG2CRouter(deps) {
   // Google Vault export
   router.post('/google/vault-export', requireGoogleAuth, async (req, res) => {
     try {
-      const { user_emails } = req.body;
+      const { user_emails, accountId } = req.body;
       if (!user_emails || user_emails.length === 0) return res.status(400).json({ error: 'user_emails array required' });
       const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
-      const auth = getGoogleOAuth2Client(appUserId);
-      // Force token refresh — restored sessions can have stale access_token,
-      // first export attempt would fail until user disconnect/reconnect.
-      try { await auth.getAccessToken(); } catch (e) {
-        return res.status(401).json({ error: 'Google session expired. Please sign out and sign in again.' });
+      // IMPORTANT: pass accountId so we use the SOURCE admin's identity for
+      // Vault search. Vault permissions are per-tenant — using the wrong
+      // admin returns "No permission to search accounts" for cross-tenant
+      // user lists.
+      const { getGoogleAccounts } = await import('../../core/auth/googleOAuth.js');
+      const accounts = getGoogleAccounts(appUserId);
+      const picked = accountId
+        ? accounts.find(a => a.accountId === accountId)
+        : accounts[0];
+      if (!picked) {
+        return res.status(400).json({ error: `Google account ${accountId || '(default)'} not connected. Sign in first.` });
       }
+      // PREFER service-account auth via domain-wide delegation: it impersonates
+      // the picked admin without requiring periodic admin reauthentication.
+      // This is what makes the connection "persist forever after one sign-in"
+      // — the JWT we sign refreshes itself on every API call. Falls back to
+      // the OAuth2 client (requires periodic reauth) if DWD isn't configured.
+      let auth;
+      let usingServiceAccount = false;
+      try {
+        const { getVaultServiceAccountAuth } = await import('../c2g/googleService.js');
+        auth = getVaultServiceAccountAuth(picked.email);
+        // Force a token mint to fail fast if DWD isn't configured for the
+        // ediscovery scope.
+        const client = await auth.getClient();
+        await client.getAccessToken();
+        usingServiceAccount = true;
+      } catch (svcErr) {
+        // DWD isn't set up for ediscovery scope — fall back to user OAuth.
+        // This will work but is subject to Google's reauth policy.
+        dbLog.warn(`vault-export: service-account auth unavailable (${svcErr.message?.slice(0, 200)}) — falling back to OAuth which may require admin re-sign-in.`);
+        try {
+          auth = getGoogleOAuth2Client(appUserId, accountId || null);
+          await auth.getAccessToken();
+        } catch (e) {
+          return res.status(401).json({ error: `Google session expired for ${picked.email}. Reconnect this account, OR have your Workspace admin grant the ediscovery scope to the service account for domain-wide delegation (one-time setup that avoids future reauthentication).` });
+        }
+      }
+      dbLog.info(`vault-export: admin=${picked.email} auth=${usingServiceAccount ? 'service-account (no reauth)' : 'oauth (may reauth)'} users=${user_emails.length}: ${user_emails.slice(0, 5).join(', ')}${user_emails.length > 5 ? `, ...+${user_emails.length - 5} more` : ''}`);
       const exporter = new VaultExporter(auth);
       const matter = await exporter.createMatter(`GEM_CO Export ${new Date().toISOString()}`);
       const exportData = await exporter.createExport(matter.matterId, user_emails);

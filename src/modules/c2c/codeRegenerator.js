@@ -25,7 +25,10 @@ import { getLogger } from '../../utils/logger.js';
 
 const logger = getLogger('c2c:code-regen');
 
-const PYTHON_TIMEOUT_MS = 60_000;
+// Per-Python-block timeout. Kept aggressive (20s) so a single hanging block
+// can't block downstream work like DOCX/OneNote conversation upload, which is
+// the most important migration output. Bump via env var if needed.
+const PYTHON_TIMEOUT_MS = parseInt(process.env.PYTHON_BLOCK_TIMEOUT_MS || '20000', 10);
 const PYTHON_BIN = process.env.C2C_PYTHON_BIN || 'python';
 
 /**
@@ -88,6 +91,70 @@ export function extractPythonCodeBlocks(interactionOrItems) {
 }
 
 /**
+ * Defensive preprocessor for any Python source we re-execute.
+ *
+ * Used by Copilot regen (C2C, C2G) and Gemini regen (G2C, G2G). Catches
+ * every export-format quirk that causes spurious first-run failures:
+ *
+ *   1) Leading whitespace from XML pretty-print  → IndentationError
+ *   2) Smart quotes (' ' " ")                    → SyntaxError invalid char
+ *   3) Em / en dashes (— –) in code              → SyntaxError invalid char
+ *   4) Non-breaking spaces (U+00A0)              → spurious IndentationError
+ *   5) Byte Order Mark at start                  → SyntaxError on line 1
+ *   6) Windows CRLF line endings                 → normalize for consistency
+ *   7) Zero-width chars (U+200B, U+FEFF, …)      → invisible breakage
+ */
+export function sanitizePythonCode(rawCode) {
+  if (typeof rawCode !== 'string') return rawCode;
+  let code = rawCode;
+  if (code.charCodeAt(0) === 0xFEFF) code = code.slice(1);
+  code = code.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  // Smart quotes → straight
+  code = code.replace(/[‘’‚‛]/g, "'");
+  code = code.replace(/[“”„‟]/g, '"');
+  // Em / en dashes → ASCII hyphen
+  code = code.replace(/[—–]/g, '-');
+  // NBSP → regular space
+  code = code.replace(/ /g, ' ');
+  // Zero-width chars
+  code = code.replace(/[​‌‍⁠﻿]/g, '');
+  // Common leading-whitespace prefix dedent
+  const lines = code.split('\n');
+  const nonEmpty = lines.filter(l => l.trim());
+  if (nonEmpty.length) {
+    let prefix = nonEmpty[0].match(/^[ \t]*/)[0];
+    for (let i = 1; i < nonEmpty.length && prefix; i++) {
+      const cur = nonEmpty[i].match(/^[ \t]*/)[0];
+      while (prefix && !cur.startsWith(prefix)) prefix = prefix.slice(0, -1);
+    }
+    if (prefix) code = lines.map(l => l.startsWith(prefix) ? l.slice(prefix.length) : l).join('\n');
+  }
+  return code;
+}
+
+/**
+ * Classify Python stderr into a short, customer-readable reason for
+ * migration reports. Used by both Copilot and Gemini regen paths.
+ */
+export function classifyPythonError(stderr) {
+  if (typeof stderr !== 'string') return 'unknown';
+  if (/IndentationError/i.test(stderr)) return 'IndentationError';
+  if (/SyntaxError.*invalid character/i.test(stderr)) return 'invalid character (smart quote / em dash)';
+  if (/SyntaxError/i.test(stderr)) return 'SyntaxError';
+  if (/ModuleNotFoundError|No module named/i.test(stderr)) {
+    const m = stderr.match(/No module named ['"]?([^'"\s]+)/i);
+    return m ? `missing library: ${m[1]}` : 'missing library';
+  }
+  if (/PermissionError/i.test(stderr)) return 'PermissionError';
+  if (/FileNotFoundError/i.test(stderr)) return 'FileNotFoundError (missing input)';
+  if (/NameError/i.test(stderr)) return 'NameError';
+  if (/KeyError/i.test(stderr)) return 'KeyError';
+  if (/ConnectionError|HTTPError|URLError|timeout/i.test(stderr)) return 'network call (needs credentials)';
+  if (/Killed|SIGKILL/i.test(stderr)) return 'execution timeout';
+  return 'runtime error';
+}
+
+/**
  * Run a Python source string in a temp working directory.
  *  - /mnt/data/* paths are remapped to the temp dir
  *  - Process is killed after PYTHON_TIMEOUT_MS
@@ -97,7 +164,12 @@ export function extractPythonCodeBlocks(interactionOrItems) {
  */
 export async function runPythonAndCaptureOutputs(pythonCode, existingWorkDir = null) {
   const workDir = existingWorkDir || fs.mkdtempSync(path.join(os.tmpdir(), 'c2c-regen-'));
-  const patched = pythonCode.replace(/\/mnt\/data/g, workDir.replace(/\\/g, '/'));
+  // Defensive preprocessing — every Python block that flows through this
+  // sandbox (from Copilot, Gemini, anywhere) gets normalized so common
+  // export quirks (XML indent, smart quotes, em dashes, BOM, NBSP, CRLF)
+  // don't cause spurious failures on the first run.
+  const sanitized = sanitizePythonCode(pythonCode);
+  const patched = sanitized.replace(/\/mnt\/data/g, workDir.replace(/\\/g, '/'));
   const scriptPath = path.join(workDir, '_copilot_code.py');
   fs.writeFileSync(scriptPath, patched);
 

@@ -48,7 +48,7 @@ function getServiceAccountKeyPath() {
   );
 }
 
-export function getServiceAccountAuth(userEmail) {
+export function getServiceAccountAuth(userEmail, scopes = ['https://www.googleapis.com/auth/drive']) {
   // Priority 1: inline JSON in env var (base64 or raw) — works on cloud deployments
   const inlineJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_JSON;
   if (inlineJson) {
@@ -62,7 +62,7 @@ export function getServiceAccountAuth(userEmail) {
     }
     return new GoogleAuth({
       credentials,
-      scopes: ['https://www.googleapis.com/auth/drive'],
+      scopes,
       clientOptions: { subject: userEmail },
     });
   }
@@ -78,9 +78,22 @@ export function getServiceAccountAuth(userEmail) {
   }
   return new GoogleAuth({
     keyFile: keyPath,
-    scopes: ['https://www.googleapis.com/auth/drive'],
+    scopes,
     clientOptions: { subject: userEmail },
   });
+}
+
+/**
+ * Service-account auth scoped for Google Vault. Service account must have
+ * domain-wide delegation enabled and the ediscovery scope authorized in
+ * the customer's Workspace admin console. With DWD there's no admin-side
+ * reauthentication required — the JWT we sign refreshes itself forever.
+ */
+export function getVaultServiceAccountAuth(adminEmail) {
+  return getServiceAccountAuth(adminEmail, [
+    'https://www.googleapis.com/auth/ediscovery',
+    'https://www.googleapis.com/auth/devstorage.read_only',
+  ]);
 }
 
 // ── Drive helpers ────────────────────────────────────────────────────

@@ -23,6 +23,10 @@ import { google } from 'googleapis';
 import { VaultReader } from '../../g2c/vaultReader.js';
 import { FileCorrelator } from '../../g2c/fileCorrelator.js';
 import { getServiceAccountAuth } from '../../c2g/googleService.js';
+import {
+  recoverFilesFromConversation,
+  cleanupWorkDirs,
+} from '../../gemini/fileRegenerator.js';
 
 // Google Docs editor MIME → export format
 const EXPORT_FORMATS = {
@@ -585,6 +589,79 @@ export async function runG2GMigration(
         }
       }
       if (migratedAssetCount > 0) onLog({ type: 'info', message: `Migrated ${migratedAssetCount} attached file(s) for ${sourceEmail}` });
+
+      // --- Phase 1 + Phase 2 file recovery from Vault response text ---
+      // Files Gemini generated inside the chat (inline CSV/JSON/HTML, or
+      // Python-executed PDFs/XLSXs) live ONLY as text in Vault. FileCorrelator
+      // can't catch these because they were never in Drive.
+      //
+      // CRITICAL: this step has a per-user time budget. Python sandbox
+      // execution (60s timeout per block) can pile up — if a user has many
+      // Python file-writing blocks, regen could take 30+ minutes and BLOCK
+      // the conversation DOCX upload that follows. We cap total regen time
+      // per user; once exhausted we skip remaining and continue to DOCX so
+      // conversations always migrate (the most important part of G2G).
+      const REGEN_BUDGET_MS = 90_000; // 90 seconds per user
+      const regenStart = Date.now();
+      let regeneratedCount = 0;
+      let regenBudgetExceeded = false;
+      const regenWorkDirs = [];
+      for (const conv of enrichedConvs) {
+        if (Date.now() - regenStart > REGEN_BUDGET_MS) {
+          regenBudgetExceeded = true;
+          break;
+        }
+        let recovered;
+        try {
+          recovered = await recoverFilesFromConversation(conv);
+        } catch (err) {
+          onLog({ type: 'warn', message: `  Gemini regen failed for "${conv.title}": ${err.message}` });
+          continue;
+        }
+        if (!recovered.length) continue;
+        regenWorkDirs.push(...recovered.filter(r => r.workDir));
+
+        for (const f of recovered) {
+          // Surface failed/empty regen attempts so the migration report
+          // can show them (instead of silently dropping). Each one becomes
+          // a row in userRecord.errors with a customer-readable reason.
+          if (f._failed) {
+            userRecord.errors.push({
+              conversation: conv.title,
+              error_message: `Could not regenerate file from ${f.sourceTag}: ${f.reason}. ${(f.stderr || '').slice(0, 100)}`,
+            });
+            onLog({ type: 'warn', message: `  Gemini regen failed in "${conv.title}" (${f.sourceTag}): ${f.reason}` });
+            continue;
+          }
+          try {
+            const buf = f.buffer || fs.readFileSync(f.fullPath);
+            const uploaded = await uploadFileToDrive(destUserAuth, f.name, f.mime, buf, mainFolder.id);
+            const turn = conv.turns?.[f.turnIndex];
+            if (turn) {
+              if (!turn.driveFiles) turn.driveFiles = [];
+              turn.driveFiles.push({
+                fileName: f.name,
+                mimeType: f.mime,
+                _uploadedLink: uploaded.webViewLink,
+                _imageBuffer: (f.mime || '').startsWith('image/') ? buf : null,
+              });
+            }
+            result.filesUploaded++;
+            userRecord.files_created++;
+            regeneratedCount++;
+            onLog({ type: 'success', message: `  Gemini-regenerated: "${f.name}" (${buf.length} bytes) → ${mappedTo}'s Drive` });
+          } catch (err) {
+            userRecord.errors.push({ conversation: f.name, error_message: err.message });
+            onLog({ type: 'warn', message: `  Gemini regen upload failed for "${f.name}": ${err.message}` });
+          }
+        }
+      }
+      if (regenBudgetExceeded) {
+        onLog({ type: 'warn', message: `Gemini regen time budget exceeded (${Math.round(REGEN_BUDGET_MS/1000)}s) for ${sourceEmail} — continuing to DOCX upload so conversations still migrate. Recovered ${regeneratedCount} file(s) before stopping.` });
+      } else if (regeneratedCount > 0) {
+        onLog({ type: 'info', message: `Regenerated ${regeneratedCount} file(s) from Gemini chat content for ${sourceEmail}` });
+      }
+      cleanupWorkDirs(regenWorkDirs);
 
       const batches = [];
       for (let i = 0; i < enrichedConvs.length; i += BATCH_SIZE) {

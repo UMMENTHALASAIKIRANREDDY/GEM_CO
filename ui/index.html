@@ -3714,6 +3714,11 @@ const StepC2CMigrate=({c2cStats,c2cDone,c2cLive,onRunAnother,onBack,onChangeDire
 /* ════════════════════════════════════════════════════════════ */
 const StepG2GUploadData=({g2gUploadData,setG2gUploadData,g2gSelectedUsers,setG2gSelectedUsers,g2gConfig,onNext,onBack,showToast})=>{
   const [tab,setTab]=useState(g2gUploadData?'upload':'userwise');
+  // When parent finishes loading the persisted session (after restart/refresh)
+  // and g2gUploadData arrives AFTER this component mounted, switch to the
+  // upload tab so the user sees their existing data instead of an empty
+  // "No users loaded" message on the userwise tab.
+  useEffect(()=>{ if(g2gUploadData) setTab('upload'); },[g2gUploadData]);
   const [selected,setSelected]=useState(new Set());
   const [sourceUsers,setSourceUsers]=useState([]);
   const [loadingSourceUsers,setLoadingSourceUsers]=useState(false);
@@ -3757,7 +3762,9 @@ const StepG2GUploadData=({g2gUploadData,setG2gUploadData,g2gSelectedUsers,setG2g
     elapsedRef.current=setInterval(()=>setElapsed(p=>p+1),1000);
     setExportStatus('Creating Vault export...');
     try{
-      const res=await fetch('/api/google/vault-export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_emails:[...selected]})});
+      // Send sourceAccountId so the server uses the SOURCE admin's Vault
+      // credentials (not whichever Google account is first in the session map).
+      const res=await fetch('/api/google/vault-export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_emails:[...selected],accountId:g2gConfig?.sourceAccountId||undefined})});
       const data=await res.json();
       if(!res.ok){setExportStatus(`Error: ${data.error}`);clearInterval(elapsedRef.current);setExporting(false);return}
       setExportStatus('Export in progress...');pollExport();
