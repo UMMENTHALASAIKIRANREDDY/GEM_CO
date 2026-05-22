@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     zip \
     python3 python3-pip python3-venv \
     libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 \
-    libffi-dev libjpeg62-turbo zlib1g libxml2 libxslt1.1 \
+    libffi-dev libjpeg-turbo8 zlib1g libxml2 libxslt1.1 \
     fonts-dejavu fonts-liberation \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3 /usr/local/bin/python
