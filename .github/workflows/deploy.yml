@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - developerbranch
 
 jobs:
   deploy:
@@ -28,8 +29,10 @@ jobs:
             cd /data/migration-combinations
             git config --global --add safe.directory /data/migration-combinations
 
-            echo "Pulling latest changes..."
-            git pull origin main
+            echo "Pulling latest changes from ${{ github.ref_name }}..."
+            git fetch origin
+            git checkout ${{ github.ref_name }}
+            git pull origin ${{ github.ref_name }}
 
             echo "Stopping existing containers..."
             echo "${{ secrets.SSH_PASSWORD }}" | sudo -S docker compose down
