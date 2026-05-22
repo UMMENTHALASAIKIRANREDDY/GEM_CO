@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import net from 'net';
 
 // Prevent unhandled rejections from crashing the server
 process.on('unhandledRejection', (reason) => {
@@ -24,6 +25,7 @@ import { createC2GRouter } from './src/modules/c2g/routes.js';
 import { createCL2GRouter } from './src/modules/cl2g/routes.js';
 import { createCL2CRouter } from './src/modules/cl2c/routes.js';
 import { createG2GRouter } from './src/modules/g2g/routes.js';
+import { createCopilotRouter, handleCopilotCallback } from './src/modules/copilot/routes.js';
 import { createC2CRouter, createTenantConsentCallback } from './src/modules/c2c/routes.js';
 import { runAgentLoop } from './src/agent/agentLoop.js';
 import { auditEmitter } from './src/agent/auditLogger.js';
@@ -39,6 +41,22 @@ function db() { return getDb(); }
 let currentTenantId = null;
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
+
+// CORS for extension — fetch from m365.cloud.microsoft to our server
+const ALLOWED_ORIGINS = [
+  'https://m365.cloud.microsoft',
+  'https://copilot.microsoft.com',
+];
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  }
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
 
 app.use(express.json());
 app.use(session({
@@ -104,10 +122,21 @@ app.get('/', (req, res) => {
 
 app.use(express.static(path.join(__dirname, 'ui')));
 
+// Serve noVNC static files for Copilot self-service VNC sessions
+const NOVNC_STATIC = process.env.NOVNC_PATH || '/usr/share/novnc';
+app.use('/novnc', express.static(NOVNC_STATIC));
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 app.get('/api/app-config', (req, res) => {
   res.json({ showReset: process.env.SHOW_RESET_BUTTON === 'true' });
+});
+
+app.get('/api/tab-config', (req, res) => {
+  res.json({
+    clientId: process.env.AZURE_CLIENT_ID,
+    redirectUri: (process.env.BASE_URL || 'http://localhost:4000') + '/tab-callback.html',
+  });
 });
 
 app.post('/api/login', async (req, res) => {
@@ -146,6 +175,8 @@ app.use('/api', (req, res, next) => {
   next();
 });
 app.use('/auth', (req, res, next) => {
+  // OAuth callbacks must be public — they arrive before any session exists
+  if (req.path === '/callback' || req.path === '/google/callback') return next();
   if (!req.session?.appUser) return res.status(401).json({ error: 'Not logged in' });
   next();
 });
@@ -218,6 +249,13 @@ app.get('/auth/callback', async (req, res) => {
     // Branch 2: Normal OAuth code exchange.
     if (error) return res.send(`<html><body><h2>Auth failed</h2><p>${error_description || error}</p><script>window.close();</script></body></html>`);
     if (!code) return res.status(400).send('No authorization code received');
+
+    // Copilot migration flow — handle separately
+    try {
+      const decoded = JSON.parse(Buffer.from(state, 'base64').toString());
+      if (decoded.flow === 'copilot') return handleCopilotCallback(req, res, code, decoded);
+    } catch {}
+
     const msResult = await acquireTokenByCode(code, state);
     const msEmail = msResult.email || msResult?.account?.username || null;
     const msAlready = !!msResult.alreadyConnected;
@@ -664,6 +702,8 @@ app.use('/api/cl2c', cl2cRouter);
 const g2gRouter = createG2GRouter({ db, getGoogleOAuth2Client });
 app.use('/api/g2g', g2gRouter);
 
+app.use('/copilot', createCopilotRouter());
+
 // C2C router — mounted at /api/c2c (Copilot → Copilot, cross-tenant)
 const c2cRouter = createC2CRouter({ db });
 app.use('/api/c2c', c2cRouter);
@@ -707,9 +747,27 @@ connectMongo().then(async () => {
 
   await restoreGoogleSessions();
   await restoreMsSessions();
-  app.listen(PORT, () => {
+  const httpServer = app.listen(PORT, () => {
     console.log(`\nCloudFuze Migration`);
     console.log(`Open: http://localhost:${PORT}\n`);
+  });
+
+  // Proxy /novnc/websockify WebSocket upgrades → websockify on port 6080
+  httpServer.on('upgrade', (req, socket, head) => {
+    if (!req.url.startsWith('/novnc/websockify')) return;
+    const upstream = net.createConnection(6080, '127.0.0.1');
+    upstream.on('connect', () => {
+      const upstreamPath = req.url.replace('/novnc', '');
+      let raw = `${req.method} ${upstreamPath} HTTP/1.1\r\n`;
+      for (const [k, v] of Object.entries(req.headers)) raw += `${k}: ${v}\r\n`;
+      raw += '\r\n';
+      upstream.write(raw);
+      if (head?.length) upstream.write(head);
+      upstream.pipe(socket);
+      socket.pipe(upstream);
+    });
+    upstream.on('error', () => socket.destroy());
+    socket.on('error', () => upstream.destroy());
   });
 }).catch(err => {
   console.error('Failed to connect to MongoDB:', err.message);

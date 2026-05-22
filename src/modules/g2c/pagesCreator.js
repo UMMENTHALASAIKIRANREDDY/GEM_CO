@@ -1,5 +1,6 @@
 import { getValidToken } from '../../core/auth/microsoft.js';
 import { getLogger } from '../../utils/logger.js';
+import { getDb } from '../../db/mongo.js';
 
 const logger = getLogger('module:pagesCreator');
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
@@ -111,13 +112,40 @@ export class PagesCreator {
   }
 
   /**
-   * Create a OneNote page in the TARGET user's account.
-   * The page contains the full conversation with prompts, Copilot + Gemini responses.
+   * Create or update a OneNote page for a Gemini conversation.
+   * On re-migration: appends only new turns to the existing page.
    */
   async createPage(targetEmail, conversation, flaggedAssets = []) {
     const flaggedIds = new Set(flaggedAssets.map(f => f.conversation_id));
     const isFlagged = flaggedIds.has(conversation.id);
+    const convId = conversation.id;
+    const turns = conversation.turns || [];
 
+    // Upsert check: if conversation already has a page, append new turns only
+    if (convId) {
+      try {
+        const db = getDb();
+        const record = await db.collection('conversationPages').findOne({ targetEmail, conversationId: convId });
+        if (record?.oneNotePageId) {
+          const newTurns = turns.slice(record.messageCount || 0);
+          if (newTurns.length === 0) {
+            logger.info(`G2C page already up-to-date for ${targetEmail}: "${conversation.title?.slice(0, 50)}"`);
+            return record.oneNotePageId;
+          }
+          await this._appendToPage(targetEmail, record.oneNotePageId, this._buildTurnsHtml(newTurns, record.messageCount || 0));
+          await db.collection('conversationPages').updateOne(
+            { targetEmail, conversationId: convId },
+            { $set: { messageCount: turns.length, updatedAt: new Date() } }
+          );
+          logger.info(`Appended ${newTurns.length} new turn(s) to G2C page for ${targetEmail}: "${conversation.title?.slice(0, 50)}"`);
+          return record.oneNotePageId;
+        }
+      } catch (e) {
+        logger.warn(`conversationPages lookup failed for ${convId}: ${e.message}`);
+      }
+    }
+
+    // First migration — create full page
     const sectionId = await this._getOrCreateSection(targetEmail);
     const htmlContent = this._buildPageHtml(conversation, isFlagged);
 
@@ -136,21 +164,45 @@ export class PagesCreator {
       if (response.ok) {
         const data = await response.json();
         logger.info(`OneNote page created for ${targetEmail}: "${conversation.title?.slice(0, 50)}"`);
+        if (convId) {
+          try {
+            const db = getDb();
+            await db.collection('conversationPages').updateOne(
+              { targetEmail, conversationId: convId },
+              { $set: { targetEmail, conversationId: convId, batchFolder: this.customerName, provider: 'gemini', oneNotePageId: data.id, title: conversation.topic || conversation.title || 'Untitled', messageCount: turns.length, migratedAt: new Date() } },
+              { upsert: true }
+            );
+          } catch {}
+        }
         return data.id;
       }
 
       const body = await response.text();
       lastError = `OneNote page creation failed for ${targetEmail}: ${response.status} — ${body.slice(0, 300)}`;
 
-      // Retry on transient server errors (5xx), give up immediately on client errors (4xx)
       if (response.status < 500 || attempt === MAX_RETRIES) break;
 
-      const delay = attempt * 2000; // 2s, 4s
+      const delay = attempt * 2000;
       logger.warn(`OneNote page creation transient error (attempt ${attempt}/${MAX_RETRIES}), retrying in ${delay}ms — "${conversation.title?.slice(0, 50)}"`);
       await new Promise(r => setTimeout(r, delay));
     }
 
     throw new Error(lastError);
+  }
+
+  async _appendToPage(targetEmail, pageId, htmlContent) {
+    const response = await fetch(
+      `${GRAPH_BASE}/users/${targetEmail}/onenote/pages/${pageId}/content`,
+      {
+        method: 'PATCH',
+        headers: { ...await this._headers(), 'Content-Type': 'application/json' },
+        body: JSON.stringify([{ target: 'body', action: 'append', content: htmlContent }]),
+      }
+    );
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`OneNote page append failed for ${targetEmail}: ${response.status} — ${body.slice(0, 300)}`);
+    }
   }
 
   /**
@@ -179,68 +231,7 @@ export class PagesCreator {
         </tr>
         <tr><td style="padding:6px 0">&nbsp;</td></tr>` : '';
 
-    const turnsHtml = turns.map((turn, i) => {
-      const prompt = esc(turn.prompt || '');
-      const copilotResponse = esc(turn.copilotResponse || '').replace(/\n/g, '<br/>');
-      const geminiResponse = esc(turn.response || '').replace(/\n/g, '<br/>');
-
-      // Render Drive files migrated for this turn
-      const driveFiles = turn.driveFiles || [];
-      const driveFilesHtml = driveFiles.length > 0 ? `
-        <tr>
-          <td style="padding:4px 0"><b style="color:#8764b8">📁 Migrated Files from Google Drive</b></td>
-        </tr>
-        <tr>
-          <td style="background:#f4f0fa;border:1px solid #c8b8e8;padding:12px 16px">
-            ${driveFiles.map(f => f.oneDriveUrl
-              ? `<a href="${esc(f.oneDriveUrl)}" style="color:#8764b8">${esc(f.fileName)}</a>`
-              : `<span style="color:#605e5c">${esc(f.fileName)} <i>(upload failed)</i></span>`
-            ).join('<br/>')}
-          </td>
-        </tr>
-        <tr><td style="padding:6px 0">&nbsp;</td></tr>` : '';
-
-      return `
-        <tr><td style="border-bottom:2px solid #0078d4;padding:16px 0 4px 0"><b style="font-size:16px;color:#0078d4">Prompt ${i + 1}</b></td></tr>
-
-        <tr>
-          <td style="background:#deecf9;padding:12px 16px">
-            <b style="color:#0078d4">YOU ASKED</b><br/><br/>
-            ${prompt}
-          </td>
-        </tr>
-        <tr><td style="padding:6px 0">&nbsp;</td></tr>
-
-        <tr>
-          <td style="padding:4px 0"><b style="color:#107c10">✦ Copilot Response</b></td>
-        </tr>
-        <tr>
-          <td style="background:#dff6dd;padding:12px 16px">
-            ${copilotResponse}
-          </td>
-        </tr>
-        <tr><td style="padding:6px 0">&nbsp;</td></tr>
-
-        <tr>
-          <td style="padding:4px 0"><b style="color:#605e5c">📎 Original Gemini Answer</b></td>
-        </tr>
-        <tr>
-          <td style="background:#f5f5f5;border:1px solid #d2d0ce;padding:12px 16px">
-            ${geminiResponse}
-            ${geminiUrl ? `<br/><br/><a href="${esc(geminiUrl)}" style="font-size:12px">Open original conversation in Gemini</a>` : ''}
-          </td>
-        </tr>
-        <tr><td style="padding:6px 0">&nbsp;</td></tr>
-
-        ${driveFilesHtml}
-        <tr>
-          <td style="border:2px dashed #c8c6c4;padding:12px 16px">
-            <b>📝 Notes</b><br/><br/>
-            <i style="color:#a19f9d">Add your notes here...</i>
-          </td>
-        </tr>
-        <tr><td style="padding:12px 0">&nbsp;</td></tr>`;
-    }).join('\n');
+    const turnsHtml = this._buildTurnsHtml(turns, 0, geminiUrl);
 
     return `<!DOCTYPE html>
 <html>
@@ -268,12 +259,100 @@ export class PagesCreator {
 </body>
 </html>`;
   }
+  _buildTurnsHtml(turns, startIndex = 0, geminiUrl = null) {
+    return turns.map((turn, i) => {
+      const promptNum = startIndex + i + 1;
+      const prompt = esc(turn.prompt || '');
+      const copilotResponse = esc(turn.copilotResponse || '').replace(/\n/g, '<br/>');
+      const geminiResponse = esc(turn.response || '').replace(/\n/g, '<br/>');
+      const driveFiles = turn.driveFiles || [];
+      const driveFilesHtml = driveFiles.length > 0 ? `
+        <tr>
+          <td style="padding:4px 0"><b style="color:#8764b8">📁 Migrated Files from Google Drive</b></td>
+        </tr>
+        <tr>
+          <td style="background:#f4f0fa;border:1px solid #c8b8e8;padding:12px 16px">
+            ${driveFiles.map(f => f.oneDriveUrl
+              ? `<a href="${esc(f.oneDriveUrl)}" style="color:#8764b8">${esc(f.fileName)}</a>`
+              : `<span style="color:#605e5c">${esc(f.fileName)} <i>(upload failed)</i></span>`
+            ).join('<br/>')}
+          </td>
+        </tr>
+        <tr><td style="padding:6px 0">&nbsp;</td></tr>` : '';
+      return `
+        <tr><td style="border-bottom:2px solid #0078d4;padding:16px 0 4px 0"><b style="font-size:16px;color:#0078d4">Prompt ${promptNum}</b></td></tr>
+        <tr>
+          <td style="background:#deecf9;padding:12px 16px">
+            <b style="color:#0078d4">YOU ASKED</b><br/><br/>${prompt}
+          </td>
+        </tr>
+        <tr><td style="padding:6px 0">&nbsp;</td></tr>
+        <tr><td style="padding:4px 0"><b style="color:#107c10">✦ Copilot Response</b></td></tr>
+        <tr><td style="background:#dff6dd;padding:12px 16px">${copilotResponse}</td></tr>
+        <tr><td style="padding:6px 0">&nbsp;</td></tr>
+        <tr><td style="padding:4px 0"><b style="color:#605e5c">📎 Original Gemini Answer</b></td></tr>
+        <tr>
+          <td style="background:#f5f5f5;border:1px solid #d2d0ce;padding:12px 16px">
+            ${geminiResponse}
+            ${geminiUrl ? `<br/><br/><a href="${esc(geminiUrl)}" style="font-size:12px">Open original conversation in Gemini</a>` : ''}
+          </td>
+        </tr>
+        <tr><td style="padding:6px 0">&nbsp;</td></tr>
+        ${driveFilesHtml}
+        <tr>
+          <td style="border:2px dashed #c8c6c4;padding:12px 16px">
+            <b>📝 Notes</b><br/><br/><i style="color:#a19f9d">Add your notes here...</i>
+          </td>
+        </tr>
+        <tr><td style="padding:12px 0">&nbsp;</td></tr>`;
+    }).join('\n');
+  }
+
   // ── Claude → Copilot page methods ───────────────────────────────────────────
 
   async createClaudePage(targetEmail, claudeConv) {
+    const convId = claudeConv.uuid;
+    const messages = claudeConv.chat_messages || [];
+
+    // Upsert check: append new messages to existing page
+    if (convId) {
+      try {
+        const db = getDb();
+        const record = await db.collection('conversationPages').findOne({ targetEmail, conversationId: convId });
+        if (record?.oneNotePageId) {
+          const newMessages = messages.slice(record.messageCount || 0);
+          if (newMessages.length === 0) {
+            logger.info(`CL2C page already up-to-date for ${targetEmail}: "${claudeConv.name?.slice(0, 50)}"`);
+            return record.oneNotePageId;
+          }
+          await this._appendToPage(targetEmail, record.oneNotePageId, this._buildMessagesHtml(newMessages));
+          await db.collection('conversationPages').updateOne(
+            { targetEmail, conversationId: convId },
+            { $set: { messageCount: messages.length, updatedAt: new Date() } }
+          );
+          logger.info(`Appended ${newMessages.length} new message(s) to CL2C page for ${targetEmail}: "${claudeConv.name?.slice(0, 50)}"`);
+          return record.oneNotePageId;
+        }
+      } catch (e) {
+        logger.warn(`conversationPages lookup failed for ${convId}: ${e.message}`);
+      }
+    }
+
     const sectionId = await this._getOrCreateSection(targetEmail);
     const htmlContent = this._buildClaudePageHtml(claudeConv);
-    return this._postPage(targetEmail, sectionId, htmlContent);
+    const pageId = await this._postPage(targetEmail, sectionId, htmlContent);
+
+    if (convId) {
+      try {
+        const db = getDb();
+        await db.collection('conversationPages').updateOne(
+          { targetEmail, conversationId: convId },
+          { $set: { targetEmail, conversationId: convId, batchFolder: this.customerName, provider: 'claude', oneNotePageId: pageId, title: claudeConv.name || 'Untitled', messageCount: messages.length, migratedAt: new Date() } },
+          { upsert: true }
+        );
+      } catch {}
+    }
+    return pageId;
   }
 
   async createClaudeMemoryPage(targetEmail, memoryText, userName) {
@@ -305,12 +384,8 @@ export class PagesCreator {
     throw new Error(lastError);
   }
 
-  _buildClaudePageHtml(conv) {
-    const title = conv.name?.trim() || 'Untitled Conversation';
-    const date = conv.created_at ? new Date(conv.created_at).toLocaleString() : '';
-    const messages = conv.chat_messages || [];
-
-    const messagesHtml = messages.map(msg => {
+  _buildMessagesHtml(messages) {
+    return messages.map(msg => {
       const isHuman = msg.sender === 'human';
       const text = extractMsgText(msg);
       if (!text) return '';
@@ -327,6 +402,14 @@ export class PagesCreator {
         </td></tr>
         <tr><td style="padding:4px 0">&nbsp;</td></tr>`;
     }).join('');
+  }
+
+  _buildClaudePageHtml(conv) {
+    const title = conv.name?.trim() || 'Untitled Conversation';
+    const date = conv.created_at ? new Date(conv.created_at).toLocaleString() : '';
+    const messages = conv.chat_messages || [];
+
+    const messagesHtml = this._buildMessagesHtml(messages);
 
     return `<!DOCTYPE html>
 <html><head><title>${esc(title)}</title><meta name="created" content="${new Date().toISOString()}"/></head>

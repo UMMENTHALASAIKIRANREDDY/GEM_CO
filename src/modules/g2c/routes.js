@@ -25,9 +25,11 @@ import { checkPermissions } from './permissionsChecker.js';
 import { ReportWriter } from './reportWriter.js';
 import { CheckpointManager } from '../../utils/checkpoint.js';
 import { AgentDeployer } from '../../agent/agentDeployer.js';
+import { IndexWriter } from '../../agent/indexWriter.js';
 import { getLogger } from '../../utils/logger.js';
 import { runAgentLoop } from '../../agent/agentLoop.js';
 import { auditEmitter } from '../../agent/auditLogger.js';
+import { provisionUser, provisionUsers } from './userProvisioner.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Root of the project (3 levels up from src/modules/g2c/)
@@ -284,6 +286,21 @@ export function createG2CRouter(deps) {
         drive: false, reports: false, directory: false,
         errors: { auth: err.message },
       });
+    }
+  });
+
+  // Provision MS user(s) — trigger OneDrive + assign license if missing
+  router.post('/provision-users', requireMsAuth, async (req, res) => {
+    try {
+      const { appUserId } = getWorkspaceContext(req);
+      const { emails } = req.body;
+      if (!emails || !Array.isArray(emails) || emails.length === 0) {
+        return res.status(400).json({ error: 'emails array required' });
+      }
+      const results = await provisionUsers(appUserId, emails);
+      res.json({ results });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
     }
   });
 
@@ -847,6 +864,15 @@ export function createG2CRouter(deps) {
             }
           }
 
+          // Auto-provision OneDrive + SharePoint personal site before writing pages
+          try {
+            const provResult = await provisionUser(appUserId, m365Email);
+            if (provResult.provisioned) emit('info', `  OneDrive provisioned for ${m365Email}`);
+            if (provResult.licenseAssigned) emit('info', `  M365 license assigned to ${m365Email}`);
+          } catch (e) {
+            emit('warn', `  Pre-provision failed for ${m365Email}: ${e.message} — continuing anyway`);
+          }
+
           let oneNoteBlocked = false;
           for (const conv of enrichedConversations) {
             if (oneNoteBlocked) break;
@@ -953,24 +979,73 @@ export function createG2CRouter(deps) {
       if (!dry_run) {
         emit('info', '━━━ Deploying Copilot Agent ━━━');
         try {
-          const deployer = new AgentDeployer(customer_name, tenant_id, {}, appUserId);
-          const appInfo = await deployer.deployAgent();
+          const existingG2CDeployment = await db().collection('agentDeployments').findOne({
+            appUserId, tenantId: tenant_id, agentName: 'Gemini Conversation Agent',
+          });
+          const deployer = new AgentDeployer(customer_name, tenant_id, {
+            appId: existingG2CDeployment?.appId || undefined,
+          }, appUserId);
+
+          let appInfo;
+          if (existingG2CDeployment?.catalogId) {
+            const updateResult = await deployer.updateAgent(existingG2CDeployment.catalogId);
+            if (!updateResult.updated) {
+              appInfo = await deployer.deployAgent();
+            } else {
+              appInfo = { id: existingG2CDeployment.catalogId, alreadyExisted: true, installInstructions: deployer._installInstructions() };
+            }
+          } else {
+            appInfo = await deployer.deployAgent();
+          }
+
           if (appInfo.alreadyExisted) {
-            emit('info', `Agent "Gemini Conversation Agent" already exists in catalog — skipping publish`);
+            emit('info', `Agent "Gemini Conversation Agent" already exists in catalog — updated`);
           } else {
             emit('success', `Agent "Gemini Conversation Agent" published to Teams catalog (id: ${appInfo.id})`);
           }
           emit('info', appInfo.installInstructions);
           reportUpdate.agentDeployment = { catalogId: appInfo.id, alreadyExisted: appInfo.alreadyExisted };
           await db().collection('agentDeployments').updateOne(
-            { appUserId, msEmail, agentName: 'Gemini Conversation Agent' },
-            { $set: { batchId, catalogId: appInfo.id, deployedAt: new Date() } },
+            { appUserId, tenantId: tenant_id, agentName: 'Gemini Conversation Agent' },
+            { $set: { batchId, catalogId: appInfo.id, appId: deployer.appId, msEmail, deployedAt: new Date() } },
             { upsert: true }
           );
           dbLog.info(`agentDeployments.upsert — "Gemini Conversation Agent" (catalog id: ${appInfo.id})`);
         } catch (err) {
           emit('warn', `Agent deployment failed (can be done manually): ${err.message}`);
         }
+      }
+
+      // Write GemCo/index.json to each target user's OneDrive
+      try {
+        emit('info', 'Writing conversation index to OneDrive...');
+        const indexWriter = new IndexWriter(appUserId);
+        const pages = await db().collection('conversationPages').find({
+          batchFolder: customer_name,
+        }).toArray();
+
+        const byEmail = {};
+        for (const p of pages) {
+          if (!p.targetEmail || !p.oneNotePageId) continue;
+          if (!byEmail[p.targetEmail]) byEmail[p.targetEmail] = [];
+          byEmail[p.targetEmail].push({
+            title: p.title || 'Untitled',
+            pageId: p.oneNotePageId,
+            migratedAt: p.migratedAt?.toISOString?.() || new Date().toISOString(),
+          });
+        }
+
+        for (const [email, conversations] of Object.entries(byEmail)) {
+          await indexWriter.writeIndex(email, {
+            source: 'Gemini',
+            notebookName: `${customer_name} Conversations`,
+            sectionName: `${customer_name} Conversations`,
+            conversations,
+          }).catch(e => logger.warn(`IndexWriter failed for ${email}: ${e.message}`));
+        }
+        emit('info', 'Conversation index written to OneDrive.');
+      } catch (err) {
+        emit('warn', `Index write failed (non-fatal): ${err.message}`);
       }
 
       await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'gemini-copilot', ...reportUpdate } });

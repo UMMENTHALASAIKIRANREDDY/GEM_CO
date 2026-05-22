@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head><title>Auth</title></head>
+<body>
+<script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
+<script>
+  const msalInstance = new msal.PublicClientApplication({
+    auth: {
+      clientId: new URLSearchParams(location.search).get('clientId') || '',
+      redirectUri: location.href.split('?')[0],
+    },
+  });
+  msalInstance.handleRedirectPromise().catch(console.error);
+</script>
+</body>
+</html>

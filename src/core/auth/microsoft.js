@@ -11,6 +11,7 @@ const logger = getLogger('auth:microsoft');
 // - AppCatalog.ReadWrite.All → publish declarative agent to Teams catalog
 const DELEGATED_SCOPES = [
   'https://graph.microsoft.com/User.Read.All',
+  'https://graph.microsoft.com/User.ReadWrite.All',
   'https://graph.microsoft.com/Notes.ReadWrite.All',
   'https://graph.microsoft.com/Files.ReadWrite.All',
   'https://graph.microsoft.com/AppCatalog.ReadWrite.All',
@@ -210,12 +211,16 @@ export async function getValidToken(appUserId, accountId = null) {
     ? _sessions.get(_key(appUserId, accountId))
     : _getFirstSession(appUserId);
 
-  if (!session?.token || !session?.account) {
+  if (!session?.token) {
     throw new Error('Admin not signed in. Click "Sign in with Microsoft" first.');
   }
 
   const fiveMinutes = 5 * 60 * 1000;
   if (Date.now() < session.tokenExpiry - fiveMinutes) return session.token;
+
+  if (!session?.account) {
+    throw new Error('Admin not signed in. Click "Sign in with Microsoft" first.');
+  }
 
   logger.info(`Delegated token expiring soon for ${appUserId}:${session.accountId} — refreshing silently`);
   try {

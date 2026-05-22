@@ -18,6 +18,7 @@ service_account.json
 # Runtime data
 uploads/
 customers/
+playwright-session*.json
 
 # Documentation
 *.md

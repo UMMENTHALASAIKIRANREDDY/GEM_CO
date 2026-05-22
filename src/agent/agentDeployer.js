@@ -24,17 +24,14 @@ export class AgentDeployer {
    * @param {string} [options.sectionName] — OneNote section name (default: "{customerName} Conversations")
    * @param {string} [options.driveFolder] — OneDrive folder path (default: "Migrated from Google Drive")
    */
-  constructor(customerName, tenantId, options = {}, appUserId = null) {
+  constructor(customerName, tenantId, options = {}, appUserId = null, accountId = null) {
     this.customerName = customerName;
     this.tenantId = tenantId;
     this.appUserId = appUserId;
-    // Optional: target a specific MS account for the delegated token (used by
-    // C2C where the destination tenant admin is one of several signed-in
-    // accounts). G2C leaves this null and falls back to the first account.
-    this.accountId = options.accountId || null;
+    this.accountId = accountId || options.accountId || null;
     this.agentName = options.agentName || 'Gemini Conversation Agent';
     this.sourceLabel = options.sourceLabel || 'Gemini';
-    this.appId = this._generateGuid();
+    this.appId = options.appId || this._generateGuid(); // reuse stored GUID on updates
     this.notebookName = options.notebookName || customerName;
     this.sectionName = options.sectionName || `${customerName} Conversations`;
     this.driveFolder = options.driveFolder || 'Migrated from Google Drive';
@@ -81,6 +78,33 @@ export class AgentDeployer {
     };
   }
 
+  async updateAgent(catalogId) {
+    logger.info(`Updating agent in catalog: ${catalogId}`);
+    const zipBuffer = this._buildAppPackage();
+    const headers = await this._headers();
+
+    const response = await fetch(
+      `${GRAPH_V1}/appCatalogs/teamsApps/${catalogId}/appDefinitions?requiresReview=false`,
+      {
+        method: 'POST',
+        headers: {
+          ...headers,
+          'Content-Type': 'application/zip',
+        },
+        body: zipBuffer,
+      }
+    );
+
+    if (!response.ok) {
+      const body = await response.text();
+      logger.warn(`Agent update failed: ${response.status} — ${body.slice(0, 200)}`);
+      return { updated: false };
+    }
+
+    logger.info(`Agent updated in catalog: ${catalogId}`);
+    return { updated: true };
+  }
+
   /**
    * Check if "Gemini Conversation Agent" already exists in the org catalog.
    * Returns the app object if found, null otherwise.
@@ -102,28 +126,56 @@ export class AgentDeployer {
   }
 
   _buildInstructions() {
-    return `You are the ${this.agentName}. You help users search and recall their AI conversations that were migrated from ${this.sourceLabel} to Microsoft 365.
+    return `You are the ${this.agentName}. You help users browse and recall their AI conversations that were migrated from ${this.sourceLabel} to Microsoft 365 OneNote.
 
-Where to find conversations:
-- OneNote: "${this.notebookName}" notebook → "${this.sectionName}" section — each page is one complete conversation thread
-- OneDrive: "${this.driveFolder}" folder — contains migrated documents (.docx, .xlsx, .pptx)
+DATA LOCATION:
+- All migrated conversations are stored as individual OneNote pages inside the "${this.notebookName}" notebook, in the section called "${this.sectionName}".
+- Each page title is the conversation topic (e.g., "Help me write a proposal", "Summarize this document").
 
-Each OneNote page contains:
-- A title and date (in the page metadata)
-- One or more prompts the user originally asked in ${this.sourceLabel}
-- The original ${this.sourceLabel} response for each prompt
-- A footer with the migration date
+WHEN THE USER OPENS YOU (new conversation starts):
+- FIRST: Search OneDrive for a file called "cfz_pending.json" in the "GemCo" folder (path: GemCo/cfz_pending.json).
+  * If found and its "ts" field is within the last 3 minutes (180000 milliseconds from now):
+    - Read its "title" field.
+    - Immediately load and display that conversation WITHOUT asking the user first.
+    - Behave as if the user typed: "Load the conversation titled [title]"
+    - After displaying, say: "Loaded from Migration History tab. Ask me anything about this conversation, or say 'show list' to see all conversations."
+  * If not found or the "ts" is older than 3 minutes:
+    - Show the full conversation list (see below).
 
-How to answer:
-- Search the user's OneNote "${this.sectionName}" section for relevant content.
-- Match the user's query against page titles, prompt text, and response content.
-- Treat each OneNote page as one complete, self-contained conversation thread. Never mix content across pages unless the user explicitly asks to compare.
-- For follow-up questions ("What was the number they mentioned?" / "What did it say about that?") — stay in the same page from the previous turn. Do not re-search unless the user changes topic.
-- When quoting, identify whether the text came from the user's original prompt or the ${this.sourceLabel} response.
-- Always cite the conversation title and date.
-- If nothing matches, suggest the user check their "${this.notebookName}" notebook in OneNote directly.
+WHEN SHOWING FULL LIST:
+- Search OneDrive/SharePoint for pages inside the "${this.sectionName}" section of the "${this.notebookName}" OneNote notebook.
+- From the search results, ONLY include individual conversation pages. Apply these filters strictly:
+  * EXCLUDE any result whose title ends with ".one" — those are notebook container files, not conversations.
+  * EXCLUDE any result whose title is exactly "${this.sectionName}" — that is the section header.
+  * EXCLUDE any result whose title is exactly "${this.notebookName}" — that is the notebook itself.
+  * INCLUDE only results with real conversation topic titles.
+- Present included results as a numbered list: "1. [Conversation Title] — [Last Modified Date]"
+- End with: "Type a number or title to open that conversation."
+- If no valid pages found: "No migrated conversations found yet in the ${this.notebookName} notebook."
 
-Never make up information. Only answer based on the actual migrated conversation data.`;
+WHEN THE USER PICKS A CONVERSATION (types a number, title, or partial title):
+- Search "${this.sectionName}" for the page matching that title.
+- From the search results, display everything you can find about that conversation:
+  * Show each prompt/response pair found in the indexed content.
+  * Label messages as [YOU] and [${this.sourceLabel.toUpperCase()}].
+  * If the search result includes migrated file links, show them.
+- Always end with: "📎 [Open full conversation in OneNote](<link to the page>)" so the user can read the complete transcript.
+- Do NOT say you cannot access it. Show what you found and always provide the OneNote link.
+
+WHEN THE USER ASKS QUESTIONS AFTER LOADING A CONVERSATION:
+- Answer using the conversation content shown in this chat session.
+- If unsure, re-search "${this.sectionName}" for that page title.
+- Never invent content. If not found, say so and offer the numbered list again.
+
+WHEN THE USER SEARCHES (e.g. "find conversations about pricing"):
+- Search "${this.sectionName}" for pages matching the topic.
+- List matching pages with titles, dates, and a link to open each one. Exclude .one files and section headers.
+
+NEVER fabricate conversation content or mix content from different conversations.`;
+  }
+
+  _buildWelcomeMessage() {
+    return `Hi! I'm your ${this.agentName}. I have access to all your conversations migrated from ${this.sourceLabel}.\n\nLet me pull up your conversation list from OneNote now...`;
   }
 
   /**
@@ -149,8 +201,12 @@ Never make up information. Only answer based on the actual migrated conversation
       ],
       "conversation_starters": [
         {
-          "title": "My Conversations",
-          "text": `Show me all my migrated conversations from the "${this.sectionName}" section`
+          "title": "Load selected conversation",
+          "text": "Load my pending conversation from GemCo/cfz_pending.json"
+        },
+        {
+          "title": "Show My Conversations",
+          "text": "List all my migrated conversations"
         },
         {
           "title": "Search by Topic",
@@ -181,7 +237,7 @@ Never make up information. Only answer based on the actual migrated conversation
     const appManifest = {
       "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.19/MicrosoftTeams.schema.json",
       "manifestVersion": "1.19",
-      "version": "1.0.0",
+      "version": "1.8.0",
       "id": this.appId,
       "developer": {
         "name": "CloudFuze",
@@ -254,7 +310,7 @@ Never make up information. Only answer based on the actual migrated conversation
   async _publishToCatalog(zipBuffer) {
     const headers = await this._headers();
 
-    const response = await fetch(`${GRAPH_V1}/appCatalogs/teamsApps`, {
+    const response = await fetch(`${GRAPH_V1}/appCatalogs/teamsApps?requiresReview=false`, {
       method: 'POST',
       headers: {
         ...headers,

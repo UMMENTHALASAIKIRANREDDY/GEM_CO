@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { EventEmitter }  from 'events';
 import { getLogger }     from '../../utils/logger.js';
 import { getTenantForUser } from '../../core/auth/microsoft.js';
+import { IndexWriter } from '../../agent/indexWriter.js';
 
 const dbLog    = getLogger('db:cl2c');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -320,13 +321,28 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
               if (!tenantId) {
                 cl2cLog('warn', 'Could not determine tenant ID — agent deployment skipped.');
               } else {
+                const existingDeployment = await db().collection('agentDeployments').findOne({
+                  appUserId: appUserId, tenantId, agentName: 'Claude Conversation Agent',
+                });
                 const deployer = new AgentDeployer(cl2cFolder, tenantId, {
                   agentName: 'Claude Conversation Agent',
                   sourceLabel: 'Claude',
                   notebookName: cl2cFolder,
                   sectionName: `${cl2cFolder} Conversations`,
+                  appId: existingDeployment?.appId || undefined, // reuse stored GUID
                 }, appUserId);
-                const appInfo = await deployer.deployAgent();
+
+                let appInfo;
+                if (existingDeployment?.catalogId) {
+                  const updateResult = await deployer.updateAgent(existingDeployment.catalogId);
+                  if (!updateResult.updated) {
+                    appInfo = await deployer.deployAgent();
+                  } else {
+                    appInfo = { id: existingDeployment.catalogId, alreadyExisted: true, installInstructions: '' };
+                  }
+                } else {
+                  appInfo = await deployer.deployAgent();
+                }
                 if (appInfo.alreadyExisted) {
                   cl2cLog('info', `Claude Conversation Agent already exists in catalog for tenant ${tenantId} — skipping publish`);
                 } else {
@@ -336,13 +352,42 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
                 // Key by tenantId so each domain gets its own deployment record
                 await db().collection('agentDeployments').updateOne(
                   { appUserId, tenantId, agentName: 'Claude Conversation Agent' },
-                  { $set: { batchId, msEmail, catalogId: appInfo.id, deployedAt: new Date() } },
+                  { $set: { batchId, msEmail, catalogId: appInfo.id, appId: deployer.appId, deployedAt: new Date() } },
                   { upsert: true }
                 ).catch(() => {});
               }
             } catch (agentErr) {
               cl2cLog('warn', `Agent deployment failed (can be done manually): ${agentErr.message}`);
             }
+          }
+
+          // Write GemCo/index.json to each target user's OneDrive (non-fatal)
+          if (!isDryRun) {
+            try {
+              const indexWriter = new IndexWriter(appUserId);
+              const pages = await db().collection('conversationPages').find({
+                provider: 'claude',
+                batchFolder: cl2cFolder,
+              }).toArray();
+              const byEmail = {};
+              for (const p of pages) {
+                if (!p.targetEmail || !p.oneNotePageId) continue;
+                if (!byEmail[p.targetEmail]) byEmail[p.targetEmail] = [];
+                byEmail[p.targetEmail].push({
+                  title: p.title || 'Untitled',
+                  pageId: p.oneNotePageId,
+                  migratedAt: p.migratedAt?.toISOString?.() || new Date().toISOString(),
+                });
+              }
+              for (const [email, conversations] of Object.entries(byEmail)) {
+                await indexWriter.writeIndex(email, {
+                  source: 'Claude',
+                  notebookName: cl2cFolder,
+                  sectionName: `${cl2cFolder} Conversations`,
+                  conversations,
+                }).catch(() => {});
+              }
+            } catch {}
           }
 
           cl2cLog('done', JSON.stringify({ files, errors, users: pairs.length, batchId }));
