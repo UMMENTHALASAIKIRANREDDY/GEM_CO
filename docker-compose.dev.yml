@@ -1,0 +1,58 @@
+# Dev stack for aimigration.cftools.live (developerbranch).
+# Runs side-by-side with the prod stack (migcomb.cftools.live) on the same
+# server. Uses a separate Docker network + volumes so dev data never mixes
+# with prod data.
+services:
+  gem-co-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gem-co-migration-dev
+    ports:
+      - "4000:4000"
+    env_file:
+      - .env
+    volumes:
+      - ./uploads:/app/uploads
+      - ./customers:/app/customers
+      - ./service_account.json:/app/service_account.json:ro
+    depends_on:
+      mongodb-dev:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:4000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  mongodb-dev:
+    image: mongo:7.0
+    container_name: gem-co-mongodb-dev
+    ports:
+      # Random host port 29019 — does not collide with prod's mongo. Only
+      # used for direct debugging from the server's localhost. The app
+      # connects via the Docker network using container name + internal
+      # port 27017, NOT this host port.
+      - "29019:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USERNAME:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-DevSecret2026!}
+      MONGO_INITDB_DATABASE: ${MONGO_DATABASE:-gemco}
+    volumes:
+      - mongodb_data_dev:/data/db
+      - mongodb_config_dev:/data/configdb
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  mongodb_data_dev:
+    driver: local
+  mongodb_config_dev:
+    driver: local
