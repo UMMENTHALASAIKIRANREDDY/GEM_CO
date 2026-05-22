@@ -81,11 +81,6 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
       return { shown: true, widgetType };
     }
 
-    case 'show_post_migration_guide': {
-      streamEvent('show_widget', { widget: { type: 'post_migration_guide', migDir } });
-      return { shown: true };
-    }
-
     case 'show_status_card': {
       streamEvent('show_widget', {
         widget: {

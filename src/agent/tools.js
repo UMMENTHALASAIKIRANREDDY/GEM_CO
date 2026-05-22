@@ -69,14 +69,6 @@ export const AGENT_TOOLS = [
   {
     type: 'function',
     function: {
-      name: 'show_post_migration_guide',
-      description: 'Show post-migration setup instructions when user asks what to do next after migration completes',
-      parameters: { type: 'object', properties: {}, required: [] },
-    },
-  },
-  {
-    type: 'function',
-    function: {
       name: 'navigate_to_step',
       description: 'Navigate the left panel to a specific step. Use when user asks to go somewhere.',
       parameters: {

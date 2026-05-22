@@ -94,7 +94,7 @@ export function buildSystemPrompt(migrationState, migrationLogs = [], { isReturn
 
 ### Panel: "Migration Running / Done" — C2G (step=4+, migDir=copilot-gemini)
 - Progress ring (per-conversation), stats: Users, Files Uploaded, Errors
-- When done: "Migration Complete!", Gem Setup Instructions, Run Another, Change Direction buttons
+- When done: "Migration Complete!", Run Another, Download Report buttons
 - ⚠️ C2G uses step=4 (running) and step=5 (done). Do NOT navigate to step 6 for C2G — no panel exists there. Use show_reports to display reports.
 
 ### Panel: "Upload ZIP" — CL2G (step=2, migDir=claude-gemini)

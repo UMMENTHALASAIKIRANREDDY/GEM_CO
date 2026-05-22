@@ -1188,7 +1188,6 @@ const ChatWidget=({type,widgetProps={}})=>{
   if(type==='auth')return<AuthWidget {...(widgetProps.auth||{})}/>;
   if(type==='upload')return<UploadWidget {...(widgetProps.upload||{})}/>;
   if(type==='options')return<OptionsWidget {...(widgetProps.options||{})}/>;
-  if(type==='post_migration_guide')return<PostMigrationWidget migDir={widgetProps.migDir}/>;
   if(type==='auth_connect')return<AuthConnectWidget {...(widgetProps.authConnect||{})}/>;
   if(type==='migration_actions')return<MigrationActionsWidget {...(widgetProps.migrationActions||{})}/>;
   return null;
@@ -1709,7 +1708,6 @@ const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c
               </div>
             ))}
           </div>
-          {!lastRunWasDry&&<GemSetupInstructions folderName={c2gFolderName||'CopilotChats'} migDir="copilot-gemini"/>}
           <div style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:12}}>
             {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{flex:'1 1 140px',justifyContent:'center'}}><IcoRocket s={14}/> Start Live Migration</Btn>}
             <Btn variant="ghost" onClick={onBack} style={{flex:'1 1 100px',justifyContent:'center'}}>← Options</Btn>
@@ -2112,122 +2110,6 @@ const StepCL2GOptions=({cl2gOptions,setCl2gOptions,cl2gConfig,setCl2gConfig,goog
 };
 
 /* ═══════════════════════════════════════════ */
-/* ═══  GEM SETUP INSTRUCTIONS PANEL       ═══ */
-/* ═══════════════════════════════════════════ */
-const buildGemInstructions=(src='Claude')=>`You are my personal ${src} conversation assistant. The uploaded document(s) contain my complete ${src} conversation history, with each conversation clearly labeled by number and title.
-
-How to answer my questions:
-1. ALWAYS search the uploaded documents thoroughly before responding.
-2. When I ask about a topic — find all conversations related to it in the document and summarize what was discussed.
-3. When I ask "what did I ask about X?" or "find my conversation about X" — locate it in the document and return the exact Human and ${src} message exchanges.
-4. When I ask to continue or follow up on a past conversation — find that conversation in the document, read the full message thread, then continue responding as ${src} would, staying consistent with the context and conclusions already reached in that conversation.
-5. Answer from the document content directly. Do not rephrase from your own training memory when the topic is in the documents.
-6. If a topic is not found anywhere in the documents, say: "This topic was not in your migrated conversation history." Then answer from general knowledge if helpful.
-7. Never fabricate conversation content that is not in the documents.
-
-Document structure: Each conversation starts with "Conversation N: Title" followed by [Human] and [${src}] labeled messages in chronological order.`;
-const GEM_INSTRUCTIONS=buildGemInstructions();
-
-const GemSetupInstructions=({folderName='ClaudeChats',migDir})=>{
-  const [copied,setCopied]=useState(false);
-  const [open,setOpen]=useState(true);
-  const sourceLabel=migDir==='copilot-gemini'?'Copilot':migDir==='claude-gemini'?'Claude':(folderName||'').toLowerCase().includes('copilot')?'Copilot':'Claude';
-  const gemInstructions=buildGemInstructions(sourceLabel);
-  const copy=()=>{navigator.clipboard.writeText(gemInstructions).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500)}).catch(()=>{})};
-
-  const steps=[
-    {n:1,icon:'🌐',title:'Open Gemini Gems',desc:'Go to gemini.google.com → click Gems in the left sidebar → New Gem'},
-    {n:2,icon:'📁',title:'Add Knowledge from Google Drive',desc:`Under Knowledge, click "Add from Google Drive" → navigate to your ${folderName} folder → select it → Insert`},
-    {n:3,icon:'📋',title:'Paste the Gem Instructions',desc:'Copy the instructions below and paste them into the Instructions box of the Gem'},
-    {n:4,icon:'💾',title:'Name & Save the Gem',desc:`Give the Gem a name (e.g. "My ${sourceLabel} History") → click Save — the Gem is now ready to use`},
-  ];
-  return(
-    <div style={{border:`1px solid #BFDBFE`,borderRadius:12,background:'#EFF6FF',marginBottom:16,overflow:'hidden'}}>
-      <div onClick={()=>setOpen(o=>!o)} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 16px',cursor:'pointer',userSelect:'none'}}>
-        <div style={{display:'flex',alignItems:'center',gap:10}}>
-          <span style={{fontSize:18}}>💎</span>
-          <div>
-            <div style={{fontSize:13,fontWeight:700,color:'#1E3A5F'}}>Set Up Your Gemini Gem</div>
-            <div style={{fontSize:11,color:'#3B82F6'}}>Follow these steps so each user gets accurate answers from their migrated history</div>
-          </div>
-        </div>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{transition:'transform .2s',transform:open?'rotate(180deg)':'none'}}><polyline points="6 9 12 15 18 9"/></svg>
-      </div>
-      {open&&(
-        <div style={{padding:'0 16px 16px'}}>
-          {/* Steps */}
-          <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:16}}>
-            {steps.map(s=>(
-              <div key={s.n} style={{display:'flex',gap:12,alignItems:'flex-start',background:'white',borderRadius:10,padding:'10px 14px',border:'1px solid #DBEAFE'}}>
-                <div style={{minWidth:28,height:28,borderRadius:'50%',background:'#1D4ED8',color:'white',display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,flexShrink:0}}>{s.n}</div>
-                <div>
-                  <div style={{fontSize:12,fontWeight:700,color:'#1E3A5F',marginBottom:2}}>{s.icon} {s.title}</div>
-                  <div style={{fontSize:11,color:'#4B5563',lineHeight:1.5}}>{s.desc}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-          {/* Instructions copy box */}
-          <div style={{background:'white',border:'1px solid #BFDBFE',borderRadius:10,overflow:'hidden'}}>
-            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 12px',background:'#DBEAFE',borderBottom:'1px solid #BFDBFE'}}>
-              <span style={{fontSize:11,fontWeight:700,color:'#1E40AF',textTransform:'uppercase',letterSpacing:.5}}>📋 Gem Instructions — copy & paste into Gemini</span>
-              <button onClick={copy} style={{display:'inline-flex',alignItems:'center',gap:5,fontSize:11,fontWeight:600,color:copied?'#16a34a':'#1D4ED8',background:copied?'#DCFCE7':'#EFF6FF',border:`1px solid ${copied?'#86EFAC':'#93C5FD'}`,borderRadius:6,padding:'4px 10px',cursor:'pointer',fontFamily:'inherit',transition:'all .2s'}}>
-                {copied?<><IcoDone s={11}/>Copied!</>:<><IcoUpload s={11}/>Copy</>}
-              </button>
-            </div>
-            <pre style={{margin:0,padding:'12px 14px',fontSize:11,lineHeight:1.6,color:'#1E293B',whiteSpace:'pre-wrap',wordBreak:'break-word',fontFamily:'Consolas,monospace',maxHeight:220,overflowY:'auto'}}>{gemInstructions}</pre>
-          </div>
-          <div style={{marginTop:10,padding:'8px 12px',background:'#FEF9C3',border:'1px solid #FDE68A',borderRadius:8,fontSize:11,color:'#713F12'}}>
-            <strong>Tip:</strong> The migrated folder contains max 3 files per user (All Conversations, Memory, Projects). Add them all to the Gem knowledge for best results.
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-/* ═══════════════════════════════════════════ */
-/* Post-migration inline chat widget */
-const PostMigrationWidget=({migDir})=>{
-  const [copied,setCopied]=useState(false);
-  const widgetSourceLabel=migDir==='copilot-gemini'?'Copilot':migDir==='claude-gemini'?'Claude':'Claude';
-  const widgetInstructions=buildGemInstructions(widgetSourceLabel);
-  const copy=()=>{navigator.clipboard.writeText(widgetInstructions).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500)}).catch(()=>{})};
-  const steps=[
-    {n:1,icon:'🌐',title:'Open Gemini Gems',desc:'Go to gemini.google.com → click Gems in the left sidebar → New Gem'},
-    {n:2,icon:'📁',title:'Add Knowledge from Google Drive',desc:'Under Knowledge, click "Add from Google Drive" → navigate to your migrated folder → select all files → Insert'},
-    {n:3,icon:'📋',title:'Paste the Gem Instructions',desc:'Copy the instructions below and paste them into the Instructions box'},
-    {n:4,icon:'💾',title:'Name & Save the Gem',desc:'Give the Gem a name (e.g. "My Chat History") → click Save'},
-  ];
-  return(
-    <div style={{borderRadius:10,border:'1px solid #BFDBFE',padding:'14px 16px',marginTop:8,background:'#EFF6FF'}}>
-      <div style={{fontSize:12,fontWeight:700,color:'#1E3A5F',marginBottom:10}}>💎 Set Up Your Gemini Gem</div>
-      <div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:12}}>
-        {steps.map(s=>(
-          <div key={s.n} style={{display:'flex',gap:10,alignItems:'flex-start',background:'white',borderRadius:8,padding:'8px 12px',border:'1px solid #DBEAFE'}}>
-            <div style={{minWidth:24,height:24,borderRadius:'50%',background:'#1D4ED8',color:'white',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,flexShrink:0}}>{s.n}</div>
-            <div>
-              <div style={{fontSize:12,fontWeight:600,color:'#1E3A5F'}}>{s.icon} {s.title}</div>
-              <div style={{fontSize:11,color:'#4B5563',lineHeight:1.5}}>{s.desc}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-      <div style={{background:'white',border:'1px solid #BFDBFE',borderRadius:8,overflow:'hidden'}}>
-        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'6px 10px',background:'#DBEAFE'}}>
-          <span style={{fontSize:11,fontWeight:700,color:'#1E40AF'}}>📋 Gem Instructions</span>
-          <button onClick={copy} style={{fontSize:11,fontWeight:600,color:copied?'#16a34a':'#1D4ED8',background:copied?'#DCFCE7':'#EFF6FF',border:`1px solid ${copied?'#86EFAC':'#93C5FD'}`,borderRadius:6,padding:'3px 8px',cursor:'pointer',fontFamily:'inherit'}}>
-            {copied?'✓ Copied':'Copy'}
-          </button>
-        </div>
-        <pre style={{margin:0,padding:'10px 12px',fontSize:11,lineHeight:1.5,color:'#1E293B',whiteSpace:'pre-wrap',wordBreak:'break-word',fontFamily:'Consolas,monospace',maxHeight:160,overflowY:'auto'}}>{widgetInstructions}</pre>
-      </div>
-      <div style={{marginTop:8,padding:'7px 10px',background:'#FEF9C3',border:'1px solid #FDE68A',borderRadius:7,fontSize:11,color:'#713F12'}}>
-        <strong>Tip:</strong> Add all migrated files (conversations, memory, projects) to the Gem for best results.
-      </div>
-    </div>
-  );
-};
 
 /* ═══  CLAUDE→GEMINI: MIGRATE STEP        ═══ */
 /* ═══════════════════════════════════════════ */
@@ -2284,8 +2166,6 @@ const StepCL2GMigrate=({cl2gStats,cl2gDone,onRunAnother,onBack,onStart,cl2gLive,
               </div>
             ))}
           </div>
-
-          {!lastRunWasDry&&<GemSetupInstructions folderName={folderName} migDir="claude-gemini"/>}
 
           <div style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:16}}>
             {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{flex:'1 1 140px',justifyContent:'center'}}><IcoRocket s={14}/> Start Live Migration</Btn>}
