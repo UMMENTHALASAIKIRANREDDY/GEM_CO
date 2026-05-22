@@ -160,7 +160,7 @@ function _commonLeadingWhitespace(lines) {
  * file produced. One Python block can produce multiple files.
  */
 const PYTHON_FENCE_RE = /```python(?:\?[^\n]*)?\n([\s\S]*?)(?=\n[ \t]*```|\n[ \t]*\[cite_start\]|\n[ \t]*http:\/\/googleusercontent\.com|$)/g;
-const FILE_WRITE_HINTS = /\.to_csv\(|\.to_excel\(|\.to_json\(|ExcelWriter|with\s+open\(|\.write_pdf\(|\.write_text\(|json\.dump|yaml\.dump|savefig\(|\.save\(|HTML\([^)]*\)\.write|Document\(/i;
+const FILE_WRITE_HINTS = /\.to_csv\(|\.to_excel\(|\.to_json\(|ExcelWriter|with\s+open\(|\.write_pdf\(|\.write_text\(|json\.dump|yaml\.dump|savefig\(|\.save\(|HTML\([^)]*\)\.write|Document\(|zipfile\.ZipFile|tarfile\.open|shutil\.make_archive|Workbook\(\)|Presentation\(\)|FPDF\(|canvas\.Canvas|csv\.writer|csv\.DictWriter|Image\.open|Image\.new|cv2\.imwrite|imageio\.imwrite|wb\.save|doc\.save/i;
 
 export async function regeneratePythonFiles(responseText) {
   const out = [];
