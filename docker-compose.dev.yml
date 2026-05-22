@@ -9,7 +9,9 @@ services:
       dockerfile: Dockerfile
     container_name: gem-co-migration-dev
     ports:
-      - "4000:4000"
+      # Host port 4001 (host 4000 is taken by another container on this server,
+      # host 4006 is taken by gem-co-migration-prod). 4000 inside container.
+      - "4001:4000"
     env_file:
       - .env
     volumes:
