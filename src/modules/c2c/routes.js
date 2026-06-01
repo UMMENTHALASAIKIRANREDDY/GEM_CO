@@ -93,10 +93,28 @@ export function createC2CRouter(deps) {
     }
   });
 
-  // GET /api/c2c/connected-tenants — list tenants consented by this app user
+  // GET /api/c2c/connected-tenants — list tenants consented by this app user.
+  // If the user has NO Microsoft accounts signed in this session, auto-revoke
+  // any lingering tenant consents from prior sessions and return an empty list.
+  // This matches user expectation: "0 clouds connected = empty C2C state".
   router.get('/connected-tenants', requireAuth, async (req, res) => {
     try {
       const { appUserId } = getWorkspaceContext(req);
+      // Lazy import to avoid circular dep; getMsAccounts is from server.js auth layer
+      const { getMsAccounts } = await import('../../core/auth/microsoft.js');
+      const hasMsAccounts = (getMsAccounts?.(appUserId) || []).length > 0;
+      if (!hasMsAccounts) {
+        // Soft-revoke any active consents — user is in a "no clouds connected"
+        // state and shouldn't see stale tenants from a prior session.
+        const result = await db().collection('connectedTenants').updateMany(
+          { appUserId, consentState: { $ne: 'revoked' } },
+          { $set: { consentState: 'revoked', revokedAt: new Date(), revokeReason: 'no_ms_accounts_in_session' } }
+        );
+        if (result.modifiedCount > 0) {
+          console.log(`[c2c] auto-revoked ${result.modifiedCount} stale tenant consent(s) for appUserId=${appUserId} (no MS accounts)`);
+        }
+        return res.json({ tenants: [] });
+      }
       const tenants = await db().collection('connectedTenants')
         .find({ appUserId, consentState: { $ne: 'revoked' } })
         .sort({ consentedAt: -1 })
@@ -182,6 +200,17 @@ export function createC2CRouter(deps) {
         { upsert: true }
       );
       dbLog.info(`userMappings.upsert — C2C ${Object.keys(mappings || {}).length} mappings`);
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.delete('/user-mappings', requireAuth, async (req, res) => {
+    try {
+      const { appUserId } = getWorkspaceContext(req);
+      await db().collection('userMappings').updateOne(
+        { appUserId, migDir: 'copilot-copilot' },
+        { $set: { mappings: {}, csvEmails: null, updatedAt: new Date() } }
+      );
       res.json({ ok: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
@@ -402,6 +431,30 @@ export function createC2CRouter(deps) {
             { upsert: true }
           );
           dbLog.info(`migrationWorkspaces.insert — C2C batch ${batchId} status=running`);
+
+          // Pre-flight validator (only on dry-run; additive)
+          if (isDryRun) {
+            try {
+              const { runDryRunValidator } = await import('../dry-run/validator.js');
+              // For C2C we'd ideally pass source/dest tokens. The migration acquires
+              // them internally via tenant consent flow; we pass tenantIds and let
+              // the validator skip token-dependent checks if missing.
+              const dryRunReport = await runDryRunValidator({
+                migDir: 'copilot-copilot',
+                pairs: pairs.map(p => ({ sourceEmail: p.sourceEmail, destEmail: p.destEmail, expectedConversationCount: p.expectedConversationCount || 0 })),
+                config: { folderName: c2cFolderName, dryRun: true },
+                appUserId,
+                sourceTenantId, destTenantId,
+              });
+              await db().collection('migrationWorkspaces').updateOne(
+                { _id: batchId },
+                { $set: { dryRunReport } }
+              ).catch(() => {});
+              dbLog.info(`[C2C] Dry-run validator: ${dryRunReport.summary.ready} ready · ${dryRunReport.summary.warning} warning · ${dryRunReport.summary.blocker} blocker`);
+            } catch (e) {
+              dbLog.warn(`[C2C] Dry-run validator failed: ${e.message}`);
+            }
+          }
         } catch (e) { log.error('DB insert error:', e.message); }
 
         try {

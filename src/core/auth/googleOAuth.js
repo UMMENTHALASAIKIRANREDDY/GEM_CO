@@ -66,7 +66,11 @@ export function getGoogleAuthUrl(appUserId) {
   const client = _createOAuth2Client(appUserId, accountId);
   _sessions.set(_key(appUserId, accountId), { oauth2Client: client, tokens: null, tokenExpiry: 0, accountId, email: null });
   const state = Buffer.from(JSON.stringify({ appUserId, accountId })).toString('base64');
-  const url = client.generateAuthUrl({ access_type: 'offline', scope: SCOPES, prompt: 'consent', state });
+  // prompt: 'select_account consent' — forces Google's account picker AND
+  // re-consent. Without 'select_account', when the browser is already signed
+  // into one Google account, clicking "+ Add Another" silently reuses it and
+  // the user can't add a second account.
+  const url = client.generateAuthUrl({ access_type: 'offline', scope: SCOPES, prompt: 'select_account consent', state });
   return { url, accountId };
 }
 

@@ -366,7 +366,9 @@ export async function migrateC2CUserPair(
     //    source tenant URLs).
     const fileLinks = new Map();      // source URL → uploaded OneDrive webUrl (used by OneNote page renderer)
     const uploadedByUrl = new Map();  // source URL → true (so we don't re-download)
+    let convIdx = 0;
     for (const [, items] of sessions.entries()) {
+      convIdx++;
       const title = conversationTitle(items);
 
       // Build turn-shape + collect this conversation's attachment refs.
@@ -439,6 +441,7 @@ export async function migrateC2CUserPair(
             if (onProgress) onProgress({
               pagesCreated: result.pagesCreated,
               filesUploaded: result.filesUploaded,
+              convIdx,
               totalConvs: sessions.size,
             });
           } catch (e) {
@@ -476,6 +479,7 @@ export async function migrateC2CUserPair(
             if (onProgress) onProgress({
               pagesCreated: result.pagesCreated,
               filesUploaded: result.filesUploaded,
+              convIdx,
               totalConvs: sessions.size,
             });
             continue;

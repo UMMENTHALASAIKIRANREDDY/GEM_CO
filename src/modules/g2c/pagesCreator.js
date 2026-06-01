@@ -101,10 +101,40 @@ export class PagesCreator {
       );
       if (!createRes.ok) {
         const err = await createRes.text();
-        throw new Error(`Cannot create section for ${targetEmail}: ${createRes.status} — ${err.slice(0, 200)}`);
+        // 409 / 10008 ("EntityAlreadyExists") — section was created between
+        // our filter lookup and now. Just re-fetch it instead of failing.
+        if (createRes.status === 409 || err.includes('10008') || err.toLowerCase().includes('already exists')) {
+          logger.warn(`Section "${sectionName}" race-created — re-fetching for ${targetEmail}`);
+          const refetch = await fetch(
+            `${GRAPH_BASE}/users/${targetEmail}/onenote/notebooks/${notebook.id}/sections?$filter=${filterSec}`,
+            { headers }
+          );
+          if (refetch.ok) {
+            const refetchData = await refetch.json();
+            section = (refetchData.value || [])[0] || null;
+          }
+          if (!section) {
+            // Last resort: list all sections (no filter) — Graph's $filter sometimes lags
+            const listAll = await fetch(
+              `${GRAPH_BASE}/users/${targetEmail}/onenote/notebooks/${notebook.id}/sections`,
+              { headers }
+            );
+            if (listAll.ok) {
+              const listData = await listAll.json();
+              section = (listData.value || []).find(s => s.displayName === sectionName) || null;
+            }
+          }
+          if (!section) {
+            throw new Error(`Cannot create section for ${targetEmail}: ${createRes.status} — section reportedly exists but cannot be retrieved. Try renaming the section in Migration Options.`);
+          }
+          logger.info(`Recovered existing section "${sectionName}" for ${targetEmail}`);
+        } else {
+          throw new Error(`Cannot create section for ${targetEmail}: ${createRes.status} — ${err.slice(0, 200)}`);
+        }
+      } else {
+        section = await createRes.json();
+        logger.info(`Created section "${sectionName}" for ${targetEmail}`);
       }
-      section = await createRes.json();
-      logger.info(`Created section "${sectionName}" for ${targetEmail}`);
     }
 
     this._sectionIds[cacheKey] = section.id;

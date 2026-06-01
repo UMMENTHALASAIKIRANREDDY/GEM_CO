@@ -177,8 +177,32 @@ export function createC2GRouter(deps) {
           c2gLog('info', `Starting C2G ${isDryRun ? 'dry run' : 'migration'} for ${migPairs.length} user pair(s)...`);
 
           if (isDryRun) {
+            // Initial progress so the UI ring moves off 0% immediately
+            c2gLog('progress', JSON.stringify({ files: 0, errors: 0, users: 0, total: migPairs.length }));
+            c2gLog('info', `Running pre-flight validation for ${migPairs.length} user(s)...`);
+            // Pre-flight validator (additive — runs alongside existing count loop)
+            try {
+              const { runDryRunValidator } = await import('../dry-run/validator.js');
+              const dryRunReport = await runDryRunValidator({
+                migDir: 'copilot-gemini',
+                pairs: migPairs,
+                config: { folderName: c2gFolderName, fromDate, toDate, dryRun: true },
+                appUserId, googleEmail, msEmail,
+              });
+              await db().collection('migrationWorkspaces').updateOne(
+                { _id: batchId },
+                { $set: { dryRunReport } }
+              ).catch(() => {});
+              c2gLog('info', `Dry-run validator: ${dryRunReport.summary.ready} ready · ${dryRunReport.summary.warning} warning · ${dryRunReport.summary.blocker} blocker`);
+            } catch (e) {
+              c2gLog('warn', `Dry-run validator failed: ${e.message}`);
+            }
             const { getCopilotInteractionsForUser } = svcModule;
             const reportUsers = [];
+            // Initial progress event so the ring leaves 0%/5%
+            c2gLog('progress', JSON.stringify({ files: 0, errors: 0, users: 0, total: migPairs.length }));
+            let userIdx = 0;
+            let cumulativeConvs = 0;
             for (const p of migPairs) {
               try {
                 const { accessToken: at } = await createSourceGraphClient();
@@ -188,12 +212,52 @@ export function createC2GRouter(deps) {
                 c2gLog('info', `${p.sourceDisplayName} → ${p.destUserEmail}: ${interactions.length} interactions, ${sessions.size} conversations`);
                 reportUsers.push({ email: p.sourceEmail, destEmail: p.destUserEmail, displayName: p.sourceDisplayName, status: 'success', pages_created: sessions.size, conversations_processed: sessions.size, error_count: 0, errors: [] });
                 files += sessions.size;
+                // Animate ring as we count sessions for this user. Emit ~10 progress
+                // events per user, with a tiny delay so the ring visibly moves even
+                // on fast networks. (Falls through the UI's "5+files" ring fallback
+                // since we don't know total conversations upfront for dry-run.)
+                const totalForUser = sessions.size;
+                const emitEvery = Math.max(1, Math.floor(totalForUser / 10));
+                for (let i = 0; i < totalForUser; i++) {
+                  if (i % emitEvery === 0 || i === totalForUser - 1) {
+                    c2gLog('progress', JSON.stringify({
+                      files: cumulativeConvs + i + 1,
+                      errors,
+                      users: userIdx,
+                      total: migPairs.length,
+                    }));
+                    // Small yield so the SSE stream actually flushes between events
+                    await new Promise(r => setTimeout(r, 30));
+                  }
+                }
+                cumulativeConvs += totalForUser;
+                userIdx++;
+                c2gLog('progress', JSON.stringify({ files: cumulativeConvs, errors, users: userIdx, total: migPairs.length }));
               } catch (e) {
                 c2gLog('warn', `${p.sourceDisplayName}: ${e.message}`);
                 reportUsers.push({ email: p.sourceEmail, destEmail: p.destUserEmail, displayName: p.sourceDisplayName, status: 'failed', pages_created: 0, conversations_processed: 0, error_count: 1, errors: [{ error_message: e.message }] });
                 errors++;
+                userIdx++;
+                c2gLog('progress', JSON.stringify({ files: cumulativeConvs, errors, users: userIdx, total: migPairs.length }));
               }
             }
+            // Backfill actualFiles into the dryRunReport so the per-user card
+            // shows real counts (not placeholders) once the count loop is done.
+            try {
+              const existing = await db().collection('migrationWorkspaces').findOne({ _id: batchId }, { projection: { dryRunReport: 1 } });
+              if (existing?.dryRunReport?.users) {
+                const byEmail = new Map(reportUsers.map(u => [(u.email || '').toLowerCase(), u]));
+                for (const ur of existing.dryRunReport.users) {
+                  const m = byEmail.get((ur.sourceEmail || '').toLowerCase());
+                  if (m) ur.actualFiles = m.pages_created || 0;
+                }
+                await db().collection('migrationWorkspaces').updateOne(
+                  { _id: batchId },
+                  { $set: { 'dryRunReport.users': existing.dryRunReport.users } }
+                ).catch(() => {});
+              }
+            } catch (e) { dbLog.warn(`Backfill actualFiles failed: ${e.message}`); }
+
             await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: {
               migDir: 'copilot-gemini', status: 'completed', endTime: new Date(), dryRun: true, totalUsers: migPairs.length,
               migratedConversations: files, migratedUsers: reportUsers.filter(u => u.status === 'success').length,

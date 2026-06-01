@@ -207,9 +207,17 @@ function buildDriveFileParagraphs(driveFiles) {
         // fall through to hyperlink
       }
     } else {
+      // Choose prefix based on origin:
+      //   - _uploadedLink set → AI-generated file uploaded by GEM_CO
+      //   - _contentMigrated → Drive-attached file moved separately by Content Migration
+      //   - neither → fallback (rare)
       const linkUrl = f._uploadedLink || '';
-      const prefix = f._uploadedLink ? '[Google Drive] ' : '[Source link] ';
-      const color = f._uploadedLink ? '38761D' : '888888';
+      const prefix = f._uploadedLink
+        ? '[Destination Drive] '
+        : f._contentMigrated
+          ? '[Migrated via Content Migration] '
+          : '[Source link] ';
+      const color = f._uploadedLink ? '38761D' : f._contentMigrated ? '0B5394' : '888888';
       const label = f.fileName || 'attached file';
       const children = [new TextRun({ text: prefix, size: 18, bold: true, color })];
       if (linkUrl) {
@@ -218,7 +226,9 @@ function buildDriveFileParagraphs(driveFiles) {
           children: [new TextRun({ text: label, style: 'Hyperlink', size: 20, color: '0B5394', underline: {} })],
         }));
       } else {
-        children.push(new TextRun({ text: label, size: 20, color: '0B5394' }));
+        // No link to a destination file — show the filename so the user can
+        // find it in their own Drive after Content Migration completes.
+        children.push(new TextRun({ text: label, size: 20, color: '0B5394', italics: true }));
       }
       paras.push(new Paragraph({
         spacing: { before: 60, after: 60 },
@@ -554,10 +564,18 @@ export async function runG2GMigration(
         }
       }
 
-      // --- Download referenced files from source Drive, upload to dest user's Drive ---
-      // Cached per fileId so a file referenced in multiple turns is only migrated once.
+      // --- Process referenced files from source Drive ---
+      // CloudFuze Content Migration is the canonical Drive → Drive mover.
+      // G2G must NOT re-upload Drive-source files — that would create
+      // duplicates in the destination. Instead:
+      //   • For IMAGES → download bytes for INLINE embedding in the DOCX
+      //     (so the conversation visually makes sense). No upload to dest.
+      //   • For non-image files → insert a "[Content Migration]" hyperlink
+      //     to the source URL; no download, no upload.
+      // AI-generated files (regenerated below) are still uploaded since
+      // they never existed in the source user's Drive.
       const fileMigrationCache = new Map();
-      let migratedAssetCount = 0;
+      let inlineImageCount = 0;
       for (const conv of enrichedConvs) {
         for (const turn of (conv.turns || [])) {
           if (!turn.driveFiles?.length) continue;
@@ -565,30 +583,32 @@ export async function runG2GMigration(
             if (!f.driveFileId) continue;
             if (fileMigrationCache.has(f.driveFileId)) {
               const cached = fileMigrationCache.get(f.driveFileId);
-              if (cached) { f._uploadedLink = cached.webViewLink; f._imageBuffer = cached.imageBuffer; }
+              if (cached) { f._uploadedLink = cached.webViewLink; f._imageBuffer = cached.imageBuffer; f._contentMigrated = cached.contentMigrated; }
               continue;
             }
-            try {
-              const dl = await downloadFromSourceDrive(sourceAuth, f.driveFileId, f.mimeType);
-              const uploadName = dl.ext ? `${f.fileName}${dl.ext}` : f.fileName;
-              const uploaded = await uploadFileToDrive(destUserAuth, uploadName, dl.mime, dl.buffer, mainFolder.id);
-              const imageBuffer = (f.mimeType || '').startsWith('image/') ? dl.buffer : null;
-              fileMigrationCache.set(f.driveFileId, { webViewLink: uploaded.webViewLink, imageBuffer });
-              f._uploadedLink = uploaded.webViewLink;
-              f._imageBuffer = imageBuffer;
-              result.filesUploaded++;
-              migratedAssetCount++;
-              userRecord.files_created++;
-              onLog({ type: 'success', message: `  Drive file migrated: "${f.fileName}" → ${mappedTo}'s Drive` });
-            } catch (err) {
-              fileMigrationCache.set(f.driveFileId, null);
-              userRecord.errors.push({ conversation: f.fileName, error_message: err.message });
-              onLog({ type: 'warn', message: `  Drive file copy failed for "${f.fileName}": ${err.message}` });
+            // Mark as Content-Migration-handled so the DOCX renderer can
+            // label the link clearly ("Migrated via Content Migration").
+            f._contentMigrated = true;
+            // For images only, fetch the bytes so we can embed inline. This
+            // is read-only on source and does NOT create a destination file.
+            const isImage = (f.mimeType || '').startsWith('image/');
+            if (isImage && sourceAuth) {
+              try {
+                const dl = await downloadFromSourceDrive(sourceAuth, f.driveFileId, f.mimeType);
+                f._imageBuffer = dl.buffer;
+                inlineImageCount++;
+                fileMigrationCache.set(f.driveFileId, { webViewLink: null, imageBuffer: dl.buffer, contentMigrated: true });
+              } catch (err) {
+                onLog({ type: 'warn', message: `  Could not fetch image bytes for inline embed "${f.fileName}": ${err.message}` });
+                fileMigrationCache.set(f.driveFileId, { webViewLink: null, imageBuffer: null, contentMigrated: true });
+              }
+            } else {
+              fileMigrationCache.set(f.driveFileId, { webViewLink: null, imageBuffer: null, contentMigrated: true });
             }
           }
         }
       }
-      if (migratedAssetCount > 0) onLog({ type: 'info', message: `Migrated ${migratedAssetCount} attached file(s) for ${sourceEmail}` });
+      if (inlineImageCount > 0) onLog({ type: 'info', message: `Embedded ${inlineImageCount} inline image(s) for ${sourceEmail} (other Drive attachments will be moved by Content Migration)` });
 
       // --- Phase 1 + Phase 2 file recovery from Vault response text ---
       // Files Gemini generated inside the chat (inline CSV/JSON/HTML, or

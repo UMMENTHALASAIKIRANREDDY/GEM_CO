@@ -595,29 +595,34 @@ const StepDirection=({onSelect,onBack,googleAuthed,msAuthed,googleAccounts,msAcc
   const multiGoogle=googleCount>=2;
   const multiMs=msCount>=2;
 
-  // Build dirs additively so each condition contributes its tiles without overwriting others
+  // Filter logic: show tiles based on which clouds are connected.
+  //   Both Google + Microsoft connected → cross-cloud directions only (no Claude)
+  //   Only Google connected → Claude → Gemini
+  //   Only Microsoft connected → Claude → Copilot
+  //   Multi-tenant (2+ Google or 2+ Microsoft) → also show same-cloud (G2G / C2C)
   const dirs=[];
   if(bothConnected){
     dirs.push({id:'gemini-copilot',label:'Gemini → Copilot',sub:'Google Workspace to Microsoft 365',srcIcon:<GoogleIcon/>,tgtIcon:<MsIcon/>});
     dirs.push({id:'copilot-gemini',label:'Copilot → Gemini',sub:'Microsoft 365 to Google Workspace',srcIcon:<MsIcon/>,tgtIcon:<GoogleIcon/>});
+  }else if(googleAuthed&&!multiGoogle){
+    // Only Google connected, single account — Claude→Gemini is the cross-tool path
+    dirs.push({id:'claude-gemini',label:'Claude → Gemini',sub:'Claude export ZIP to Google Drive',srcIcon:<ClaudeIcon/>,tgtIcon:<GoogleIcon/>});
+  }else if(msAuthed&&!multiMs){
+    // Only Microsoft connected, single account — Claude→Copilot is the cross-tool path
+    dirs.push({id:'claude-copilot',label:'Claude → Copilot',sub:'Claude export ZIP to Microsoft OneDrive',srcIcon:<ClaudeIcon/>,tgtIcon:<MsIcon/>});
   }
+  // Same-cloud (multi-tenant) directions: when multiple accounts of one cloud
+  // are connected, the same-cloud migration takes precedence over Claude.
   if(multiGoogle){
     dirs.push({id:'gemini-gemini',label:'Gemini → Gemini',sub:'Migrate between Google Workspace accounts',srcIcon:<GoogleIcon/>,tgtIcon:<GoogleIcon/>});
   }
   if(multiMs){
     dirs.push({id:'copilot-copilot',label:'Copilot → Copilot',sub:'Microsoft 365 to Microsoft 365 (cross-tenant)',srcIcon:<MsIcon/>,tgtIcon:<MsIcon/>});
   }
-  if(msAuthed&&!multiMs){
-    // 1 Microsoft connected — show Claude→Copilot (and Claude→Gemini if Google also connected)
-    dirs.push({id:'claude-copilot',label:'Claude → Copilot',sub:'Claude export ZIP to Microsoft OneDrive',srcIcon:<ClaudeIcon/>,tgtIcon:<MsIcon/>});
-  }
-  if(googleAuthed){
-    dirs.push({id:'claude-gemini',label:'Claude → Gemini',sub:'Claude export ZIP to Google Drive',srcIcon:<ClaudeIcon/>,tgtIcon:<GoogleIcon/>});
-  }
-  // Deduplicate by id while preserving order (in case bothConnected + multiGoogle add same tile via different routes — currently they don't, but defensive)
+  // Defensive dedup (multiGoogle + bothConnected etc. shouldn't collide today, but cheap insurance)
   const seenIds=new Set();
   const dedupedDirs=dirs.filter(d=>{if(seenIds.has(d.id))return false;seenIds.add(d.id);return true;});
-  // Fallback: if nothing matches yet (no clouds connected) show Claude→Gemini as the lowest-friction path
+  // Fallback: if nothing matches (no clouds connected at all) show Claude→Gemini as the lowest-friction path
   if(dedupedDirs.length===0)dedupedDirs.push({id:'claude-gemini',label:'Claude → Gemini',sub:'Claude export ZIP to Google Drive',srcIcon:<ClaudeIcon/>,tgtIcon:<GoogleIcon/>});
   return(
     <div className="fade-up">
@@ -642,8 +647,12 @@ const StepDirection=({onSelect,onBack,googleAuthed,msAuthed,googleAccounts,msAcc
 /* ══════════════════════════════ */
 /* ═══   STEP 1: IMPORT DATA  ═══ */
 /* ══════════════════════════════ */
-const Step1=({googleUsers,googleAuthed,onComplete,onBack,showToast,uploadData:activeUpload})=>{
+const Step1=({googleUsers,googleAuthed,onComplete,onBack,showToast,uploadData:activeUpload,importTabSignal,exportTrigger})=>{
   const [tab,setTab]=useState(activeUpload?'upload':'userwise');
+  useEffect(()=>{
+    if(importTabSignal?.tab&&importTabSignal.tab!==tab)setTab(importTabSignal.tab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[importTabSignal?.ts]);
   const [selected,setSelected]=useState(new Set());
   const [exporting,setExporting]=useState(false);
   const [exportStatus,setExportStatus]=useState('');
@@ -673,17 +682,32 @@ const Step1=({googleUsers,googleAuthed,onComplete,onBack,showToast,uploadData:ac
   const toggleUser=e=>setSelected(p=>{const n=new Set(p);n.has(e)?n.delete(e):n.add(e);return n});
   const toggleAll=()=>{if(selected.size===googleUsers.length)setSelected(new Set());else setSelected(new Set(googleUsers.map(u=>u.email)))};
 
-  const startExport=async()=>{
+  const startExport=async(explicitEmails)=>{
+    const emails=(explicitEmails&&explicitEmails.length)?explicitEmails:[...selected];
+    if(emails.length===0){showToast?.('No users selected for export.','error');return;}
     setExporting(true);setElapsed(0);
     elapsedRef.current=setInterval(()=>setElapsed(p=>p+1),1000);
     setExportStatus('Creating Vault export...');
     try{
-      const res=await fetch('/api/google/vault-export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_emails:[...selected]})});
+      const res=await fetch('/api/google/vault-export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_emails:emails})});
       const data=await res.json();
       if(!res.ok){setExportStatus(`Error: ${data.error}`);clearInterval(elapsedRef.current);setExporting(false);return}
       setExportStatus('Export in progress...');pollExport();
     }catch(e){setExportStatus(`Error: ${e.message}`);clearInterval(elapsedRef.current);setExporting(false)}
   };
+
+  // Agent-driven export trigger (same pattern as G2G)
+  useEffect(()=>{
+    if(!exportTrigger?.ts)return;
+    let targetEmails=[];
+    if(exportTrigger.scope==='all')targetEmails=(googleUsers||[]).map(u=>u.email).filter(Boolean);
+    else if(exportTrigger.scope==='selected'&&Array.isArray(exportTrigger.emails))targetEmails=exportTrigger.emails;
+    if(targetEmails.length===0)return;
+    setSelected(new Set(targetEmails));
+    setTab('userwise');
+    startExport(targetEmails);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[exportTrigger?.ts]);
 
   const pollExport=()=>{
     const check=async()=>{
@@ -835,6 +859,11 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
   const [search,setSearch]=useState('');
   const [csvUploading,setCsvUploading]=useState(false);
   const [prevMigrated,setPrevMigrated]=useState(new Set());
+  // csvEmails: null = no CSV (show all source users from ZIP); array = filter
+  // table to only these source emails. Persisted to DB so it survives server
+  // restart and user logout / login.
+  const [csvEmails,setCsvEmails]=useState(null);
+  const csvEmailsRef=useRef(null);
 
   // Fetch previously migrated M365 emails for this upload to show duplicate warnings
   useEffect(()=>{
@@ -846,9 +875,30 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
     }
   },[uploadData?.id]);
 
-  // Auto-map by email local-part — each M365 email used at most once
+  // On mount: load persisted mappings + csvEmails from DB (cross-session)
+  useEffect(()=>{
+    fetch('/api/user-mappings').then(r=>r.ok?r.json():null).then(doc=>{
+      if(doc?.csvEmails&&doc.csvEmails.length>0){
+        setCsvEmails(doc.csvEmails);
+        csvEmailsRef.current=doc.csvEmails;
+        if(doc.mappings&&Object.keys(doc.mappings).length>0){
+          setMappings(doc.mappings);
+          setSelectedUsers(new Set(Object.entries(doc.mappings).filter(([,v])=>v).map(([k])=>k)));
+        }
+      }
+    }).catch(()=>{});
+  },[]);
+
+  const persistMappings=(m,csv)=>{
+    fetch('/api/user-mappings',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({mappings:m,csvEmails:csv??null,customerName:'Gemini'})}).catch(()=>{});
+  };
+
+  // Auto-map by email local-part — each M365 email used at most once.
+  // Skip if a CSV is active (CSV is the source of truth for source users).
   useEffect(()=>{
     if(!uploadData?.users?.length)return;
+    if(csvEmailsRef.current)return;
     const byLocal={};
     msUsers.forEach(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
     const m={};const used=new Set();
@@ -859,16 +909,19 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
         if(dest&&!used.has(dest)){m[u.email]=dest;used.add(dest);}else m[u.email]='';}
     });
     setMappings(m);
-    // Auto-select only mapped users
-    setSelectedUsers(new Set(Object.entries(m).filter(([,v])=>v).map(([k])=>k)));
+    // Don't touch selection state — selections are user-driven and must survive
+    // navigation (forward → back). Initial state is already an empty Set.
   },[uploadData,msUsers]);
 
   const downloadCsv=()=>{
     const sorted=[...users].sort((a,b)=>{const ma=!!mappings[a.email],mb=!!mappings[b.email];if(ma!==mb)return ma?-1:1;return a.email.localeCompare(b.email)});
     const rows=sorted.map(u=>`"${u.email}","${mappings[u.email]||''}"`);
+    const usedDest=new Set(Object.values(mappings).filter(Boolean).map(v=>v.toLowerCase()));
+    const destSorted=[...msUsers].map(u=>(u.mail||u.userPrincipalName||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b));
+    for(const em of destSorted){if(!usedDest.has(em.toLowerCase()))rows.push(`"","${em}"`);}
     const csv='Source User,Destination User\n'+rows.join('\n');
     const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='user-mappings.csv';a.click();
-    showToast('User mapping CSV downloaded successfully.');
+    showToast(`Downloaded ${sorted.length} source + ${destSorted.length} destination users.`);
   };
 
   const uploadCsv=file=>{
@@ -876,17 +929,52 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
     const r=new FileReader();
     r.onload=e=>{
       const lines=e.target.result.split(/\r?\n/).slice(1);
-      const m={};const used=new Set();
-      for(const l of lines){if(!l.trim())continue;const c=parseCsvLine(l);if(c.length>=2&&c[0]){const dst=c[1].trim().toLowerCase();if(dst&&!used.has(dst)){m[c[0].trim().toLowerCase()]=dst;used.add(dst);}else if(!dst)m[c[0].trim().toLowerCase()]=''}}
-      setMappings(m);setSelectedUsers(new Set(Object.entries(m).filter(([,v])=>v).map(([k])=>k)));
+      const m={};const used=new Set();const csvKeys=[];
+      for(const l of lines){
+        if(!l.trim())continue;
+        const c=parseCsvLine(l);
+        if(c.length>=2&&c[0]){
+          const src=c[0].trim().toLowerCase();
+          const dst=c[1].trim().toLowerCase();
+          if(dst&&!used.has(dst)){m[src]=dst;used.add(dst);}
+          else if(!dst)m[src]='';
+          csvKeys.push(src);
+        }
+      }
+      setMappings(m);
+      setSelectedUsers(new Set(Object.entries(m).filter(([,v])=>v).map(([k])=>k)));
+      setCsvEmails(csvKeys);
+      csvEmailsRef.current=csvKeys;
+      persistMappings(m,csvKeys);
       setCsvUploading(false);
-      showToast('User mapping uploaded successfully.');
+      showToast(`CSV uploaded — ${csvKeys.length} user(s).`);
     };
     r.onerror=()=>setCsvUploading(false);
     r.readAsText(file);
   };
 
-  const users=uploadData?.users||[];
+  const clearCsv=()=>{
+    setCsvEmails(null);
+    csvEmailsRef.current=null;
+    fetch('/api/user-mappings',{method:'DELETE'}).catch(()=>{});
+    // Restore cloud-side auto-mapping by re-running the email-local-part match.
+    if(uploadData?.users?.length){
+      const byLocal={};
+      msUsers.forEach(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
+      const m={};const used=new Set();
+      uploadData.users.forEach(u=>{
+        const loc=u.email.split('@')[0].toLowerCase();
+        const dest=byLocal[loc]||'';
+        if(dest&&!used.has(dest)){m[u.email]=dest;used.add(dest);}else m[u.email]='';
+      });
+      setMappings(m);
+      setSelectedUsers(new Set(Object.keys(m).filter(k=>m[k])));
+    }
+    showToast?.('CSV cleared — restored cloud auto-mapping.');
+  };
+
+  const allUsers=uploadData?.users||[];
+  const users=csvEmails ? allUsers.filter(u=>csvEmails.includes((u.email||'').toLowerCase())) : allUsers;
   const filtered=users.filter(u=>{const q=search.toLowerCase();return u.email.toLowerCase().includes(q)||(mappings[u.email]||'').toLowerCase().includes(q)}).sort((a,b)=>{const ma=!!mappings[a.email],mb=!!mappings[b.email];if(ma!==mb)return ma?-1:1;return a.email.localeCompare(b.email)});
   const toggleUser=e=>setSelectedUsers(p=>{const n=new Set(p);n.has(e)?n.delete(e):n.add(e);return n});
   const toggleAll=()=>{if(selectedUsers.size===users.length)setSelectedUsers(new Set());else setSelectedUsers(new Set(users.map(u=>u.email)))};
@@ -913,6 +1001,9 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
             <button onClick={downloadCsv} title="Download CSV" style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.primary}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}} onMouseEnter={e=>e.currentTarget.style.background=C.tint} onMouseLeave={e=>e.currentTarget.style.background='white'}>
               <IcoDownload s={13} c={C.primary}/>
             </button>
+            {csvEmails&&<button onClick={clearCsv} title="Clear CSV — restore cloud auto-mapping" style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.error}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}} onMouseEnter={e=>e.currentTarget.style.background='#FEF2F2'} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+              <IcoTrash s={13}/>
+            </button>}
           </div>
         </div>
         <div style={{display:'flex',alignItems:'center',marginBottom:8}}>
@@ -1138,8 +1229,8 @@ const StepMigrate=({stats,done,live,lastRunWasDry,batchId,onStartLive,onRunAnoth
               {lastRunWasDry?'Preview complete — no pages were created.':'All conversations migrated. Copilot Agent deployed.'}
             </div>
           </div>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:20}}>
-            {[{label:'Users',val:stats.users,icon:<IcoUser s={22}/>,color:C.primary},{label:lastRunWasDry?'Conversations':' Pages Created',val:stats.pages,icon:<IcoPage s={22}/>,color:C.success},{label:'Errors',val:stats.errors,icon:<IcoError s={22}/>,color:stats.errors>0?C.error:C.muted},{label:'Flagged Assets',val:stats.flagged,icon:<IcoFlag s={22}/>,color:C.primaryL}].map((s,i)=>(
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:20}}>
+            {[{label:'Users',val:stats.users,icon:<IcoUser s={22}/>,color:C.primary},{label:lastRunWasDry?'Conversations':' Pages Created',val:stats.pages,icon:<IcoPage s={22}/>,color:C.success},{label:'Errors',val:stats.errors,icon:<IcoError s={22}/>,color:stats.errors>0?C.error:C.muted}].map((s,i)=>(
               <Card key={i} className="scale-in" style={{animationDelay:`${i*80}ms`,textAlign:'center',padding:16}}>
                 <div style={{display:'flex',justifyContent:'center',marginBottom:6,color:s.color}}>{s.icon}</div>
                 <div style={{fontSize:28,fontWeight:700,color:s.color}}>{s.val}</div>
@@ -1148,90 +1239,11 @@ const StepMigrate=({stats,done,live,lastRunWasDry,batchId,onStartLive,onRunAnoth
             ))}
           </div>
 
+          {lastRunWasDry&&<DryRunReportCard migDir="gemini-copilot"/>}
           {!lastRunWasDry&&(
             <Card style={{background:C.tint,border:`1px solid ${C.primary}30`,marginBottom:16,padding:'14px 16px',fontSize:13}}>
               <b>What's next:</b> Users can open <b>Microsoft Copilot</b> or <b>Teams</b> — the agent is pinned in their sidebar with all migrated conversations.
             </Card>
-          )}
-
-          <button onClick={dlMigrationCsv} style={{width:'100%',display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'10px 16px',borderRadius:6,border:`1px solid ${C.primary}`,background:'white',fontSize:13,fontWeight:500,cursor:'pointer',color:C.primary,fontFamily:'inherit',transition:'all .15s',marginBottom:10}} onMouseEnter={e=>e.currentTarget.style.background=C.tint} onMouseLeave={e=>e.currentTarget.style.background='white'}>
-            <IcoDownload s={13} c={C.primary}/> Download Migration Report (CSV)
-          </button>
-
-          {/* Smart error panel */}
-          {!lastRunWasDry&&stats.errors>0&&errorGroups&&(
-            <div style={{marginBottom:10}}>
-              {errorGroups.path_conflict.length>0&&(
-                <div style={{display:'flex',alignItems:'flex-start',gap:10,padding:'10px 14px',background:'#FFFBEB',border:'1px solid #FCD34D',borderRadius:8,fontSize:12,color:'#92400E',marginBottom:8}}>
-                  <IcoWarn s={14}/>
-                  <div style={{flex:1}}>
-                    <div style={{fontWeight:600,marginBottom:2}}>Section already exists ({errorGroups.path_conflict.length} conversation{errorGroups.path_conflict.length>1?'s':''})</div>
-                    <div style={{color:'#B45309',marginBottom:6}}>This usually resolves automatically on retry — a fresh PagesCreator instance clears the section cache.</div>
-                    <button onClick={onRetry} disabled={retrying} style={{fontSize:11,fontWeight:600,padding:'4px 12px',borderRadius:4,border:'1px solid #F59E0B',background:'#FEF3C7',color:'#92400E',cursor:retrying?'not-allowed':'pointer',fontFamily:'inherit',opacity:retrying?0.6:1}}>
-                      {retrying?'Retrying…':'Retry Now'}
-                    </button>
-                  </div>
-                </div>
-              )}
-              {errorGroups.auth_error.length>0&&(
-                <div style={{display:'flex',alignItems:'flex-start',gap:10,padding:'10px 14px',background:'#FEF2F2',border:`1px solid #FCA5A5`,borderRadius:8,fontSize:12,color:'#991B1B',marginBottom:8}}>
-                  <IcoError s={14}/>
-                  <div style={{flex:1}}>
-                    <div style={{fontWeight:600,marginBottom:2}}>Microsoft token expired ({errorGroups.auth_error.length} conversation{errorGroups.auth_error.length>1?'s':''})</div>
-                    <div style={{color:'#B91C1C',marginBottom:6}}>Go back to Connect Clouds to re-authenticate with Microsoft.</div>
-                    <button onClick={onGoToConnect} style={{fontSize:11,fontWeight:600,padding:'4px 12px',borderRadius:4,border:`1px solid #FCA5A5`,background:'#FEF2F2',color:'#991B1B',cursor:'pointer',fontFamily:'inherit'}}>
-                      Go to Connect Clouds
-                    </button>
-                  </div>
-                </div>
-              )}
-              {errorGroups.page_error.length>0&&(
-                <div style={{display:'flex',alignItems:'flex-start',gap:10,padding:'10px 14px',background:'#FFF7ED',border:'1px solid #FDBA74',borderRadius:8,fontSize:12,color:'#9A3412',marginBottom:8}}>
-                  <IcoWarn s={14}/>
-                  <div style={{flex:1}}>
-                    <div style={{fontWeight:600,marginBottom:2}}>{errorGroups.page_error.length} conversation{errorGroups.page_error.length>1?'s':''} failed to create pages</div>
-                    <div style={{color:'#C2410C',marginBottom:6}}>Check the file path is correct and the destination notebook exists.</div>
-                    <button onClick={onRetryWithPath} style={{fontSize:11,fontWeight:600,padding:'4px 12px',borderRadius:4,border:'1px solid #FDBA74',background:'#FEF3C7',color:'#9A3412',cursor:'pointer',fontFamily:'inherit'}}>
-                      Change Path &amp; Retry
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Retry failed conversations (generic fallback) */}
-          {!lastRunWasDry&&stats.errors>0&&onRetry&&(
-            <button onClick={onRetry} disabled={retrying} style={{width:'100%',display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'10px 16px',borderRadius:6,border:`1px solid #FF1F1F`,background:'white',fontSize:13,fontWeight:500,cursor:retrying?'not-allowed':'pointer',color:'#FF1F1F',fontFamily:'inherit',transition:'all .15s',marginBottom:10,opacity:retrying?0.6:1}} onMouseEnter={e=>{if(!retrying)e.currentTarget.style.background='#fff0f0'}} onMouseLeave={e=>e.currentTarget.style.background='white'}>
-              <IcoReset s={13} c='#FF1F1F'/> {retrying?'Retrying…':`Retry Failed (${stats.errors})`}
-            </button>
-          )}
-
-          {/* Per-user breakdown (collapsible) */}
-          {batchUsers&&batchUsers.length>0&&(
-            <div style={{marginBottom:12}}>
-              <button onClick={()=>setShowUserDetail(p=>!p)} style={{width:'100%',display:'flex',alignItems:'center',justifyContent:'space-between',padding:'9px 14px',borderRadius:6,border:`1px solid ${C.border}`,background:C.bg,fontSize:12,fontWeight:600,cursor:'pointer',color:C.dark,fontFamily:'inherit',transition:'background .15s'}} onMouseEnter={e=>e.currentTarget.style.background='#EBEBEB'} onMouseLeave={e=>e.currentTarget.style.background=C.bg}>
-                <span>Per-User Breakdown</span>
-                <span style={{color:C.muted,fontSize:11}}>{showUserDetail?'▲ Hide':'▼ Show'}</span>
-              </button>
-              {showUserDetail&&(
-                <div style={{border:`1px solid ${C.border}`,borderTop:'none',borderRadius:'0 0 6px 6px',overflow:'hidden'}}>
-                  <div style={{display:'grid',gridTemplateColumns:'1fr 80px 70px 60px',padding:'7px 12px',background:C.bg,fontSize:10,fontWeight:700,color:C.muted,textTransform:'uppercase',letterSpacing:.4}}>
-                    <div>User</div><div style={{textAlign:'center'}}>Status</div><div style={{textAlign:'center'}}>Pages</div><div style={{textAlign:'center'}}>Errors</div>
-                  </div>
-                  {batchUsers.map((u,i)=>(
-                    <div key={i} style={{display:'grid',gridTemplateColumns:'1fr 80px 70px 60px',alignItems:'center',padding:'8px 12px',borderTop:`1px solid ${C.bg}`,background:'white'}}>
-                      <div style={{fontSize:12,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:C.dark}}>{u.email}</div>
-                      <div style={{textAlign:'center'}}>
-                        <span style={{fontSize:10,padding:'2px 7px',borderRadius:20,fontWeight:600,background:u.status==='success'?'#dcfce7':u.status==='partial'?'#fef3c7':'#fee2e2',color:u.status==='success'?'#166534':u.status==='partial'?'#92400e':'#991b1b'}}>{u.status}</span>
-                      </div>
-                      <div style={{textAlign:'center',fontSize:13,fontWeight:600,color:C.primary}}>{u.pages_created}</div>
-                      <div style={{textAlign:'center',fontSize:13,fontWeight:600,color:u.error_count>0?C.error:C.muted}}>{u.error_count}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
           )}
 
           {/* Batch migration actions */}
@@ -1505,19 +1517,36 @@ function AgentUploadWidget({widgetType,label,migDir,onDone}){
   const fileRef=React.useRef();
 
   const accept=widgetType==='zip'?'.zip':'.csv';
+
+  // ZIP endpoint + field name vary by direction:
+  //   claude-gemini  → /api/cl2g/upload  (Claude export, field "file")
+  //   claude-copilot → /api/cl2c/upload  (Claude export, field "file")
+  //   gemini-copilot → /api/upload       (Google Vault, field "vault_zip")
+  //   gemini-gemini  → /api/upload       (Google Vault, field "vault_zip" — same parser)
+  //   C2G / C2C do not accept a generic ZIP upload (pulled live from MS Graph).
+  const zipEndpoint=(()=>{
+    if(migDir==='claude-gemini')return'/api/cl2g/upload';
+    if(migDir==='claude-copilot')return'/api/cl2c/upload';
+    if(migDir==='gemini-copilot')return'/api/upload';
+    if(migDir==='gemini-gemini')return'/api/upload';
+    return null; // unsupported combo
+  })();
+  const zipField=(migDir==='claude-gemini'||migDir==='claude-copilot')?'file':'vault_zip';
   const endpoint=widgetType==='csv'
     ?`/api/user-mappings-csv?migDir=${migDir||'gemini-copilot'}`
-    :migDir==='claude-gemini'
-      ?'/api/cl2g-upload'
-      :'/api/upload';
+    :zipEndpoint;
 
   async function handleFile(file){
     if(!file)return;
+    if(widgetType==='zip'&&!zipEndpoint){
+      setError(`This migration direction (${migDir||'unknown'}) doesn't accept a ZIP upload from chat. ZIP upload is supported for: Google Vault → Copilot (G2C), Google → Google (G2G), Claude → Gemini (CL2G), Claude → Copilot (CL2C).`);
+      return;
+    }
     setUploading(true);setError(null);
     try{
       const fd=new FormData();
       if(widgetType==='zip'){
-        fd.append(migDir==='claude-gemini'?'cl2g_zip':'vault_zip',file);
+        fd.append(zipField,file);
       }else{
         fd.append('csv',file);
       }
@@ -1532,7 +1561,17 @@ function AgentUploadWidget({widgetType,label,migDir,onDone}){
 
   return(
     <div
-      style={{border:`2px dashed ${dragOver?'#7c5cfc':'#333'}`,borderRadius:8,padding:'16px 20px',textAlign:'center',cursor:'pointer',background:dragOver?'#1a1530':'#111',transition:'all 0.15s',maxWidth:320}}
+      style={{
+        border:`2px dashed ${dragOver?C.primary:'#BFDBFE'}`,
+        borderRadius:10,
+        padding:'20px 24px',
+        textAlign:'center',
+        cursor:'pointer',
+        background:dragOver?'#EFF6FF':'#F8FAFC',
+        transition:'all 0.15s',
+        maxWidth:340,
+        boxShadow:dragOver?'0 0 0 4px rgba(1,41,172,0.08)':'none',
+      }}
       onDragOver={e=>{e.preventDefault();setDragOver(true);}}
       onDragLeave={()=>setDragOver(false)}
       onDrop={e=>{e.preventDefault();setDragOver(false);handleFile(e.dataTransfer.files[0]);}}
@@ -1540,14 +1579,19 @@ function AgentUploadWidget({widgetType,label,migDir,onDone}){
     >
       <input ref={fileRef} type="file" accept={accept} style={{display:'none'}} onChange={e=>handleFile(e.target.files[0])}/>
       {uploading
-        ?<span style={{color:'#aaa'}}>Uploading…</span>
+        ?<div style={{padding:'8px 0'}}>
+            <Spinner s={26}/>
+            <div style={{marginTop:8,fontSize:13,color:C.muted}}>Uploading…</div>
+          </div>
         :<>
-            <div style={{fontSize:28,marginBottom:6}}>{widgetType==='zip'?'🗜️':'📋'}</div>
-            <div style={{fontWeight:600,marginBottom:4,color:'#ddd'}}>{label||'Upload file'}</div>
-            <div style={{fontSize:12,color:'#666'}}>Drag & drop or click · {accept.toUpperCase()} only</div>
+            <div style={{display:'flex',justifyContent:'center',marginBottom:8}}>
+              {widgetType==='zip'?<IcoZip s={36} c={C.primary}/>:<IcoUpload s={36} c={C.primary}/>}
+            </div>
+            <div style={{fontSize:14,fontWeight:600,marginBottom:4,color:C.dark}}>{label||(widgetType==='zip'?'Upload your export ZIP':'Upload your mapping CSV')}</div>
+            <div style={{fontSize:12,color:C.muted}}><span style={{color:C.primary,fontWeight:600}}>Click to browse</span> or drag &amp; drop · {accept.toUpperCase()} only</div>
           </>
       }
-      {error&&<div style={{color:'#e05a5a',fontSize:12,marginTop:8}}>{error}</div>}
+      {error&&<div style={{color:C.error,fontSize:12,marginTop:10,background:'#FEF2F2',border:`1px solid ${C.error}33`,borderRadius:6,padding:'6px 10px'}}>{error}</div>}
     </div>
   );
 }
@@ -1808,8 +1852,7 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
         if(dest&&!used.has(dest)){m[em]=dest;used.add(dest);}else m[em]='';}
     });
     setC2gMappings(m);
-    // Auto-select only mapped users
-    setC2gSelectedUsers(new Set(Object.entries(m).filter(([,v])=>v).map(([k])=>k)));
+    // Don't touch selection state — selections are user-driven and survive nav.
   };
 
   // On mount: load from DB first, then auto-map only if no CSV saved
@@ -1821,7 +1864,8 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
         if(doc.mappings){
           const deduped=dedupMappings({...c2gMappings,...doc.mappings},msUsers);
           setC2gMappings(deduped);
-          setC2gSelectedUsers(new Set(doc.csvEmails.filter(e=>deduped[e])));
+          // Don't touch selection state on restore — selections are user-driven
+          // and must survive navigation.
         }
       } else {
         csvEmailsRef.current=null;
@@ -1839,9 +1883,12 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
   const downloadCsv=()=>{
     const sorted=[...msUsers].sort((a,b)=>{const ea=(a.mail||a.userPrincipalName||'').toLowerCase(),eb=(b.mail||b.userPrincipalName||'').toLowerCase();const ma=!!c2gMappings[ea],mb=!!c2gMappings[eb];if(ma!==mb)return ma?-1:1;return ea.localeCompare(eb)});
     const rows=sorted.map(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();return`"${em}","${c2gMappings[em]||''}"`;});
+    const usedDest=new Set(Object.values(c2gMappings).filter(Boolean).map(v=>v.toLowerCase()));
+    const destSorted=[...googleUsers].map(u=>(u.email||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b));
+    for(const em of destSorted){if(!usedDest.has(em.toLowerCase()))rows.push(`"","${em}"`);}
     const csv='Source User,Destination User\n'+rows.join('\n');
     const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='c2g-user-mappings.csv';a.click();
-    showToast('CSV downloaded.');
+    showToast(`Downloaded ${sorted.length} source + ${destSorted.length} destination users.`);
   };
 
   const uploadCsv=file=>{
@@ -2024,7 +2071,12 @@ const StepC2GOptions=({c2gOptions,setC2gOptions,c2gConfig,setC2gConfig,googleAut
 const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c2gLive,onChangeDirection,lastRunWasDry,onStartLive,c2gTotal,c2gFolderName,c2gConvProgress})=>{
   // Per-conversation progress: convIdx/totalConvs gives accurate ring. Falls back to files count.
   const {convIdx=0,totalConvs=0}=c2gConvProgress||{};
-  const ring=c2gDone?100:totalConvs>0?Math.max(3,Math.min(Math.round((convIdx/totalConvs)*100),99)):c2gLive?Math.min(5+(c2gStats.files||0),95):0;
+  // During a dry-run we don't know totalConvs upfront. Use users/total when total
+  // is known, otherwise fall back to a slow asymptotic approach so the ring keeps
+  // animating without claiming to be done.
+  const usersPct=c2gTotal>0?(c2gStats.users/c2gTotal)*100:0;
+  const fallbackPct=Math.min(95,5+Math.min(90,(c2gStats.files||0)*0.55));
+  const ring=c2gDone?100:totalConvs>0?Math.max(3,Math.min(Math.round((convIdx/totalConvs)*100),99)):c2gLive?Math.max(5,Math.round(Math.max(usersPct,fallbackPct))):0;
   return(
     <div className="fade-up">
       {!c2gDone&&!c2gLive&&(
@@ -2053,7 +2105,7 @@ const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c
           </div>
           {totalConvs>0&&<div style={{textAlign:'center',fontSize:12,color:C.muted,marginBottom:8}}>Conversation {convIdx} of {totalConvs}</div>}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:16}}>
-            {[{label:'Users',val:c2gStats.users,c:'#0129AC'},{label:'Files Uploaded',val:c2gStats.files,c:'#20CC83'},{label:'Errors',val:c2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
+            {[{label:'Users',val:c2gTotal>0?`${c2gStats.users}/${c2gTotal}`:c2gStats.users,c:'#0129AC'},{label:'Files Uploaded',val:c2gStats.files,c:'#20CC83'},{label:'Errors',val:c2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
               <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
                 <div style={{fontSize:22,fontWeight:700,color:e.c}}>{e.val}</div>
                 <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
@@ -2070,13 +2122,14 @@ const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c
             <div style={{fontSize:13,color:C.muted}}>{lastRunWasDry?'Preview finished — no files were uploaded.':'Copilot conversations have been uploaded to Google Drive.'}</div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:20}}>
-            {[{label:'Users Processed',val:c2gStats.users,c:'#0129AC'},{label:lastRunWasDry?'Files (preview)':'Files Uploaded',val:c2gStats.files,c:'#20CC83'},{label:'Errors',val:c2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
+            {[{label:'Users Processed',val:c2gTotal>0?`${c2gStats.users}/${c2gTotal}`:c2gStats.users,c:'#0129AC'},{label:lastRunWasDry?'Files (preview)':'Files Uploaded',val:c2gStats.files,c:'#20CC83'},{label:'Errors',val:c2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
               <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
                 <div style={{fontSize:22,fontWeight:700,color:e.c}}>{e.val}</div>
                 <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
               </div>
             ))}
           </div>
+          {lastRunWasDry&&<DryRunReportCard batchId={c2gBatchId} migDir="copilot-gemini"/>}
           {!lastRunWasDry&&<GemSetupInstructions folderName={c2gFolderName||'CopilotChats'} migDir="copilot-gemini"/>}
           <div style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:12}}>
             {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{flex:'1 1 140px',justifyContent:'center'}}><IcoRocket s={14}/> Start Live Migration</Btn>}
@@ -2248,7 +2301,7 @@ const StepCL2GMap=({cl2gUploadData,googleUsers,cl2gMappings,setCl2gMappings,cl2g
       if(doc?.mappings)setCl2gMappings(prev=>({...prev,...doc.mappings}));
       if(doc?.csvEmails){
         setCsvEmails(doc.csvEmails);
-        if(doc.csvEmails.length>0)setCl2gSelectedUuids(new Set(doc.csvEmails.filter(uuid=>doc.mappings?.[uuid])));
+        // No auto-selection on restore — user explicitly ticks rows.
       }
     }).catch(()=>{});
   },[]);
@@ -2266,8 +2319,7 @@ const StepCL2GMap=({cl2gUploadData,googleUsers,cl2gMappings,setCl2gMappings,cl2g
         if(dest&&!used.has(dest)){m[u.uuid]=dest;used.add(dest);}else m[u.uuid]='';}
     });
     setCl2gMappings(m);
-    // Auto-select only mapped users
-    setCl2gSelectedUuids(new Set(Object.entries(m).filter(([,v])=>v).map(([k])=>k)));
+    // Don't touch selection state — selections are user-driven and survive nav.
   },[users,googleUsers]);
 
   const persistMappings=(mappings,csv)=>{
@@ -2284,9 +2336,12 @@ const StepCL2GMap=({cl2gUploadData,googleUsers,cl2gMappings,setCl2gMappings,cl2g
   const downloadCsv=()=>{
     const sorted=[...users].sort((a,b)=>{const ma=!!cl2gMappings[a.uuid],mb=!!cl2gMappings[b.uuid];if(ma!==mb)return ma?-1:1;return(a.email_address||'').localeCompare(b.email_address||'')});
     const rows=sorted.map(u=>`"${u.email_address||''}","${cl2gMappings[u.uuid]||''}"`);
+    const usedDest=new Set(Object.values(cl2gMappings).filter(Boolean).map(v=>v.toLowerCase()));
+    const destSorted=[...googleUsers].map(u=>(u.email||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b));
+    for(const em of destSorted){if(!usedDest.has(em.toLowerCase()))rows.push(`"","${em}"`);}
     const csv='Source User,Destination User\n'+rows.join('\n');
     const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='cl2g-user-mappings.csv';a.click();
-    showToast('CSV downloaded.');
+    showToast(`Downloaded ${sorted.length} source + ${destSorted.length} destination users.`);
   };
 
   const uploadCsv=file=>{
@@ -2496,6 +2551,135 @@ How to answer my questions:
 Document structure: Each conversation starts with "Conversation N: Title" followed by [Human] and [${src}] labeled messages in chronological order.`;
 const GEM_INSTRUCTIONS=buildGemInstructions();
 
+/* ═══════════════════════════════════════════ */
+/* DRY-RUN REPORT CARD — comprehensive preflight */
+/* validator output shown after a dry-run.        */
+/* ═══════════════════════════════════════════ */
+const DryRunReportCard=({batchId,migDir})=>{
+  const [report,setReport]=useState(null);
+  const [loading,setLoading]=useState(true);
+  const [openUser,setOpenUser]=useState(null);
+
+  useEffect(()=>{
+    if(!batchId&&!migDir){setLoading(false);return;}
+    let cancelled=false;
+    setLoading(true);
+    fetch(`/api/workspaces`).then(r=>r.json()).then(d=>{
+      if(cancelled)return;
+      const all=d.workspaces||d||[];
+      // Prefer exact batchId match; otherwise find the most recent dry-run batch for this migDir.
+      let ws=null;
+      if(batchId)ws=all.find(w=>w._id===batchId);
+      if(!ws&&migDir){
+        ws=all
+          .filter(w=>w.migDir===migDir&&w.dryRun===true&&w.dryRunReport)
+          .sort((a,b)=>new Date(b.startTime||0)-new Date(a.startTime||0))[0];
+      }
+      setReport(ws?.dryRunReport||null);
+      setLoading(false);
+    }).catch(()=>{if(!cancelled){setLoading(false)}});
+    return()=>{cancelled=true};
+  },[batchId,migDir]);
+
+  if(loading||!report)return null;
+
+  const {summary={},globalChecks=[],users=[],config={}}=report;
+  const sevColor=s=>s==='blocker'?'#DC2626':s==='warning'?'#D97706':s==='ok'?'#16A34A':C.muted;
+  const sevIcon=s=>s==='blocker'?'🛑':s==='warning'?'⚠️':s==='ok'?'✅':'•';
+  const sevLabel=s=>s==='blocker'?'Blocker':s==='warning'?'Warning':s==='ok'?'Ready':'';
+
+  const totalIssues=(summary.blocker||0)+(summary.warning||0);
+  const headerColor=summary.blocker>0?'#FEE2E2':(summary.warning>0?'#FEF3C7':'#DCFCE7');
+  const headerBorder=summary.blocker>0?'#FCA5A5':(summary.warning>0?'#FDE68A':'#86EFAC');
+  const headerText=summary.blocker>0?'#991B1B':(summary.warning>0?'#78350F':'#14532D');
+
+  return(
+    <div style={{border:`1px solid ${headerBorder}`,borderRadius:12,marginTop:12,overflow:'hidden',background:'white'}}>
+      <div style={{padding:'12px 16px',background:headerColor,borderBottom:`1px solid ${headerBorder}`}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:4}}>
+          <div style={{fontSize:13,fontWeight:700,color:headerText}}>🔍 Dry-Run Pre-Flight Report</div>
+          <div style={{fontSize:11,color:headerText}}>
+            <span style={{fontWeight:700}}>{summary.ready||0}</span> ready · <span style={{fontWeight:700}}>{summary.warning||0}</span> warning · <span style={{fontWeight:700}}>{summary.blocker||0}</span> blocker
+          </div>
+        </div>
+        <div style={{fontSize:11,color:headerText,opacity:0.85}}>
+          {summary.blocker>0
+            ?`${summary.blocker} user(s) will fail in live migration unless fixed.`
+            :summary.warning>0
+              ?`${summary.warning} user(s) have warnings — review before going live.`
+              :'All checks passed. Safe to go live.'}
+          {config.folderName?` Folder: "${config.folderName}".`:''}
+        </div>
+      </div>
+
+      {globalChecks.length>0&&globalChecks.some(c=>c.severity!=='ok')&&(
+        <div style={{padding:'10px 16px',borderBottom:`1px solid ${C.border}`,background:'#FAFAFA'}}>
+          <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:'uppercase',letterSpacing:.4,marginBottom:6}}>Global issues</div>
+          {globalChecks.filter(c=>c.severity!=='ok').map((c,i)=>(
+            <div key={i} style={{fontSize:11,marginBottom:4,paddingLeft:18,position:'relative',color:'#1e293b'}}>
+              <span style={{position:'absolute',left:0}}>{sevIcon(c.severity)}</span>
+              <strong>{c.label}:</strong> {c.message}
+              {c.fix&&<div style={{fontSize:10,color:C.muted,marginTop:2,fontStyle:'italic'}}>→ {c.fix}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{padding:'4px 0',maxHeight:380,overflowY:'auto'}}>
+        {users.length===0&&summary.globalBlocker>0&&<div style={{padding:'12px 16px',fontSize:11,color:'#991B1B',textAlign:'center',background:'#FEF2F2'}}>Per-user checks were skipped because of the global blocker(s) above. Fix those and run the dry run again.</div>}
+        {users.length===0&&!summary.globalBlocker&&<div style={{padding:'12px 16px',fontSize:11,color:C.muted,textAlign:'center'}}>No per-user results to show.</div>}
+        {users.sort((a,b)=>{
+          const ord={blocker:0,warning:1,ok:2};
+          return (ord[a.status]??3)-(ord[b.status]??3);
+        }).map((u,i)=>{
+          const isOpen=openUser===i;
+          const failing=(u.checks||[]).filter(c=>c.severity!=='ok');
+          return(
+            <div key={i} style={{borderBottom:`1px solid ${C.border}`}}>
+              <div onClick={()=>setOpenUser(isOpen?null:i)} style={{padding:'10px 16px',cursor:'pointer',display:'flex',alignItems:'center',gap:10,justifyContent:'space-between'}}>
+                <div style={{display:'flex',alignItems:'center',gap:8,flex:1,minWidth:0}}>
+                  <span style={{fontSize:14}}>{sevIcon(u.status)}</span>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:12,fontWeight:600,color:'#1e293b',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{u.sourceEmail||'(unknown)'} → {u.destEmail||'(no destination)'}</div>
+                    <div style={{fontSize:10,color:C.muted,marginTop:1}}>
+                      <span style={{color:sevColor(u.status),fontWeight:600}}>{sevLabel(u.status)}</span>
+                      {failing.length>0?` · ${failing.length} issue${failing.length>1?'s':''}`:` · all checks passed`}
+                      {u.actualFiles!=null?` · ${u.actualFiles} file${u.actualFiles===1?'':'s'}`:''}
+                    </div>
+                  </div>
+                </div>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{transform:isOpen?'rotate(180deg)':'none',transition:'transform .15s',flexShrink:0}}><polyline points="6 9 12 15 18 9"/></svg>
+              </div>
+              {isOpen&&(
+                <div style={{padding:'0 16px 12px 36px',background:'#F8FAFC'}}>
+                  {(u.checks||[]).map((c,j)=>(
+                    <div key={j} style={{fontSize:11,padding:'5px 0',borderBottom:'1px dashed #E5E7EB'}}>
+                      <div style={{display:'flex',alignItems:'flex-start',gap:6}}>
+                        <span style={{flexShrink:0}}>{sevIcon(c.severity)}</span>
+                        <div style={{flex:1}}>
+                          <div style={{fontWeight:c.severity==='ok'?500:600,color:c.severity==='ok'?C.muted:'#1e293b'}}>{c.label}</div>
+                          {c.message&&<div style={{fontSize:10,color:C.muted,marginTop:2}}>{c.message}</div>}
+                          {c.fix&&<div style={{fontSize:10,color:'#4F46E5',marginTop:2,fontStyle:'italic'}}>→ Fix: {c.fix}</div>}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {summary.blocker>0&&(
+        <div style={{padding:'10px 16px',background:'#FEF2F2',borderTop:`1px solid ${headerBorder}`,fontSize:11,color:'#991B1B'}}>
+          <strong>Fix the {summary.blocker} blocker{summary.blocker>1?'s':''}</strong> before clicking "Start Live Migration" — those users will fail and the migration may be partially incomplete.
+        </div>
+      )}
+    </div>
+  );
+};
+
 const GemSetupInstructions=({folderName='ClaudeChats',migDir})=>{
   const [copied,setCopied]=useState(false);
   const [open,setOpen]=useState(true);
@@ -2505,9 +2689,10 @@ const GemSetupInstructions=({folderName='ClaudeChats',migDir})=>{
 
   const steps=[
     {n:1,icon:'🌐',title:'Open Gemini Gems',desc:'Go to gemini.google.com → click Gems in the left sidebar → New Gem'},
-    {n:2,icon:'📁',title:'Add Knowledge from Google Drive',desc:`Under Knowledge, click "Add from Google Drive" → navigate to your ${folderName} folder → select it → Insert`},
-    {n:3,icon:'📋',title:'Paste the Gem Instructions',desc:'Copy the instructions below and paste them into the Instructions box of the Gem'},
-    {n:4,icon:'💾',title:'Name & Save the Gem',desc:`Give the Gem a name (e.g. "My ${sourceLabel} History") → click Save — the Gem is now ready to use`},
+    {n:2,icon:'✏️',title:'Name the Gem',desc:`In the Name field at the top, enter something like "My ${sourceLabel} History"`},
+    {n:3,icon:'📋',title:'Paste the Gem Instructions',desc:'Copy the instructions below and paste them into the Instructions box'},
+    {n:4,icon:'📁',title:'Add Knowledge from Google Drive',desc:`Under Knowledge, click "Add from Google Drive" → navigate to your ${folderName} folder → select it → Insert`},
+    {n:5,icon:'💾',title:'Save the Gem',desc:'Click Save (top right of the page) — the Gem is now ready to use'},
   ];
   return(
     <div style={{border:`1px solid #BFDBFE`,borderRadius:12,background:'#EFF6FF',marginBottom:16,overflow:'hidden'}}>
@@ -2524,28 +2709,29 @@ const GemSetupInstructions=({folderName='ClaudeChats',migDir})=>{
       {open&&(
         <div style={{padding:'0 16px 16px'}}>
           {/* Steps */}
-          <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:16}}>
+          <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:12}}>
             {steps.map(s=>(
               <div key={s.n} style={{display:'flex',gap:12,alignItems:'flex-start',background:'white',borderRadius:10,padding:'10px 14px',border:'1px solid #DBEAFE'}}>
                 <div style={{minWidth:28,height:28,borderRadius:'50%',background:'#1D4ED8',color:'white',display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,flexShrink:0}}>{s.n}</div>
-                <div>
+                <div style={{flex:1,minWidth:0}}>
                   <div style={{fontSize:12,fontWeight:700,color:'#1E3A5F',marginBottom:2}}>{s.icon} {s.title}</div>
                   <div style={{fontSize:11,color:'#4B5563',lineHeight:1.5}}>{s.desc}</div>
+                  {s.n===3&&(
+                    <div style={{marginTop:8,background:'#F8FAFC',border:'1px solid #BFDBFE',borderRadius:8,overflow:'hidden'}}>
+                      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'6px 10px',background:'#DBEAFE',borderBottom:'1px solid #BFDBFE'}}>
+                        <span style={{fontSize:10,fontWeight:700,color:'#1E40AF',textTransform:'uppercase',letterSpacing:.5}}>📋 Gem Instructions</span>
+                        <button onClick={copy} style={{display:'inline-flex',alignItems:'center',gap:5,fontSize:10,fontWeight:600,color:copied?'#16a34a':'#1D4ED8',background:copied?'#DCFCE7':'#EFF6FF',border:`1px solid ${copied?'#86EFAC':'#93C5FD'}`,borderRadius:6,padding:'3px 8px',cursor:'pointer',fontFamily:'inherit',transition:'all .2s'}}>
+                          {copied?<><IcoDone s={10}/>Copied!</>:<><IcoUpload s={10}/>Copy</>}
+                        </button>
+                      </div>
+                      <pre style={{margin:0,padding:'10px 12px',fontSize:10,lineHeight:1.6,color:'#1E293B',whiteSpace:'pre-wrap',wordBreak:'break-word',fontFamily:'Consolas,monospace',maxHeight:200,overflowY:'auto'}}>{gemInstructions}</pre>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
           </div>
-          {/* Instructions copy box */}
-          <div style={{background:'white',border:'1px solid #BFDBFE',borderRadius:10,overflow:'hidden'}}>
-            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 12px',background:'#DBEAFE',borderBottom:'1px solid #BFDBFE'}}>
-              <span style={{fontSize:11,fontWeight:700,color:'#1E40AF',textTransform:'uppercase',letterSpacing:.5}}>📋 Gem Instructions — copy & paste into Gemini</span>
-              <button onClick={copy} style={{display:'inline-flex',alignItems:'center',gap:5,fontSize:11,fontWeight:600,color:copied?'#16a34a':'#1D4ED8',background:copied?'#DCFCE7':'#EFF6FF',border:`1px solid ${copied?'#86EFAC':'#93C5FD'}`,borderRadius:6,padding:'4px 10px',cursor:'pointer',fontFamily:'inherit',transition:'all .2s'}}>
-                {copied?<><IcoDone s={11}/>Copied!</>:<><IcoUpload s={11}/>Copy</>}
-              </button>
-            </div>
-            <pre style={{margin:0,padding:'12px 14px',fontSize:11,lineHeight:1.6,color:'#1E293B',whiteSpace:'pre-wrap',wordBreak:'break-word',fontFamily:'Consolas,monospace',maxHeight:220,overflowY:'auto'}}>{gemInstructions}</pre>
-          </div>
-          <div style={{marginTop:10,padding:'8px 12px',background:'#FEF9C3',border:'1px solid #FDE68A',borderRadius:8,fontSize:11,color:'#713F12'}}>
+          <div style={{padding:'8px 12px',background:'#FEF9C3',border:'1px solid #FDE68A',borderRadius:8,fontSize:11,color:'#713F12'}}>
             <strong>Tip:</strong> The migrated folder contains max 3 files per user (All Conversations, Memory, Projects). Add them all to the Gem knowledge for best results.
           </div>
         </div>
@@ -2582,34 +2768,37 @@ const PostMigrationWidget=({migDir})=>{
   }
   const steps=[
     {n:1,icon:'🌐',title:'Open Gemini Gems',desc:'Go to gemini.google.com → click Gems in the left sidebar → New Gem'},
-    {n:2,icon:'📁',title:'Add Knowledge from Google Drive',desc:'Under Knowledge, click "Add from Google Drive" → navigate to your migrated folder → select all files → Insert'},
+    {n:2,icon:'✏️',title:'Name the Gem',desc:'In the Name field at the top, enter something like "My Chat History"'},
     {n:3,icon:'📋',title:'Paste the Gem Instructions',desc:'Copy the instructions below and paste them into the Instructions box'},
-    {n:4,icon:'💾',title:'Name & Save the Gem',desc:'Give the Gem a name (e.g. "My Chat History") → click Save'},
+    {n:4,icon:'📁',title:'Add Knowledge from Google Drive',desc:'Under Knowledge, click "Add from Google Drive" → navigate to your migrated folder → select all files → Insert'},
+    {n:5,icon:'💾',title:'Save the Gem',desc:'Click Save (top right of the page) — the Gem is now ready to use'},
   ];
   return(
     <div style={{borderRadius:10,border:'1px solid #BFDBFE',padding:'14px 16px',marginTop:8,background:'#EFF6FF'}}>
       <div style={{fontSize:12,fontWeight:700,color:'#1E3A5F',marginBottom:10}}>💎 Set Up Your Gemini Gem</div>
-      <div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:12}}>
+      <div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:10}}>
         {steps.map(s=>(
           <div key={s.n} style={{display:'flex',gap:10,alignItems:'flex-start',background:'white',borderRadius:8,padding:'8px 12px',border:'1px solid #DBEAFE'}}>
             <div style={{minWidth:24,height:24,borderRadius:'50%',background:'#1D4ED8',color:'white',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,flexShrink:0}}>{s.n}</div>
-            <div>
+            <div style={{flex:1,minWidth:0}}>
               <div style={{fontSize:12,fontWeight:600,color:'#1E3A5F'}}>{s.icon} {s.title}</div>
               <div style={{fontSize:11,color:'#4B5563',lineHeight:1.5}}>{s.desc}</div>
+              {s.n===3&&(
+                <div style={{marginTop:8,background:'#F8FAFC',border:'1px solid #BFDBFE',borderRadius:8,overflow:'hidden'}}>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'6px 10px',background:'#DBEAFE'}}>
+                    <span style={{fontSize:10,fontWeight:700,color:'#1E40AF'}}>📋 Gem Instructions</span>
+                    <button onClick={copy} style={{fontSize:10,fontWeight:600,color:copied?'#16a34a':'#1D4ED8',background:copied?'#DCFCE7':'#EFF6FF',border:`1px solid ${copied?'#86EFAC':'#93C5FD'}`,borderRadius:6,padding:'3px 8px',cursor:'pointer',fontFamily:'inherit'}}>
+                      {copied?'✓ Copied':'Copy'}
+                    </button>
+                  </div>
+                  <pre style={{margin:0,padding:'10px 12px',fontSize:10,lineHeight:1.5,color:'#1E293B',whiteSpace:'pre-wrap',wordBreak:'break-word',fontFamily:'Consolas,monospace',maxHeight:160,overflowY:'auto'}}>{widgetInstructions}</pre>
+                </div>
+              )}
             </div>
           </div>
         ))}
       </div>
-      <div style={{background:'white',border:'1px solid #BFDBFE',borderRadius:8,overflow:'hidden'}}>
-        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'6px 10px',background:'#DBEAFE'}}>
-          <span style={{fontSize:11,fontWeight:700,color:'#1E40AF'}}>📋 Gem Instructions</span>
-          <button onClick={copy} style={{fontSize:11,fontWeight:600,color:copied?'#16a34a':'#1D4ED8',background:copied?'#DCFCE7':'#EFF6FF',border:`1px solid ${copied?'#86EFAC':'#93C5FD'}`,borderRadius:6,padding:'3px 8px',cursor:'pointer',fontFamily:'inherit'}}>
-            {copied?'✓ Copied':'Copy'}
-          </button>
-        </div>
-        <pre style={{margin:0,padding:'10px 12px',fontSize:11,lineHeight:1.5,color:'#1E293B',whiteSpace:'pre-wrap',wordBreak:'break-word',fontFamily:'Consolas,monospace',maxHeight:160,overflowY:'auto'}}>{widgetInstructions}</pre>
-      </div>
-      <div style={{marginTop:8,padding:'7px 10px',background:'#FEF9C3',border:'1px solid #FDE68A',borderRadius:7,fontSize:11,color:'#713F12'}}>
+      <div style={{padding:'7px 10px',background:'#FEF9C3',border:'1px solid #FDE68A',borderRadius:7,fontSize:11,color:'#713F12'}}>
         <strong>Tip:</strong> Add all migrated files (conversations, memory, projects) to the Gem for best results.
       </div>
     </div>
@@ -2647,7 +2836,7 @@ const StepCL2GMigrate=({cl2gStats,cl2gDone,onRunAnother,onBack,onStart,cl2gLive,
             </div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:16}}>
-            {[{label:'Users',val:cl2gStats.users,c:'#0129AC'},{label:'Files Uploaded',val:cl2gStats.files,c:'#20CC83'},{label:'Errors',val:cl2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
+            {[{label:'Users',val:cl2gTotal>0?`${cl2gStats.users}/${cl2gTotal}`:cl2gStats.users,c:'#0129AC'},{label:'Files Uploaded',val:cl2gStats.files,c:'#20CC83'},{label:'Errors',val:cl2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
               <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
                 <div style={{fontSize:22,fontWeight:700,color:e.c}}>{e.val}</div>
                 <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
@@ -2664,7 +2853,7 @@ const StepCL2GMigrate=({cl2gStats,cl2gDone,onRunAnother,onBack,onStart,cl2gLive,
             <div style={{fontSize:13,color:C.muted}}>{lastRunWasDry?'Preview finished — no files were uploaded.':'Claude conversations have been uploaded to Google Drive.'}</div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:20}}>
-            {[{label:'Users Processed',val:cl2gStats.users,c:'#0129AC'},{label:lastRunWasDry?'Files (preview)':'Files Uploaded',val:cl2gStats.files,c:'#20CC83'},{label:'Errors',val:cl2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
+            {[{label:'Users Processed',val:cl2gTotal>0?`${cl2gStats.users}/${cl2gTotal}`:cl2gStats.users,c:'#0129AC'},{label:lastRunWasDry?'Files (preview)':'Files Uploaded',val:cl2gStats.files,c:'#20CC83'},{label:'Errors',val:cl2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
               <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
                 <div style={{fontSize:22,fontWeight:700,color:e.c}}>{e.val}</div>
                 <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
@@ -2672,6 +2861,7 @@ const StepCL2GMigrate=({cl2gStats,cl2gDone,onRunAnother,onBack,onStart,cl2gLive,
             ))}
           </div>
 
+          {lastRunWasDry&&<DryRunReportCard migDir="claude-gemini"/>}
           {!lastRunWasDry&&<GemSetupInstructions folderName={folderName} migDir="claude-gemini"/>}
 
           <div style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:16}}>
@@ -2840,7 +3030,7 @@ const StepCL2CMap=({cl2cUploadData,msUsers,cl2cMappings,setCl2cMappings,cl2cSele
       if(doc?.mappings)setCl2cMappings(prev=>({...prev,...doc.mappings}));
       if(doc?.csvEmails){
         setCsvEmails(doc.csvEmails);
-        if(doc.csvEmails.length>0)setCl2cSelectedUuids(new Set(doc.csvEmails.filter(uuid=>doc.mappings?.[uuid])));
+        // No auto-selection on restore — user explicitly ticks rows.
       }
     }).catch(()=>{});
   },[]);
@@ -2858,7 +3048,7 @@ const StepCL2CMap=({cl2cUploadData,msUsers,cl2cMappings,setCl2cMappings,cl2cSele
         if(dest&&!used.has(dest)){m[u.uuid]=dest;used.add(dest);}else m[u.uuid]='';}
     });
     setCl2cMappings(m);
-    setCl2cSelectedUuids(new Set(Object.entries(m).filter(([,v])=>v).map(([k])=>k)));
+    // Don't touch selection state — selections are user-driven and survive nav.
   },[users,msUsers]);
 
   const persistMappings=(mappings,csv)=>{
@@ -2875,9 +3065,12 @@ const StepCL2CMap=({cl2cUploadData,msUsers,cl2cMappings,setCl2cMappings,cl2cSele
   const downloadCsv=()=>{
     const sorted=[...users].sort((a,b)=>{const ma=!!cl2cMappings[a.uuid],mb=!!cl2cMappings[b.uuid];if(ma!==mb)return ma?-1:1;return(a.email_address||'').localeCompare(b.email_address||'')});
     const rows=sorted.map(u=>`"${u.email_address||''}","${cl2cMappings[u.uuid]||''}"`);
+    const usedDest=new Set(Object.values(cl2cMappings).filter(Boolean).map(v=>v.toLowerCase()));
+    const destSorted=[...msUsers].map(u=>(u.mail||u.userPrincipalName||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b));
+    for(const em of destSorted){if(!usedDest.has(em.toLowerCase()))rows.push(`"","${em}"`);}
     const csv='Source User,Destination User\n'+rows.join('\n');
     const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='cl2c-user-mappings.csv';a.click();
-    showToast('CSV downloaded.');
+    showToast(`Downloaded ${sorted.length} source + ${destSorted.length} destination users.`);
   };
 
   const uploadCsv=file=>{
@@ -3101,7 +3294,7 @@ const StepCL2CMigrate=({cl2cStats,cl2cDone,onRunAnother,onBack,onStart,cl2cLive,
             </div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:16}}>
-            {[{label:'Users',val:cl2cStats.users,c:'#0129AC'},{label:'Files Uploaded',val:cl2cStats.files,c:'#20CC83'},{label:'Errors',val:cl2cStats.errors,c:'#FF1F1F'}].map((e,i)=>(
+            {[{label:'Users',val:cl2cTotal>0?`${cl2cStats.users}/${cl2cTotal}`:cl2cStats.users,c:'#0129AC'},{label:'Files Uploaded',val:cl2cStats.files,c:'#20CC83'},{label:'Errors',val:cl2cStats.errors,c:'#FF1F1F'}].map((e,i)=>(
               <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
                 <div style={{fontSize:22,fontWeight:700,color:e.c}}>{e.val}</div>
                 <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
@@ -3118,13 +3311,14 @@ const StepCL2CMigrate=({cl2cStats,cl2cDone,onRunAnother,onBack,onStart,cl2cLive,
             <div style={{fontSize:13,color:C.muted}}>{lastRunWasDry?'Preview finished — no files were uploaded.':'Claude conversations have been uploaded to Microsoft 365 Copilot.'}</div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:20}}>
-            {[{label:'Users Processed',val:cl2cStats.users,c:'#0129AC'},{label:lastRunWasDry?'Files (preview)':'Files Uploaded',val:cl2cStats.files,c:'#20CC83'},{label:'Errors',val:cl2cStats.errors,c:'#FF1F1F'}].map((e,i)=>(
+            {[{label:'Users Processed',val:cl2cTotal>0?`${cl2cStats.users}/${cl2cTotal}`:cl2cStats.users,c:'#0129AC'},{label:lastRunWasDry?'Files (preview)':'Files Uploaded',val:cl2cStats.files,c:'#20CC83'},{label:'Errors',val:cl2cStats.errors,c:'#FF1F1F'}].map((e,i)=>(
               <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
                 <div style={{fontSize:22,fontWeight:700,color:e.c}}>{e.val}</div>
                 <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
               </div>
             ))}
           </div>
+          {lastRunWasDry&&<DryRunReportCard migDir="claude-copilot"/>}
           <div style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:16}}>
             {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{flex:'1 1 140px',justifyContent:'center'}}><IcoRocket s={14}/> Start Live Migration</Btn>}
             <Btn variant="ghost" onClick={onBack} style={{flex:'1 1 100px',justifyContent:'center'}}>← Options</Btn>
@@ -3325,9 +3519,12 @@ const StepC2CTenantSelect=({c2cConfig,setC2cConfig,onNext,onBack,showToast})=>{
         <div style={{fontSize:13,color:C.muted}}>Each tenant admin must consent once. You can then migrate Copilot conversations between any two connected tenants.</div>
       </div>
 
+      {tenants.length>0&&extraTenants.length>0&&msAccts.length===0&&<div style={{padding:'10px 14px',marginBottom:12,background:'#EFF6FF',border:`1px solid ${C.primary}33`,borderRadius:8,fontSize:12,color:C.dark,lineHeight:1.5}}>
+        <strong>ℹ️ These tenants are previously consented</strong> — admin consent for cross-tenant Copilot migration is granted once at the Azure AD level and persists across sessions, even after you sign out. You don't need to sign in to use them; the app reads Copilot data via app-only tokens. Use <strong>+ Add Another Tenant</strong> to consent a new one, or remove a tenant via Azure Portal → Enterprise Applications → CloudFuze_Migrations → Properties.
+      </div>}
       <Card style={{marginBottom:16}}>
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
-          <div style={{fontSize:13,fontWeight:600,color:C.dark}}>Available Tenants {tenants.length>0&&<span style={{fontSize:11,padding:'2px 8px',borderRadius:10,background:C.tint,color:C.primary,marginLeft:6}}>{tenants.length}</span>}</div>
+          <div style={{fontSize:13,fontWeight:600,color:C.dark}}>Connected Tenants (admin-consented) {tenants.length>0&&<span style={{fontSize:11,padding:'2px 8px',borderRadius:10,background:C.tint,color:C.primary,marginLeft:6}}>{tenants.length}</span>}</div>
           <Btn variant="outline" onClick={connectNewTenant} disabled={connecting} style={{fontSize:12,padding:'6px 14px'}}>{connecting?<><Spinner s={12}/> Adding…</>:'+ Add Another Tenant'}</Btn>
         </div>
         {loading?<div style={{display:'flex',alignItems:'center',gap:8,fontSize:12,color:C.muted}}><Spinner s={12}/> Loading…</div>:tenants.length===0?(
@@ -3389,12 +3586,30 @@ const StepC2CTenantSelect=({c2cConfig,setC2cConfig,onNext,onBack,showToast})=>{
 
 /* Step: Map source users → destination users */
 const StepC2CUserMap=({c2cConfig,c2cMappings,setC2cMappings,c2cSelectedUsers,setC2cSelectedUsers,onNext,onBack,showToast})=>{
-  const [srcUsers,setSrcUsers]=useState([]);
+  const [allSrcUsers,setAllSrcUsers]=useState([]);
   const [destUsers,setDestUsers]=useState([]);
   const [loading,setLoading]=useState(false);
   const [search,setSearch]=useState('');
   const csvRef=useRef(null);
   const [csvUploading,setCsvUploading]=useState(false);
+  // csvEmails persists in DB — survives server restart and user logout / login
+  const [csvEmails,setCsvEmails]=useState(null);
+  const srcUsers=csvEmails?allSrcUsers.filter(u=>csvEmails.includes((u.mail||u.userPrincipalName||'').toLowerCase())):allSrcUsers;
+
+  // On mount: load persisted mappings + csvEmails
+  useEffect(()=>{
+    fetch('/api/c2c/user-mappings').then(r=>r.ok?r.json():null).then(doc=>{
+      if(doc?.csvEmails&&doc.csvEmails.length>0){
+        setCsvEmails(doc.csvEmails);
+        if(doc.mappings)setC2cMappings(doc.mappings);
+      }
+    }).catch(()=>{});
+  },[]);
+
+  const persistMappings=(m,csv)=>{
+    fetch('/api/c2c/user-mappings',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({mappings:m,csvEmails:csv??null,sourceTenantId:c2cConfig?.sourceTenantId,destTenantId:c2cConfig?.destTenantId})}).catch(()=>{});
+  };
 
   useEffect(()=>{
     if(!c2cConfig?.sourceTenantId||!c2cConfig?.destTenantId)return;
@@ -3403,7 +3618,7 @@ const StepC2CUserMap=({c2cConfig,c2cMappings,setC2cMappings,c2cSelectedUsers,set
       fetch(`/api/c2c/tenants/${encodeURIComponent(c2cConfig.sourceTenantId)}/users`).then(r=>r.json()).catch(()=>({users:[]})),
       fetch(`/api/c2c/tenants/${encodeURIComponent(c2cConfig.destTenantId)}/users`).then(r=>r.json()).catch(()=>({users:[]})),
     ]).then(([s,d])=>{
-      setSrcUsers(s.users||[]);
+      setAllSrcUsers(s.users||[]);
       setDestUsers(d.users||[]);
     }).finally(()=>setLoading(false));
   },[c2cConfig?.sourceTenantId,c2cConfig?.destTenantId]);
@@ -3453,6 +3668,7 @@ const StepC2CUserMap=({c2cConfig,c2cMappings,setC2cMappings,c2cSelectedUsers,set
     r.onload=e=>{
       const lines=e.target.result.split(/\r?\n/);
       const m={...c2cMappings};let n=0;
+      const csvKeys=[];
       for(const l of lines){
         if(!l.trim())continue;
         const c=parseCsvLine(l);
@@ -3461,14 +3677,24 @@ const StepC2CUserMap=({c2cConfig,c2cMappings,setC2cMappings,c2cSelectedUsers,set
         if(first==='section'||first==='source user'||first==='destination')continue;
         const src=first==='source'?(c[1]||'').trim().toLowerCase():(c[0]||'').trim().toLowerCase();
         const dst=first==='source'?(c[2]||'').trim().toLowerCase():(c[1]||'').trim().toLowerCase();
-        if(src){m[src]=dst;n++;}
+        if(src){m[src]=dst;n++;csvKeys.push(src);}
       }
       setC2cMappings(m);
+      setCsvEmails(csvKeys);
+      setC2cSelectedUsers(new Set(csvKeys.filter(k=>m[k])));
+      persistMappings(m,csvKeys);
       setCsvUploading(false);
       showToast?.(`Imported ${n} mapping(s).`);
     };
     r.onerror=()=>setCsvUploading(false);
     r.readAsText(file);
+  };
+
+  const clearCsv=()=>{
+    setCsvEmails(null);
+    fetch('/api/c2c/user-mappings',{method:'DELETE'}).catch(()=>{});
+    setC2cSelectedUsers(new Set());
+    showToast?.('CSV cleared — restored cloud auto-mapping.');
   };
 
   const filtered=srcUsers.filter(u=>{
@@ -3495,6 +3721,9 @@ const StepC2CUserMap=({c2cConfig,c2cMappings,setC2cMappings,c2cSelectedUsers,set
             <input ref={csvRef} type="file" accept=".csv" style={{display:'none'}} onChange={e=>{if(e.target.files[0])uploadCsv(e.target.files[0]);e.target.value=''}}/>
             <button onClick={()=>csvRef.current.click()} disabled={csvUploading} title="Upload CSV" style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.border}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>{csvUploading?<Spinner s={12}/>:<IcoUpload s={13} c={C.muted}/>}</button>
             <button onClick={downloadCsv} title="Download CSV" style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.primary}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}><IcoDownload s={13} c={C.primary}/></button>
+            {csvEmails&&<button onClick={clearCsv} title="Clear CSV — restore cloud auto-mapping" style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.error}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}} onMouseEnter={e=>e.currentTarget.style.background='#FEF2F2'} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+              <IcoTrash s={13}/>
+            </button>}
           </div>
         </div>
         <div style={{display:'flex',alignItems:'center',marginBottom:8}}>
@@ -3694,6 +3923,7 @@ const StepC2CMigrate=({c2cStats,c2cDone,c2cLive,onRunAnother,onBack,onChangeDire
               </Card>
             ))}
           </div>
+          {lastRunWasDry&&<DryRunReportCard migDir="copilot-copilot"/>}
           {!lastRunWasDry&&<CopilotAgentInstallPanel/>}
           {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{width:'100%',justifyContent:'center',marginBottom:12}}><IcoRocket s={14}/> Start Migration (Live)</Btn>}
           <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
@@ -3712,13 +3942,14 @@ const StepC2CMigrate=({c2cStats,c2cDone,c2cLive,onRunAnother,onBack,onChangeDire
 /* ════════════════════════════════════════════════════════════ */
 /* ═══   G2G STEP COMPONENTS - Same UI as G2C ═══ */
 /* ════════════════════════════════════════════════════════════ */
-const StepG2GUploadData=({g2gUploadData,setG2gUploadData,g2gSelectedUsers,setG2gSelectedUsers,g2gConfig,onNext,onBack,showToast})=>{
+const StepG2GUploadData=({g2gUploadData,setG2gUploadData,g2gSelectedUsers,setG2gSelectedUsers,g2gConfig,onNext,onBack,showToast,importTabSignal,exportTrigger})=>{
   const [tab,setTab]=useState(g2gUploadData?'upload':'userwise');
-  // When parent finishes loading the persisted session (after restart/refresh)
-  // and g2gUploadData arrives AFTER this component mounted, switch to the
-  // upload tab so the user sees their existing data instead of an empty
-  // "No users loaded" message on the userwise tab.
   useEffect(()=>{ if(g2gUploadData) setTab('upload'); },[g2gUploadData]);
+  // Respond to agent-driven tab switch requests (e.g. "I have a Vault ZIP" chip)
+  useEffect(()=>{
+    if(importTabSignal?.tab&&importTabSignal.tab!==tab)setTab(importTabSignal.tab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[importTabSignal?.ts]);
   const [selected,setSelected]=useState(new Set());
   const [sourceUsers,setSourceUsers]=useState([]);
   const [loadingSourceUsers,setLoadingSourceUsers]=useState(false);
@@ -3757,19 +3988,35 @@ const StepG2GUploadData=({g2gUploadData,setG2gUploadData,g2gSelectedUsers,setG2g
   const toggleUser=email=>setSelected(p=>{const n=new Set(p);n.has(email)?n.delete(email):n.add(email);return n});
   const toggleAll=()=>{if(selected.size===sourceUsers.length)setSelected(new Set());else setSelected(new Set(sourceUsers.map(u=>u.email)))};
 
-  const startExport=async()=>{
+  const startExport=async(explicitEmails)=>{
+    const emails = (explicitEmails && explicitEmails.length) ? explicitEmails : [...selected];
+    if(emails.length===0){showToast?.('No users selected for export.','error');return;}
     setExporting(true);setElapsed(0);
     elapsedRef.current=setInterval(()=>setElapsed(p=>p+1),1000);
     setExportStatus('Creating Vault export...');
     try{
-      // Send sourceAccountId so the server uses the SOURCE admin's Vault
-      // credentials (not whichever Google account is first in the session map).
-      const res=await fetch('/api/google/vault-export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_emails:[...selected],accountId:g2gConfig?.sourceAccountId||undefined})});
+      const res=await fetch('/api/google/vault-export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_emails:emails,accountId:g2gConfig?.sourceAccountId||undefined})});
       const data=await res.json();
       if(!res.ok){setExportStatus(`Error: ${data.error}`);clearInterval(elapsedRef.current);setExporting(false);return}
       setExportStatus('Export in progress...');pollExport();
     }catch(e){setExportStatus(`Error: ${e.message}`);clearInterval(elapsedRef.current);setExporting(false)}
   };
+
+  // Agent-driven export: when exportTrigger.ts bumps, select the requested
+  // users and run the export. scope='all' uses all loaded sourceUsers.
+  useEffect(()=>{
+    if(!exportTrigger?.ts)return;
+    let targetEmails=[];
+    if(exportTrigger.scope==='all'){
+      targetEmails=(sourceUsers||[]).map(u=>u.email).filter(Boolean);
+    } else if(exportTrigger.scope==='selected'&&Array.isArray(exportTrigger.emails)){
+      targetEmails=exportTrigger.emails;
+    }
+    if(targetEmails.length===0)return;
+    setSelected(new Set(targetEmails));
+    startExport(targetEmails);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[exportTrigger?.ts]);
 
   const pollExport=()=>{
     const check=async()=>{
@@ -3948,6 +4195,21 @@ const StepG2GCloudSelect=({g2gConfig,setG2gConfig,googleAccounts,onNext,onBack,s
         </Field>
       </Card>
 
+      {(googleAccounts?.length||0)<2&&(
+        <Card style={{marginBottom:20,background:'#FFFBEB',border:`1px solid #FCD34D`}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12}}>
+            <div style={{fontSize:13,color:'#92400E'}}>
+              ⚠️ Google → Google needs <b>two</b> Google Workspace accounts. You have <b>{googleAccounts?.length||0}</b> connected. Add another to continue.
+            </div>
+            <Btn variant="outline" onClick={()=>{
+              window.open('/auth/google/login','googleauth','width=500,height=700,left=300,top=100');
+              const h=(e)=>{if(e.data?.type==='google-auth-success'){window.removeEventListener('message',h);fetch('/api/auth/google/accounts').then(r=>r.json()).then(d=>{if(d.accounts)showToast?.(`Connected — ${d.accounts.length} accounts total.`);});}};
+              window.addEventListener('message',h);
+            }} style={{fontSize:12,padding:'6px 14px',whiteSpace:'nowrap'}}>+ Add Another Google</Btn>
+          </div>
+        </Card>
+      )}
+
       {g2gConfig.sourceAccountId===g2gConfig.destAccountId&&g2gConfig.sourceAccountId&&(
         <Card style={{marginBottom:20,background:'#FEE2E2',border:`1px solid ${C.error}`}}>
           <div style={{fontSize:13,color:C.error}}>⚠️ Source and destination must be different accounts.</div>
@@ -3956,7 +4218,7 @@ const StepG2GCloudSelect=({g2gConfig,setG2gConfig,googleAccounts,onNext,onBack,s
 
       <div style={{marginTop:16,paddingTop:12,borderTop:`1px solid ${C.bg}`,display:'flex',gap:10,justifyContent:'flex-end'}}>
         <Btn variant="ghost" onClick={onBack}>← Back</Btn>
-        <Btn onClick={onNext} disabled={!g2gConfig.sourceAccountId||!g2gConfig.destAccountId||g2gConfig.sourceAccountId===g2gConfig.destAccountId}>Continue →</Btn>
+        <Btn onClick={onNext} disabled={!g2gConfig.sourceAccountId||!g2gConfig.destAccountId||g2gConfig.sourceAccountId===g2gConfig.destAccountId||(googleAccounts?.length||0)<2}>Continue →</Btn>
       </div>
     </div>
   );
@@ -3964,11 +4226,14 @@ const StepG2GCloudSelect=({g2gConfig,setG2gConfig,googleAccounts,onNext,onBack,s
 
 const StepG2GMap=({g2gUploadData,g2gConfig,g2gMappings,setG2gMappings,g2gSelectedUsers,setG2gSelectedUsers,onNext,onBack,showToast})=>{
   const csvRef=useRef(null);
-  const users=g2gUploadData?.users||[];
+  const allUsers=g2gUploadData?.users||[];
   const [search,setSearch]=useState('');
   const [csvUploading,setCsvUploading]=useState(false);
   const [destUsers,setDestUsers]=useState([]);
   const [loadingDest,setLoadingDest]=useState(false);
+  // csvEmails persists in DB — survives server restart and user logout / login
+  const [csvEmails,setCsvEmails]=useState(null);
+  const users=csvEmails?allUsers.filter(u=>csvEmails.includes((u.email||'').toLowerCase())):allUsers;
 
   // Load destination users from selected destination account
   useEffect(()=>{
@@ -3980,6 +4245,21 @@ const StepG2GMap=({g2gUploadData,g2gConfig,g2gMappings,setG2gMappings,g2gSelecte
       .catch(()=>setDestUsers([]))
       .finally(()=>setLoadingDest(false));
   },[g2gConfig?.destAccountId]);
+
+  // On mount: load persisted mappings + csvEmails
+  useEffect(()=>{
+    fetch('/api/g2g/user-mappings').then(r=>r.ok?r.json():null).then(doc=>{
+      if(doc?.csvEmails&&doc.csvEmails.length>0){
+        setCsvEmails(doc.csvEmails);
+        if(doc.mappings)setG2gMappings(doc.mappings);
+      }
+    }).catch(()=>{});
+  },[]);
+
+  const persistMappings=(m,csv)=>{
+    fetch('/api/g2g/user-mappings',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({mappings:m,csvEmails:csv??null})}).catch(()=>{});
+  };
 
   // CSV includes ALL source AND destination users (mapped or not) so the client knows totals
   const downloadCsv=()=>{
@@ -4011,24 +4291,33 @@ const StepG2GMap=({g2gUploadData,g2gConfig,g2gMappings,setG2gMappings,g2gSelecte
       const lines=e.target.result.split(/\r?\n/);
       const m={...g2gMappings};
       let imported=0;
+      const csvKeys=[];
       for(const l of lines){
         if(!l.trim())continue;
         const c=parseCsvLine(l);
         if(c.length<2)continue;
         const first=(c[0]||'').trim().toLowerCase();
-        // Skip header rows and destination-section rows
         if(first==='section'||first==='source user'||first==='destination')continue;
-        // Two formats: legacy [source,dest] or new [section,source,dest,...]
-        const src=first==='source'?(c[1]||'').trim():(c[0]||'').trim();
+        const src=(first==='source'?(c[1]||'').trim():(c[0]||'').trim()).toLowerCase();
         const dst=first==='source'?(c[2]||'').trim():(c[1]||'').trim();
-        if(src){m[src]=dst;imported++;}
+        if(src){m[src]=dst;imported++;csvKeys.push(src);}
       }
       setG2gMappings(m);
+      setCsvEmails(csvKeys);
+      setG2gSelectedUsers(new Set(csvKeys.filter(k=>m[k])));
+      persistMappings(m,csvKeys);
       setCsvUploading(false);
       showToast(`Imported ${imported} mapping(s).`);
     };
     r.onerror=()=>setCsvUploading(false);
     r.readAsText(file);
+  };
+
+  const clearCsv=()=>{
+    setCsvEmails(null);
+    fetch('/api/g2g/user-mappings',{method:'DELETE'}).catch(()=>{});
+    setG2gSelectedUsers(new Set());
+    showToast?.('CSV cleared — restored cloud auto-mapping.');
   };
 
   // Auto-map: each source email matched to dest user with same local-part (no double-use)
@@ -4077,6 +4366,9 @@ const StepG2GMap=({g2gUploadData,g2gConfig,g2gMappings,setG2gMappings,g2gSelecte
             <button onClick={downloadCsv} title="Download CSV" style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.primary}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}} onMouseEnter={e=>e.currentTarget.style.background=C.tint} onMouseLeave={e=>e.currentTarget.style.background='white'}>
               <IcoDownload s={13} c={C.primary}/>
             </button>
+            {csvEmails&&<button onClick={clearCsv} title="Clear CSV — restore cloud auto-mapping" style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.error}`,background:'white',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}} onMouseEnter={e=>e.currentTarget.style.background='#FEF2F2'} onMouseLeave={e=>e.currentTarget.style.background='white'}>
+              <IcoTrash s={13}/>
+            </button>}
           </div>
         </div>
         <div style={{display:'flex',alignItems:'center',marginBottom:8}}>
@@ -4332,6 +4624,7 @@ const StepG2GMigrate=({g2gStats,g2gDone,onRunAnother,onBack,onStart,g2gLive,onCh
             ))}
           </div>
 
+          {lastRunWasDry&&<DryRunReportCard migDir="gemini-gemini"/>}
           {!lastRunWasDry&&<GemSetupInstructions folderName={folderName||'Gemini Conversations'} migDir="gemini-gemini"/>}
 
           {lastRunWasDry&&onStartLive&&(
@@ -4434,7 +4727,17 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
     if(r.status==='running')return{bg:'#EFF6FF',color:'#1D4ED8',label:'In Progress'};
     if(r.dryRun)return{bg:'#FEF3C7',color:'#92400E',label:'Dry Run'};
     if(r.status==='failed')return{bg:'#FEE2E2',color:'#991B1B',label:'Failed'};
-    if(r.totalErrors>0)return{bg:'#FEF3C7',color:'#92400E',label:'Partial'};
+    // Look at multiple signals — legacy G2C batches sometimes lacked totalErrors.
+    const errs=Math.max(r.totalErrors||0, r.report?.summary?.total_errors||0);
+    const failed=r.failedUsers||0;
+    const migrated=r.migratedUsers||0;
+    const totalU=r.totalUsers||0;
+    const pages=r.migratedConversations||0;
+    if((errs>0||failed>0)&&migrated===0&&totalU>0)return{bg:'#FEE2E2',color:'#991B1B',label:'Failed'};
+    if(errs>0||failed>0)return{bg:'#FEF3C7',color:'#92400E',label:'Partial'};
+    // No errors but ALSO no pages migrated → "No Data" (gray) so user knows
+    // nothing was actually moved. Better than a misleading green Success.
+    if(pages===0&&totalU>0)return{bg:'#F3F4F6',color:'#4B5563',label:'No Data'};
     return{bg:'#DCFCE7',color:'#166534',label:'Success'};
   };
 
@@ -4505,7 +4808,7 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
                       const live=isRunningBatch&&liveStats&&r._id===liveBatchId;
                       const doneUsers=live?liveStats.users:(isRunningBatch?r.progressUsers:r.totalUsers);
                       const donePages=live?liveStats.pages:(isRunningBatch?r.progressPages:(r.dryRun?r.totalConversations:r.migratedConversations));
-                      const doneErrors=live?liveStats.errors:(isRunningBatch?r.progressErrors:r.totalErrors);
+                      const doneErrors=live?liveStats.errors:(isRunningBatch?r.progressErrors:(r.totalErrors??r.report?.summary?.total_errors??0));
                       const totalUsers=r.totalUsers||0;
                       const filesLabel=(r.direction==='copilot-copilot'||r.migDir==='copilot-copilot')?'Pages':(r.direction==='c2g'||r.direction==='copilot-gemini'||r.direction==='claude-gemini'||r.direction==='gemini-gemini')?'Files':'Pages';
                       return[
@@ -4568,6 +4871,10 @@ function App(){
   const initStepRef=useRef(lsGet(LS_PREFS,{}).step||0);
   const initMigDirRef=useRef(lsGet(LS_PREFS,{}).migDir||null);
   const [uploadData,setUploadData]=useState(()=>{const c=lsGet(LS_UPLOAD,null);return c?.uploadId?c:null});
+  // Signal to drive the G2C Import Data tab from the agent (e.g. "I want to upload a ZIP")
+  const [importTabSignal,setImportTabSignal]=useState(null);
+  // Signal to drive the Vault export from the agent ("Export Vault for ALL users")
+  const [exportTrigger,setExportTrigger]=useState(null);
   const [config,setConfig]=useState(()=>({filePath:'GeminiChats',tenantId:'807d6772-847c-40e2-9bec-e2c930b3a42e',...(lsGet(LS_PREFS,{}).config||{})}));
   const [mappings,setMappings]=useState(()=>lsGet(LS_MAPPING,{}).g2c||{});
   const [selectedUsers,setSelectedUsers]=useState(()=>new Set());
@@ -5094,26 +5401,69 @@ function App(){
       const mapped=Object.values(newMappings).filter(Boolean).length;
       const total=(cl2gUploadData?.users||[]).length;
       addAgentMsg('bot',`Auto-mapped **${mapped}** of **${total}** users.${mapped<total?` **${total-mapped}** unmatched — fill in on the right.`:' All mapped!'}`);
+    } else if(migDir==='claude-copilot'){
+      const newMappings={...cl2cMappings};
+      (cl2cUploadData?.users||[]).forEach(u=>{
+        const localPart=(u.email_address||'').split('@')[0].toLowerCase();
+        const match=msUsers.find(m=>{
+          const e=(m.mail||m.userPrincipalName||'').toLowerCase();
+          return e===u.email_address?.toLowerCase()||e.split('@')[0]===localPart;
+        });
+        if(match&&!newMappings[u.uuid])newMappings[u.uuid]=match.mail||match.userPrincipalName;
+      });
+      setCl2cMappings(newMappings);
+      const mapped=Object.values(newMappings).filter(Boolean).length;
+      const total=(cl2cUploadData?.users||[]).length;
+      addAgentMsg('bot',`Auto-mapped **${mapped}** of **${total}** users.${mapped<total?` **${total-mapped}** unmatched — fill in on the right.`:' All mapped!'}`);
+    } else if(migDir==='gemini-gemini'){
+      // G2G: source users come from g2gUploadData, destination from googleUsers.
+      // Match by email local-part across accounts.
+      const newMappings={...g2gMappings};
+      (g2gUploadData?.users||[]).forEach(u=>{
+        const localPart=(u.email||'').split('@')[0].toLowerCase();
+        const match=googleUsers.find(g=>(g.email||'').toLowerCase().split('@')[0]===localPart);
+        if(match&&!newMappings[u.email])newMappings[u.email]=match.email;
+      });
+      setG2gMappings(newMappings);
+      const mapped=Object.values(newMappings).filter(Boolean).length;
+      const total=(g2gUploadData?.users||[]).length;
+      addAgentMsg('bot',`Auto-mapped **${mapped}** of **${total}** users.${mapped<total?` **${total-mapped}** unmatched — fill in on the right.`:' All mapped!'}`);
+    } else if(migDir==='copilot-copilot'){
+      // C2C: source users live in the StepC2CUserMap component; can't auto-map
+      // from App scope without their list. Tell user to use the in-UI button.
+      addAgentMsg('bot','For Copilot → Copilot, click the "Auto-map" button at the top of the user mapping table — the in-UI auto-map matches across both tenants directly.');
     }
-  },[migDir,mappings,uploadData,msUsers,googleUsers,c2gMappings,cl2gMappings,cl2gUploadData,setMappings,setC2gMappings,setCl2gMappings,addAgentMsg]);
+  },[migDir,mappings,uploadData,msUsers,googleUsers,c2gMappings,cl2gMappings,cl2gUploadData,setMappings,setC2gMappings,setCl2gMappings,cl2cMappings,cl2cUploadData,setCl2cMappings,g2gMappings,g2gUploadData,setG2gMappings,addAgentMsg]);
 
   const applyAgentConfig=useCallback((cfg={})=>{
     if(cfg.folderName!==undefined){
-      if(migDir==='copilot-gemini')setC2gConfig(p=>({...p,folderName:cfg.folderName}));
-      else if(migDir==='claude-gemini')setCl2gConfig(p=>({...p,folderName:cfg.folderName}));
-      else setConfig(p=>({...p,folderName:cfg.folderName}));
+      const fn=cfg.folderName;
+      if(migDir==='copilot-gemini')      setC2gConfig (p=>({...p,folderName:fn}));
+      else if(migDir==='claude-gemini')  setCl2gConfig(p=>({...p,folderName:fn}));
+      else if(migDir==='claude-copilot') setCl2cConfig(p=>({...p,folderName:fn}));
+      else if(migDir==='gemini-gemini')  setG2gConfig (p=>({...p,gemName:fn,folderName:fn}));
+      else if(migDir==='copilot-copilot')setC2cConfig (p=>({...p,folderName:fn}));
+      else                                setConfig    (p=>({...p,folderName:fn,filePath:fn}));
     }
     if(cfg.fromDate!==undefined||cfg.toDate!==undefined){
-      if(migDir==='copilot-gemini')setC2gOptions(p=>({...p,fromDate:cfg.fromDate??p.fromDate,toDate:cfg.toDate??p.toDate}));
-      else if(migDir==='claude-gemini')setCl2gOptions(p=>({...p,fromDate:cfg.fromDate??p.fromDate,toDate:cfg.toDate??p.toDate}));
-      else setOptions(p=>({...p,fromDate:cfg.fromDate??p.fromDate,toDate:cfg.toDate??p.toDate}));
+      const dates=p=>({...p,fromDate:cfg.fromDate??p.fromDate,toDate:cfg.toDate??p.toDate});
+      if(migDir==='copilot-gemini')      setC2gOptions (dates);
+      else if(migDir==='claude-gemini')  setCl2gOptions(dates);
+      else if(migDir==='claude-copilot') setCl2cOptions(dates);
+      else if(migDir==='gemini-gemini')  setG2gOptions (dates);
+      else if(migDir==='copilot-copilot')setC2cOptions (dates);
+      else                                setOptions    (dates);
     }
     if(cfg.dryRun!==undefined){
-      if(migDir==='copilot-gemini')setC2gOptions(p=>({...p,dryRun:cfg.dryRun}));
-      else if(migDir==='claude-gemini')setCl2gOptions(p=>({...p,dryRun:cfg.dryRun}));
-      else setOptions(p=>({...p,dryRun:cfg.dryRun}));
+      const dr=cfg.dryRun;
+      if(migDir==='copilot-gemini')      setC2gOptions (p=>({...p,dryRun:dr}));
+      else if(migDir==='claude-gemini')  setCl2gOptions(p=>({...p,dryRun:dr}));
+      else if(migDir==='claude-copilot') setCl2cOptions(p=>({...p,dryRun:dr}));
+      else if(migDir==='gemini-gemini')  setG2gOptions (p=>({...p,dryRun:dr}));
+      else if(migDir==='copilot-copilot')setC2cOptions (p=>({...p,dryRun:dr}));
+      else                                setOptions    (p=>({...p,dryRun:dr}));
     }
-  },[migDir,setConfig,setOptions,setC2gConfig,setC2gOptions,setCl2gConfig,setCl2gOptions]);
+  },[migDir,setConfig,setOptions,setC2gConfig,setC2gOptions,setCl2gConfig,setCl2gOptions,setCl2cConfig,setCl2cOptions,setG2gConfig,setG2gOptions,setC2cConfig,setC2cOptions]);
 
   // Run Another Batch: two modes
   // keepData=true → same vault, different users (go to Step 2)
@@ -5585,6 +5935,18 @@ function App(){
   const applyUIEvent=useCallback((evt)=>{
     if(evt.event==='show_upload_widget'){
       addAgentMsg('widget',{widgetType:evt.widgetType,label:evt.label,migDir:evt.migDir,done:false});
+      // For Vault-source combos (G2C, G2G), also switch the right-panel's tab
+      // to "Upload ZIP" so the user sees the same context the agent offers.
+      if(evt.widgetType==='zip'){
+        if(evt.migDir==='gemini-copilot'){
+          setStep(2);
+          setImportTabSignal({tab:'upload',ts:Date.now()});
+        } else if(evt.migDir==='gemini-gemini'){
+          // G2G upload step is step 3 (after Select Accounts at step 2)
+          setStep(3);
+          setImportTabSignal({tab:'upload',ts:Date.now()});
+        }
+      }
       return;
     }
     if(evt.event==='navigate'&&typeof evt.step==='number'){setStep(evt.step);}
@@ -5596,7 +5958,189 @@ function App(){
     else if(evt.event==='migration_started'&&evt.migDir){setAgentMigrationTrigger({migDir:evt.migDir,dryRun:evt.dryRun??true,ts:Date.now()});}
     else if(evt.event==='show_widget'&&evt.widget){/* widget stored inline — handled when text event arrives */}
     else if(evt.event==='set_config'&&evt.config){applyAgentConfig&&applyAgentConfig(evt.config);}
-  },[setStep,setMigDir,setLeftMode,setShowReports,setReportRefreshKey,applyAgentConfig,setAgentMigrationTrigger,triggerAutoMap,addAgentMsg]);
+    else if(evt.event==='set_g2g_accounts'&&evt.sourceAccountId&&evt.destAccountId){
+      // The agent often passes a wrong value: an email, a placeholder
+      // like "id_of_zara", a partial name, etc. We robustly resolve to the
+      // real accountId by trying multiple match strategies.
+      const accounts=googleAccounts||[];
+      const resolveId=(v)=>{
+        if(!v)return v;
+        const raw=String(v).trim();
+        // 1. Exact accountId match (UUID — looks like 8-4-4-4-12 hex)
+        if(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw)) {
+          const m=accounts.find(a=>a.accountId===raw); if(m)return m.accountId;
+        }
+        // 2. Exact email match (case-insensitive)
+        if(raw.includes('@')){
+          const m=accounts.find(a=>(a.email||'').toLowerCase()===raw.toLowerCase()); if(m)return m.accountId;
+        }
+        // 3. Email local-part match (e.g. "zara" → "zara@storefuze.com")
+        const lower=raw.toLowerCase().replace(/^id_of_/i,'');
+        const m1=accounts.find(a=>(a.email||'').toLowerCase().split('@')[0]===lower); if(m1)return m1.accountId;
+        // 4. Display name contains the token
+        const m2=accounts.find(a=>(a.displayName||'').toLowerCase().includes(lower)); if(m2)return m2.accountId;
+        // 5. Substring match on email
+        const m3=accounts.find(a=>(a.email||'').toLowerCase().includes(lower)); if(m3)return m3.accountId;
+        return raw; // last resort — pass through
+      };
+      const srcId=resolveId(evt.sourceAccountId);
+      const dstId=resolveId(evt.destAccountId);
+      setG2gConfig(p=>({...p,sourceAccountId:srcId,destAccountId:dstId}));
+      if(typeof evt.step==='number')setStep(evt.step);
+    }
+    else if(evt.event==='set_c2c_tenants'&&evt.sourceTenantId&&evt.destTenantId){
+      // The agent often passes a name like "granger" or "erik" instead of the
+      // real tenant GUID. Use multi-strategy resolution against msAccounts.
+      // For the fetch to a tenant's users to work, sourceTenantId/destTenantId
+      // MUST end up as real GUIDs — anything else and the API call fails.
+      const accounts=msAccounts||[];
+      const isGuid=(v)=>/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v||'').trim());
+      const resolveTid=(v)=>{
+        if(!v)return v;
+        const raw=String(v).trim();
+        // 1. Already a GUID — verify it actually matches a known tenant; otherwise return as-is
+        if(isGuid(raw)){
+          const m=accounts.find(a=>(a.tenantId||'')===raw);
+          return m?m.tenantId:raw;
+        }
+        const lower=raw.toLowerCase();
+        // 2. Exact email match
+        if(raw.includes('@')){
+          const m=accounts.find(a=>(a.email||'').toLowerCase()===lower); if(m?.tenantId)return m.tenantId;
+        }
+        // 3. Display name exact / contains (case-insensitive)
+        let m=accounts.find(a=>(a.displayName||'').toLowerCase()===lower); if(m?.tenantId)return m.tenantId;
+        m=accounts.find(a=>(a.displayName||'').toLowerCase().includes(lower)); if(m?.tenantId)return m.tenantId;
+        // 4. Email local-part match (e.g. "granger" → granger@xyz.com)
+        m=accounts.find(a=>(a.email||'').toLowerCase().split('@')[0]===lower); if(m?.tenantId)return m.tenantId;
+        // 5. Email domain prefix (e.g. "granger" → granger.onmicrosoft.com)
+        m=accounts.find(a=>{const dom=((a.email||'').split('@')[1]||'').toLowerCase();return dom.startsWith(lower+'.')||dom===lower;}); if(m?.tenantId)return m.tenantId;
+        // 6. Substring match anywhere in email
+        m=accounts.find(a=>(a.email||'').toLowerCase().includes(lower)); if(m?.tenantId)return m.tenantId;
+        // No match — return raw (will likely fail the API fetch, but better than silent garbage)
+        console.warn(`[set_c2c_tenants] Could not resolve "${raw}" to a tenant GUID. msAccounts:`,accounts.map(a=>({email:a.email,displayName:a.displayName,tenantId:a.tenantId})));
+        showToast?.(`Couldn't find a tenant matching "${raw}". Check Connect Clouds — only ${accounts.length} tenants are signed in.`,'error');
+        return raw;
+      };
+      const srcTid=resolveTid(evt.sourceTenantId);
+      const dstTid=resolveTid(evt.destTenantId);
+      // Validate: if either resolved value still isn't a GUID, abort the update
+      // so the user isn't stuck with a half-broken state.
+      if(!isGuid(srcTid)||!isGuid(dstTid)){
+        showToast?.(`Source or destination tenant could not be resolved. Please pick from the dropdowns directly.`,'error');
+        // Still navigate to the tenant-select step so the user can correct
+        setStep(2);
+        return;
+      }
+      setC2cConfig(p=>({...p,sourceTenantId:srcTid,destTenantId:dstTid}));
+      if(typeof evt.step==='number')setStep(evt.step);
+    }
+    else if(evt.event==='initiate_tenant_consent'){
+      // Navigate to the C2C Tenant Select step where the admin-consent UI lives.
+      setMigDir('copilot-copilot');
+      setStep(2);
+    }
+    else if(evt.event==='trigger_vault_export'){
+      // Agent kicked off a Vault export. Navigate to the right step, switch
+      // to User's List tab, and bump the export trigger so the Step component
+      // selects users and runs startExport.
+      if(typeof evt.step==='number')setStep(evt.step);
+      setImportTabSignal({tab:'userwise',ts:Date.now()});
+      setExportTrigger({scope:evt.scope||'all',emails:evt.emails||[],ts:Date.now()});
+    }
+    else if(evt.event==='set_mapping_selection'){
+      const action=evt.action;
+      const emails=(evt.emails||[]).map(e=>(e||'').toLowerCase());
+      const d=evt.migDir;
+      // Dispatch per-direction. Each combo stores selection in a different state hook.
+      if(d==='gemini-copilot'){
+        const srcEmails=(uploadData?.users||[]).map(u=>(u.email||'').toLowerCase());
+        if(action==='all')setSelectedUsers(new Set(srcEmails));
+        else if(action==='none')setSelectedUsers(new Set());
+        else if(action==='only_mapped')setSelectedUsers(new Set(Object.entries(mappings).filter(([,v])=>v).map(([k])=>k.toLowerCase())));
+        else if(action==='add')setSelectedUsers(p=>{const n=new Set(p);emails.forEach(e=>n.add(e));return n});
+        else if(action==='remove')setSelectedUsers(p=>{const n=new Set(p);emails.forEach(e=>n.delete(e));return n});
+      } else if(d==='copilot-gemini'){
+        const srcEmails=(msUsers||[]).map(u=>(u.mail||u.userPrincipalName||'').toLowerCase());
+        if(action==='all')setC2gSelectedUsers(new Set(srcEmails));
+        else if(action==='none')setC2gSelectedUsers(new Set());
+        else if(action==='only_mapped')setC2gSelectedUsers(new Set(Object.entries(c2gMappings).filter(([,v])=>v).map(([k])=>k.toLowerCase())));
+        else if(action==='add')setC2gSelectedUsers(p=>{const n=new Set(p);emails.forEach(e=>n.add(e));return n});
+        else if(action==='remove')setC2gSelectedUsers(p=>{const n=new Set(p);emails.forEach(e=>n.delete(e));return n});
+      } else if(d==='claude-gemini'){
+        const users=cl2gUploadData?.users||[];
+        const emailToUuid=Object.fromEntries(users.map(u=>[(u.email_address||'').toLowerCase(),u.uuid]));
+        if(action==='all')setCl2gSelectedUuids(new Set(users.map(u=>u.uuid)));
+        else if(action==='none')setCl2gSelectedUuids(new Set());
+        else if(action==='only_mapped')setCl2gSelectedUuids(new Set(Object.entries(cl2gMappings).filter(([,v])=>v).map(([k])=>k)));
+        else if(action==='add')setCl2gSelectedUuids(p=>{const n=new Set(p);emails.forEach(e=>{const u=emailToUuid[e];if(u)n.add(u)});return n});
+        else if(action==='remove')setCl2gSelectedUuids(p=>{const n=new Set(p);emails.forEach(e=>{const u=emailToUuid[e];if(u)n.delete(u)});return n});
+      } else if(d==='claude-copilot'){
+        const users=cl2cUploadData?.users||[];
+        const emailToUuid=Object.fromEntries(users.map(u=>[(u.email_address||'').toLowerCase(),u.uuid]));
+        if(action==='all')setCl2cSelectedUuids(new Set(users.map(u=>u.uuid)));
+        else if(action==='none')setCl2cSelectedUuids(new Set());
+        else if(action==='only_mapped')setCl2cSelectedUuids(new Set(Object.entries(cl2cMappings).filter(([,v])=>v).map(([k])=>k)));
+        else if(action==='add')setCl2cSelectedUuids(p=>{const n=new Set(p);emails.forEach(e=>{const u=emailToUuid[e];if(u)n.add(u)});return n});
+        else if(action==='remove')setCl2cSelectedUuids(p=>{const n=new Set(p);emails.forEach(e=>{const u=emailToUuid[e];if(u)n.delete(u)});return n});
+      } else if(d==='gemini-gemini'){
+        const srcEmails=(g2gUploadData?.users||[]).map(u=>(u.email||'').toLowerCase());
+        if(action==='all')setG2gSelectedUsers(new Set(srcEmails));
+        else if(action==='none')setG2gSelectedUsers(new Set());
+        else if(action==='only_mapped')setG2gSelectedUsers(new Set(Object.entries(g2gMappings).filter(([,v])=>v).map(([k])=>k.toLowerCase())));
+        else if(action==='add')setG2gSelectedUsers(p=>{const n=new Set(p);emails.forEach(e=>n.add(e));return n});
+        else if(action==='remove')setG2gSelectedUsers(p=>{const n=new Set(p);emails.forEach(e=>n.delete(e));return n});
+      } else if(d==='copilot-copilot'){
+        // C2C source users live inside the StepC2CUserMap component, not at App scope.
+        // Support add/remove/none, but all/only_mapped fall back to mapping keys.
+        if(action==='none')setC2cSelectedUsers(new Set());
+        else if(action==='all'||action==='only_mapped')setC2cSelectedUsers(new Set(Object.entries(c2cMappings).filter(([,v])=>v).map(([k])=>k.toLowerCase())));
+        else if(action==='add')setC2cSelectedUsers(p=>{const n=new Set(p);emails.forEach(e=>n.add(e));return n});
+        else if(action==='remove')setC2cSelectedUsers(p=>{const n=new Set(p);emails.forEach(e=>n.delete(e));return n});
+      }
+    }
+    else if(evt.event==='set_user_mapping'){
+      const src=(evt.sourceEmail||'').toLowerCase();
+      const dst=(evt.destEmail||'').trim();
+      const d=evt.migDir;
+      if(!src)return;
+      if(d==='gemini-copilot'){
+        setMappings(p=>({...p,[src]:dst}));
+      } else if(d==='copilot-gemini'){
+        setC2gMappings(p=>({...p,[src]:dst}));
+      } else if(d==='claude-gemini'){
+        const users=cl2gUploadData?.users||[];
+        const u=users.find(u=>(u.email_address||'').toLowerCase()===src);
+        if(u)setCl2gMappings(p=>({...p,[u.uuid]:dst}));
+      } else if(d==='claude-copilot'){
+        const users=cl2cUploadData?.users||[];
+        const u=users.find(u=>(u.email_address||'').toLowerCase()===src);
+        if(u)setCl2cMappings(p=>({...p,[u.uuid]:dst}));
+      } else if(d==='gemini-gemini'){
+        setG2gMappings(p=>({...p,[src]:dst}));
+      } else if(d==='copilot-copilot'){
+        setC2cMappings(p=>({...p,[src]:dst}));
+      }
+    }
+    else if(evt.event==='clear_uploaded_csv'){
+      const d=evt.migDir;
+      // Per-direction DELETE endpoint (where available) to wipe persisted mappings.
+      const endpoints={
+        'copilot-gemini':'/api/c2g/user-mappings',
+        'claude-gemini':'/api/cl2g/user-mappings',
+        'claude-copilot':'/api/cl2c/user-mappings',
+      };
+      const url=endpoints[d];
+      if(url)fetch(url,{method:'DELETE'}).catch(()=>{});
+      // Wipe in-memory state for this direction.
+      if(d==='gemini-copilot'){setMappings({});setSelectedUsers(new Set());}
+      else if(d==='copilot-gemini'){setC2gMappings({});setC2gSelectedUsers(new Set());}
+      else if(d==='claude-gemini'){setCl2gMappings({});setCl2gSelectedUuids(new Set());}
+      else if(d==='claude-copilot'){setCl2cMappings({});setCl2cSelectedUuids(new Set());}
+      else if(d==='gemini-gemini'){setG2gMappings({});setG2gSelectedUsers(new Set());}
+      else if(d==='copilot-copilot'){setC2cMappings({});setC2cSelectedUsers(new Set());}
+    }
+  },[setStep,setMigDir,setLeftMode,setShowReports,setReportRefreshKey,applyAgentConfig,setAgentMigrationTrigger,triggerAutoMap,addAgentMsg,setG2gConfig,setC2cConfig,uploadData,mappings,setSelectedUsers,msUsers,c2gMappings,setC2gSelectedUsers,cl2gUploadData,cl2gMappings,setCl2gSelectedUuids,setCl2gMappings,cl2cUploadData,cl2cMappings,setCl2cSelectedUuids,setCl2cMappings,g2gUploadData,g2gMappings,setG2gSelectedUsers,setG2gMappings,c2cMappings,setC2cSelectedUsers,setC2cMappings,setMappings]);
 
   const sendToAgent=useCallback(async(overrideMsg,isSystem=false)=>{
     const userMsg=overrideMsg||agentInput.trim();
@@ -5631,7 +6175,18 @@ function App(){
         return `${sp} panel: Step ${step}, direction ${migDir||'not selected'}.`;
       })();
       // Build direction-scoped state — only include stats for the active direction to avoid stale cross-direction confusion
-      const migrationState={step,migDir,live,agentMode,googleAuthed,msAuthed,uiContext,panelSwapped,
+      // Derive authed flags defensively: if accounts are loaded, treat as authed
+      // even if the boolean is somehow stale. This prevents select_direction from
+      // bouncing the user back to step 0 when clouds are visibly connected.
+      const _googleAuthedEff = googleAuthed || ((googleAccounts||[]).length>0);
+      const _msAuthedEff = msAuthed || ((msAccounts||[]).length>0);
+      const migrationState={step,migDir,live,agentMode,googleAuthed:_googleAuthedEff,msAuthed:_msAuthedEff,uiContext,panelSwapped,
+        googleAccountsCount:(googleAccounts||[]).length, msAccountsCount:(msAccounts||[]).length,
+        multiGoogle:(googleAccounts||[]).length>=2, multiMs:(msAccounts||[]).length>=2,
+        // Pass each connected account's email + accountId so the agent can answer
+        // "show me my connected accounts" / "which is the source?" accurately.
+        googleAccountsList:(googleAccounts||[]).map(a=>({email:a.email,accountId:a.accountId,displayName:a.displayName||null})),
+        msAccountsList:(msAccounts||[]).map(a=>({email:a.email,accountId:a.accountId,tenantId:a.tenantId||null,displayName:a.displayName||null})),
         // G2C (gemini-copilot) fields
         ...(migDir==='gemini-copilot'||migDir===null?{
           migDone,stats,lastRunWasDry,currentBatchId,
@@ -5647,6 +6202,7 @@ function App(){
         ...(migDir==='copilot-gemini'?{
           c2g_done:c2gDone,c2g_live:c2gLive,c2g_stats:c2gStats,c2gLastDry:c2gLastDry,
           c2g_mappings_count:Object.keys(c2gMappings).length,
+          c2g_selected_users_count:c2gSelectedUsers.size,
           c2g_options:{dryRun:c2gOptions.dryRun},
         }:{}),
         // CL2G (claude-gemini) fields
@@ -5654,14 +6210,19 @@ function App(){
           cl2g_done:cl2gDone,cl2g_live:cl2gLive,cl2g_stats:cl2gStats,cl2gLastDry:cl2gLastDry,
           cl2g_upload_users:cl2gUploadData?.users?.length||0,
           cl2g_mappings_count:Object.keys(cl2gMappings).length,
+          cl2g_selected_users_count:cl2gSelectedUuids.size,
           cl2g_options:{dryRun:cl2gOptions.dryRun},
         }:{}),
-        // G2G (gemini-gemini) fields
+        // G2G (gemini-gemini) fields. Source/dest fields are only meaningful at
+        // step >= 2 (Select Accounts onward). Sending them at step 0 or 1 makes
+        // the agent think the user has already picked when they have not.
         ...(migDir==='gemini-gemini'?{
           g2g_done:g2gDone,g2g_live:g2gLive,g2g_stats:g2gStats,g2gLastDry:g2gLastDry,
           g2g_upload_users:g2gUploadData?.users?.length||g2gSelectedUsers.size||0,
-          g2g_source_account_id:g2gConfig.sourceAccountId||'',
+          g2g_source_account_id: step>=2 ? (g2gConfig.sourceAccountId||'') : '',
+          g2g_dest_account_id:   step>=2 ? (g2gConfig.destAccountId||'')   : '',
           g2g_mappings_count:Object.keys(g2gMappings).length||g2gSelectedUsers.size,
+          g2g_selected_users_count:g2gSelectedUsers.size,
           g2g_options:{dryRun:g2gOptions.dryRun},
         }:{}),
         // CL2C (claude-copilot) fields
@@ -5669,7 +6230,18 @@ function App(){
           cl2c_done:cl2cDone,cl2c_live:cl2cLive,cl2c_stats:cl2cStats,cl2cLastDry:cl2cLastDry,
           cl2c_upload_users:cl2cUploadData?.users?.length||0,
           cl2c_mappings_count:Object.keys(cl2cMappings).length,
+          cl2c_selected_users_count:cl2cSelectedUuids.size,
           cl2c_options:{dryRun:cl2cOptions.dryRun},
+        }:{}),
+        // C2C (copilot-copilot) fields. Tenant IDs are only meaningful at
+        // step >= 2 (Select Tenants onward).
+        ...(migDir==='copilot-copilot'?{
+          c2c_done:c2cDone,c2c_live:c2cLive,c2c_stats:c2cStats,c2cLastDry:c2cLastDry,
+          c2c_source_tenant_id: step>=2 ? (c2cConfig.sourceTenantId||'') : '',
+          c2c_dest_tenant_id:   step>=2 ? (c2cConfig.destTenantId||'')   : '',
+          c2c_mappings_count:Object.keys(c2cMappings).length,
+          c2c_selected_users_count:c2cSelectedUsers.size,
+          c2c_options:{dryRun:c2cOptions.dryRun},
         }:{}),
       };
       const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -5737,6 +6309,78 @@ function App(){
     // Navigation chips
     if(qr==='Choose direction'||qr==="What's the difference?"){setStep(1);addAgentMsg('user',qr);setTimeout(()=>sendToAgentRef.current(qr),300);return;}
 
+    // "Migrate another set of users" / "Start a new migration" — after a
+    // completed run. Don't ask the agent (it sometimes hallucinates "still
+    // running"). Navigate directly to the Map Users step of the active dir
+    // and clear the *_done flag so post-migration UI gets out of the way.
+    const NEW_BATCH_CHIPS=['Migrate another set of users','Start a new migration','Migrate more users','Migrate another batch'];
+    if(NEW_BATCH_CHIPS.includes(qr)){
+      addAgentMsg('user',qr);
+      const mapStep={
+        'gemini-copilot':3,'copilot-gemini':2,'claude-gemini':3,
+        'claude-copilot':3,'gemini-gemini':4,'copilot-copilot':3,
+      }[migDir]||2;
+      if(migDir==='gemini-copilot'){setMigDone(false);setLastRunWasDry(false);}
+      else if(migDir==='copilot-gemini'){setC2gDone(false);setC2gLastDry(false);}
+      else if(migDir==='claude-gemini'){setCl2gDone(false);setCl2gLastDry(false);}
+      else if(migDir==='claude-copilot'){setCl2cDone(false);setCl2cLastDry(false);}
+      else if(migDir==='gemini-gemini'){setG2gDone(false);setG2gLastDry(false);}
+      else if(migDir==='copilot-copilot'){setC2cDone(false);setC2cLastDry(false);}
+      setStep(mapStep);
+      setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current(`Taken back to the Map Users step for ${migDir}. Pick new users for the next batch.`,true),200);
+      return;
+    }
+
+    // "Change source tenant" / "Change destination tenant" / "Swap source and destination"
+    // — handle locally without bouncing through the agent. The agent's behavior
+    // is to ask "which tenant?" and list GUIDs, which is terrible UX. When the
+    // user has exactly 2 tenants/accounts, this means swap. Otherwise navigate
+    // to the Tenant/Account Select step so they can pick from the dropdowns.
+    const SWAP_CHIPS_C2C=['Change source tenant','Change destination tenant','Swap source and destination','Swap tenants'];
+    const SWAP_CHIPS_G2G=['Change source account','Change destination account','Swap source and destination accounts','Swap Google accounts'];
+    if(SWAP_CHIPS_C2C.includes(qr)&&migDir==='copilot-copilot'){
+      addAgentMsg('user',qr);
+      const tenantCount=(msAccounts||[]).filter(a=>a.tenantId).length;
+      if(tenantCount===2&&c2cConfig.sourceTenantId&&c2cConfig.destTenantId){
+        // Swap
+        setC2cConfig(p=>({...p,sourceTenantId:p.destTenantId,destTenantId:p.sourceTenantId}));
+        setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current(`Source and destination tenants swapped. The new source is what was the destination, and vice versa.`,true),200);
+      }else{
+        setStep(2);
+        setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current(`Taken back to Select Tenants step so you can pick source/destination from the dropdowns.`,true),200);
+      }
+      return;
+    }
+    if(SWAP_CHIPS_G2G.includes(qr)&&migDir==='gemini-gemini'){
+      addAgentMsg('user',qr);
+      const accCount=(googleAccounts||[]).length;
+      if(accCount===2&&g2gConfig.sourceAccountId&&g2gConfig.destAccountId){
+        setG2gConfig(p=>({...p,sourceAccountId:p.destAccountId,destAccountId:p.sourceAccountId}));
+        setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current(`Source and destination Google accounts swapped.`,true),200);
+      }else{
+        setStep(2);
+        setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current(`Taken back to Select Accounts step so you can pick source/destination from the dropdowns.`,true),200);
+      }
+      return;
+    }
+
+    // "Connect another Google Workspace account" — open OAuth popup directly
+    // without going through the agent (which sometimes hallucinates). The
+    // select_account prompt forces Google's account picker.
+    if(qr==='Connect another Google Workspace account'||qr==='Add another Google account'||qr==='+ Add Another Google'){
+      addAgentMsg('user',qr);
+      setStep(0);
+      handleChatSignInGoogle&&handleChatSignInGoogle();
+      return;
+    }
+    // "Connect another Microsoft 365 tenant" — same idea, MS side
+    if(qr==='Connect another Microsoft 365 tenant'||qr==='Add another Microsoft tenant'||qr==='+ Add Another Microsoft'){
+      addAgentMsg('user',qr);
+      setStep(0);
+      handleChatSignInMs&&handleChatSignInMs();
+      return;
+    }
+
     // All other chips go to agent as chat messages
     sendToAgent(qr);
   },[sendToAgent,addAgentMsg,setStep,setMigDir,handleChatSignInGoogle,handleChatSignInMs]);
@@ -5752,18 +6396,37 @@ function App(){
       if(e.data?.type==='google-auth-success'){
         window.removeEventListener('message',h);
         setTimeout(()=>{
-          fetch('/api/google/users').then(r=>r.json()).then(d=>{
-            if(d.users)setGoogleUsers(d.users);
+          // Re-fetch accounts so we know if this was the 1st or 2nd connection
+          Promise.all([
+            fetch('/api/google/users').then(r=>r.json()).catch(()=>({})),
+            fetch('/api/auth/google/accounts').then(r=>r.json()).catch(()=>({accounts:[]})),
+          ]).then(([usersRes,accRes])=>{
+            if(usersRes.users)setGoogleUsers(usersRes.users);
+            if(accRes.accounts)setGoogleAccounts(accRes.accounts);
             setGoogleAuthed(true);setChatGLoading(false);
             if(agentMode==='guide'){
-              const msg=msAuthed
-                ?`Google Workspace connected! Both accounts ready. Choose a direction to get started.`
-                :migDir==='claude-gemini'
-                  ?`Google connected! You're all set for Claude → Gemini. Ready to upload your Claude ZIP?`
-                  :`Google connected! Now connect Microsoft 365 to unlock Gemini↔Copilot migration — or choose Claude → Gemini which only needs Google.`;
-              addAgentMsg('bot',msg,{quickReplies:msAuthed?['Migrate Google → Microsoft 365','Migrate Microsoft 365 → Google','Migrate Claude AI → Google']:['Connect Microsoft 365 to unlock more migrations','Start Claude → Google migration now']});
+              const gCount=accRes.accounts?.length||1;
+              let msg, replies;
+              // G2G needs TWO Google accounts — don't suggest Microsoft
+              if(migDir==='gemini-gemini'&&gCount<2){
+                msg=`Google connected (${gCount}/2). Gemini → Gemini needs **two** Google accounts. Add one more to continue.`;
+                replies=['Connect another Google Workspace account'];
+              } else if(migDir==='gemini-gemini'&&gCount>=2){
+                msg=`Google connected — ${gCount} accounts ready for Gemini → Gemini. Continue to Select Accounts.`;
+                replies=['Continue to Select Accounts (Google → Google)'];
+              } else if(msAuthed){
+                msg=`Google Workspace connected! Both clouds ready. Choose a direction to get started.`;
+                replies=['Migrate Google → Microsoft 365','Migrate Microsoft 365 → Google','Migrate Claude AI → Google'];
+              } else if(migDir==='claude-gemini'){
+                msg=`Google connected! You're all set for Claude → Gemini. Ready to upload your Claude ZIP?`;
+                replies=['I have a Claude export ZIP — open the upload widget'];
+              } else {
+                msg=`Google connected! Now connect Microsoft 365 to unlock Gemini↔Copilot migration — or choose Claude → Gemini / Google → Google which only need Google.`;
+                replies=['Connect Microsoft 365 to unlock more migrations','Start Claude → Google migration now','Migrate Google → Google (Vault export)'];
+              }
+              addAgentMsg('bot',msg,{quickReplies:replies});
             }
-          }).catch(()=>{setGoogleAuthed(true);setChatGLoading(false);});
+          });
         },500);
       }
     });
@@ -5777,20 +6440,40 @@ function App(){
       if(e.data?.type==='auth-success'){
         window.removeEventListener('message',h);
         setTimeout(()=>{
-          fetch('/api/ms/users').then(r=>r.json()).then(d=>{
-            if(d.users)setMsUsers(d.users);
+          Promise.all([
+            fetch('/api/ms/users').then(r=>r.json()).catch(()=>({})),
+            fetch('/api/auth/ms/accounts').then(r=>r.json()).catch(()=>({accounts:[]})),
+          ]).then(([usersRes,accRes])=>{
+            if(usersRes.users)setMsUsers(usersRes.users);
+            if(accRes.accounts)setMsAccounts(accRes.accounts);
             setMsAuthed(true);setChatMLoading(false);
             if(agentMode==='guide'){
-              const msg=googleAuthed
-                ?`Microsoft 365 connected! Both accounts ready — choose your migration direction.`
-                :`Microsoft 365 connected! Now connect Google Workspace to complete setup.`;
-              addAgentMsg('bot',msg,{quickReplies:googleAuthed?['Migrate Google → Microsoft 365','Migrate Microsoft 365 → Google']:['Connect Google Workspace to continue']});
+              const mCount=accRes.accounts?.length||1;
+              let msg, replies;
+              // C2C needs TWO Microsoft tenants — don't suggest Google
+              if(migDir==='copilot-copilot'&&mCount<2){
+                msg=`Microsoft 365 connected (${mCount}/2). Copilot → Copilot (cross-tenant) needs **two** Microsoft 365 tenants. Add one more to continue.`;
+                replies=['Connect another Microsoft 365 tenant'];
+              } else if(migDir==='copilot-copilot'&&mCount>=2){
+                msg=`Microsoft 365 connected — ${mCount} tenants ready for Copilot → Copilot. Continue to Select Tenants.`;
+                replies=['Continue to Select Tenants (Copilot → Copilot cross-tenant)'];
+              } else if(googleAuthed){
+                msg=`Microsoft 365 connected! Both clouds ready — choose your migration direction.`;
+                replies=['Migrate Google → Microsoft 365','Migrate Microsoft 365 → Google'];
+              } else if(migDir==='claude-copilot'){
+                msg=`Microsoft 365 connected! You're all set for Claude → Copilot. Ready to upload your Claude ZIP?`;
+                replies=['I have a Claude export ZIP — open the upload widget'];
+              } else {
+                msg=`Microsoft 365 connected! Now connect Google Workspace to unlock Gemini↔Copilot migration — or pick Claude → Copilot / Copilot → Copilot which don't need Google.`;
+                replies=['Connect Google Workspace to continue','Start Claude → Copilot migration','Migrate Copilot → Copilot (cross-tenant)'];
+              }
+              addAgentMsg('bot',msg,{quickReplies:replies});
             }
-          }).catch(()=>{setMsAuthed(true);setChatMLoading(false);});
+          });
         },500);
       }
     });
-  },[config.tenantId,agentMode,googleAuthed,addAgentMsg]);
+  },[config.tenantId,agentMode,googleAuthed,migDir,addAgentMsg]);
 
   const handleChatUpload=useCallback(async file=>{
     setChatUploading(true);
@@ -5909,7 +6592,7 @@ function App(){
                     }
                   }} onBack={()=>setStep(0)} googleAuthed={googleAuthed} msAuthed={msAuthed} googleAccounts={googleAccounts} msAccounts={msAccounts}/>}
                   {/* Gemini → Copilot steps */}
-                  {step===2&&migDir==='gemini-copilot'&&<Step1 googleUsers={googleUsers} googleAuthed={googleAuthed} onComplete={handleImportComplete} onBack={()=>setStep(1)} showToast={showToast} uploadData={uploadData}/>}
+                  {step===2&&migDir==='gemini-copilot'&&<Step1 googleUsers={googleUsers} googleAuthed={googleAuthed} onComplete={handleImportComplete} onBack={()=>setStep(1)} showToast={showToast} uploadData={uploadData} importTabSignal={importTabSignal} exportTrigger={exportTrigger}/>}
                   {step===3&&migDir==='gemini-copilot'&&<Step2 uploadData={uploadData} msUsers={msUsers} mappings={mappings} setMappings={setMappings} selectedUsers={selectedUsers} setSelectedUsers={setSelectedUsers} onNext={()=>{addLog('info',`User mappings ready — ${selectedUsers.size||Object.keys(mappings).length} users selected`);setStep(4);}} onBack={()=>setStep(2)} showToast={showToast}/>}
                   {step===4&&migDir==='gemini-copilot'&&<Step3 options={options} setOptions={setOptions} config={config} setConfig={setConfig} msAuthed={msAuthed} googleAuthed={googleAuthed} onRun={retryMode?(()=>retryFailed(config.filePath||undefined)):runMigration} onBack={()=>{setRetryMode(false);setStep(retryMode?5:3)}} retryMode={retryMode}/>}
                   {(step===5||step===6)&&migDir==='gemini-copilot'&&<StepMigrate stats={stats} done={migDone} live={live} lastRunWasDry={lastRunWasDry} batchId={currentBatchId} onStartLive={()=>runMigration(true)} onRunAnother={runAnotherBatch} onRetry={retryFailed} retrying={retrying} hasUploadData={!!uploadData} onGoToConnect={handleGoToConnect} onRetryWithPath={handleRetryWithPath} onChangeDirection={handleChangeDirection} totalExpected={(()=>{if(!uploadData?.users)return 0;const sel=selectedUsers.size>0?[...selectedUsers]:Object.keys(mappings);const emails=sel.length>0?new Set(sel):new Set(uploadData.users.map(u=>u.email));return uploadData.users.filter(u=>emails.has(u.email)).reduce((s,u)=>s+(u.conversation_count||0),0)})()}/>}
@@ -5924,7 +6607,7 @@ function App(){
                   {(step===5||step===6)&&migDir==='claude-gemini'&&<StepCL2GMigrate cl2gStats={cl2gStats} cl2gDone={cl2gDone} onRunAnother={()=>{setCl2gDone(false);setCl2gStats({users:0,files:0,errors:0});setCl2gOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(4)} onStart={runCL2GMigration} cl2gLive={cl2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={cl2gLastDry} onStartLive={()=>runCL2GMigration(true)} cl2gTotal={cl2gTotal} folderName={cl2gConfig.folderName||'ClaudeChats'}/>}
                   {/* Gemini → Gemini steps */}
                   {step===2&&migDir==='gemini-gemini'&&<StepG2GCloudSelect g2gConfig={g2gConfig} setG2gConfig={setG2gConfig} googleAccounts={googleAccounts} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast}/>}
-                  {step===3&&migDir==='gemini-gemini'&&<StepG2GUploadData g2gUploadData={g2gUploadData} setG2gUploadData={setG2gUploadData} g2gSelectedUsers={g2gSelectedUsers} setG2gSelectedUsers={setG2gSelectedUsers} g2gConfig={g2gConfig} onNext={()=>setStep(4)} onBack={()=>setStep(2)} showToast={showToast}/>}
+                  {step===3&&migDir==='gemini-gemini'&&<StepG2GUploadData g2gUploadData={g2gUploadData} setG2gUploadData={setG2gUploadData} g2gSelectedUsers={g2gSelectedUsers} setG2gSelectedUsers={setG2gSelectedUsers} g2gConfig={g2gConfig} onNext={()=>setStep(4)} onBack={()=>setStep(2)} showToast={showToast} importTabSignal={importTabSignal} exportTrigger={exportTrigger}/>}
                   {step===4&&migDir==='gemini-gemini'&&<StepG2GMap g2gUploadData={g2gUploadData} g2gConfig={g2gConfig} g2gMappings={g2gMappings} setG2gMappings={setG2gMappings} g2gSelectedUsers={g2gSelectedUsers} setG2gSelectedUsers={setG2gSelectedUsers} onNext={()=>setStep(5)} onBack={()=>setStep(3)} showToast={showToast}/>}
                   {step===5&&migDir==='gemini-gemini'&&<StepG2GOptions g2gConfig={g2gConfig} setG2gConfig={setG2gConfig} g2gOptions={g2gOptions} setG2gOptions={setG2gOptions} onRun={()=>{setStep(6);runG2GMigrationRef.current?.()}} onBack={()=>setStep(4)} showToast={showToast}/>}
                   {(step>=6)&&migDir==='gemini-gemini'&&<StepG2GMigrate g2gStats={g2gStats} g2gDone={g2gDone} onRunAnother={()=>{setG2gDone(false);setG2gStats({files:0,conversationCount:0,errors:0,users:0});setG2gOptions(p=>({...p,dryRun:true}));setStep(3);}} onBack={()=>setStep(5)} onStart={runG2GMigration} g2gLive={g2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={g2gLastDry} onStartLive={()=>runG2GMigration(true)} g2gTotal={g2gSelectedUsers.size} folderName={g2gConfig.gemName}/>}
@@ -5977,20 +6660,38 @@ function App(){
   // reads empty React state and migrates 0 users.
   if(w.widgetType==='csv'&&result?.mappings){
     const dir=result.migDir||w.migDir;
+    // Apply mappings to the right per-direction state. The server endpoint
+    // (/api/{dir}/user-mappings-csv) already persisted both mappings AND
+    // csvEmails to the userMappings collection — when the user lands on the
+    // mapping panel, its mount-time fetch will pick up the csvEmails filter.
+    const csvKeys=Object.keys(result.mappings).map(k=>k.toLowerCase());
+    const mappedSel=new Set(csvKeys.filter(k=>result.mappings[k]));
     if(dir==='copilot-gemini')setC2gMappings(result.mappings);
     else if(dir==='claude-gemini')setCl2gMappings(result.mappings);
-    else setMappings(result.mappings);
+    else if(dir==='claude-copilot')setCl2cMappings(result.mappings);
+    else if(dir==='gemini-gemini'){setG2gMappings(result.mappings);setG2gSelectedUsers(mappedSel);}
+    else if(dir==='copilot-copilot'){setC2cMappings(result.mappings);setC2cSelectedUsers(mappedSel);}
+    else{setMappings(result.mappings);setSelectedUsers(mappedSel);}
   }else if(w.widgetType==='zip'){
     if(w.migDir==='claude-gemini'&&result?.users){
       setCl2gUploadData(result);
-    }else if(w.migDir==='gemini-gemini'&&result?.file){
+    }else if(w.migDir==='claude-copilot'&&result?.users){
+      setCl2cUploadData(result);
+    }else if(w.migDir==='gemini-gemini'&&(result?.users||result?.total_users)){
+      // G2G shares the same /api/upload endpoint as G2C — response has
+      // result.users + result.total_users (not result.file).
       setG2gUploadData(result);
+      // Also pre-tick all uploaded users so user doesn't see empty selection
+      if(result?.users)setG2gSelectedUsers(new Set(result.users.map(u=>u.email).filter(Boolean)));
     }else if(result?.users||result?.total_users){
       setUploadData(result);
     }
   }
   const notifyMsg=w.widgetType==='zip'?`Upload complete. ${result.total_users??result.users?.length??0} users loaded.`:`CSV imported. ${result.count??0} mappings loaded.`;
-  sendToAgent(notifyMsg,false);
+  // Let React flush the setG2gUploadData/setUploadData state before sending the
+  // notify — otherwise sendToAgent reads stale state and the agent's chips
+  // show "no upload yet" instead of "continue to map users".
+  setTimeout(()=>sendToAgent(notifyMsg,false),100);
 }}/>
           </div>
         );

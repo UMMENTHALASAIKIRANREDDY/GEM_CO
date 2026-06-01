@@ -11,8 +11,11 @@ const logger = getLogger('agent:loop');
 const MAX_ITERATIONS = 8;
 
 function defaultChips(migrationState) {
+  // Alias so the various `state.foo ?? 0` reads below work without per-line refactor.
+  const state = migrationState ?? {};
   const { step = 0, migDir, googleAuthed = false, msAuthed = false,
-    mappings_count = 0, c2g_mappings_count = 0, cl2g_mappings_count = 0,
+    mappings_count = 0, selected_users_count = 0,
+    c2g_mappings_count = 0, cl2g_mappings_count = 0,
     cl2g_upload_users = 0, uploadData = null,
     migDone = false, c2g_done = false, cl2g_done = false,
     lastRunWasDry = false, c2gLastDry = false, cl2gLastDry = false,
@@ -32,7 +35,13 @@ function defaultChips(migrationState) {
     ];
     if (googleAuthed && !msAuthed) return [
       'Migrate Claude AI → Google Workspace',
+      'Migrate Google → Google (Vault export)',
       'Connect Microsoft 365 to unlock more migrations',
+    ];
+    if (!googleAuthed && msAuthed) return [
+      'Migrate Claude AI → Microsoft Copilot',
+      'Migrate Copilot → Copilot (cross-tenant)',
+      'Connect Google Workspace to unlock more migrations',
     ];
     if (googleAuthed && msAuthed) return [
       'Migrate Google Workspace → Microsoft 365',
@@ -61,68 +70,198 @@ function defaultChips(migrationState) {
     'Explain why Microsoft 365 is needed',
   ];
 
-  // Direction-specific chips — action-forward, no generic questions
+  // G2G needs TWO Google accounts (source + destination). If only one is
+  // connected, the next action is "+ Add Another Google account" — NOT
+  // "connect Microsoft" or any other cloud.
+  if (migDir === 'gemini-gemini' && !state.multiGoogle) return [
+    'Connect another Google Workspace account',
+    'Why does Google → Google need two accounts?',
+  ];
+  // C2C needs TWO consented Microsoft tenants. If only one is connected/consented,
+  // the next action is "+ Add Another Microsoft tenant" — NOT "connect Google".
+  if (migDir === 'copilot-copilot' && !state.multiMs) return [
+    'Connect another Microsoft 365 tenant',
+    'Why does Copilot → Copilot need two tenants?',
+  ];
+
+  // Build the "switch direction" alternatives for the current cloud setup.
+  // MUST match the UI direction-picker filter rules so chip suggestions never
+  // include directions that the UI's Choose Direction step hides:
+  //   - both clouds connected: ONLY Gemini↔Copilot
+  //   - Google only:            ONLY Claude→Gemini
+  //   - Microsoft only:         ONLY Claude→Copilot
+  //   - multi-Google accounts:  also G2G
+  //   - multi-Microsoft accounts: also C2C
+  // (Multi-account state isn't exposed in agent state today, so for now we
+  // only offer G2G/C2C if the user explicitly switched to those previously.)
+  function altDirectionChips(currentDir) {
+    const multiGoogle = !!state.multiGoogle;
+    const multiMs     = !!state.multiMs;
+    const alts = [];
+    if (googleAuthed && msAuthed) {
+      // Both clouds connected → only the cross-cloud directions
+      if (currentDir !== 'gemini-copilot') alts.push('Switch to Gemini → Copilot');
+      if (currentDir !== 'copilot-gemini') alts.push('Switch to Copilot → Gemini');
+    } else if (googleAuthed && !msAuthed) {
+      // Google only — single account: Claude→Gemini. Multi-account: G2G instead.
+      if (!multiGoogle && currentDir !== 'claude-gemini') alts.push('Switch to Claude → Gemini');
+      if (multiGoogle  && currentDir !== 'gemini-gemini') alts.push('Switch to Gemini → Gemini');
+    } else if (!googleAuthed && msAuthed) {
+      if (!multiMs && currentDir !== 'claude-copilot')  alts.push('Switch to Claude → Copilot');
+      if (multiMs  && currentDir !== 'copilot-copilot') alts.push('Switch to Copilot → Copilot (cross-tenant)');
+    }
+    return alts.slice(0, 2);
+  }
+
+  // ─── Shared chip helpers ────────────────────────────────────────────────
+  // Group chips by SOURCE-TYPE (not combo) so flows are identical wherever the
+  // source repeats: Google = G2C + G2G, Copilot = C2G + C2C, Claude = CL2G + CL2C.
+
+  /** Google source — Vault export or ZIP upload. Used by G2C and G2G. */
+  const googleSourceChips = (hasUpload, totalUsers) =>
+    hasUpload
+      ? [`${totalUsers||'?'} users imported — continue to Map Users`, 'Upload a different Vault ZIP', 'Show me what was imported']
+      : ['I have a Vault ZIP — open the upload area', 'Export Vault for ALL users in my Workspace', 'Export Vault for specific users I pick', 'How do I export from Google Vault step by step?'];
+
+  /** Claude source — ZIP upload only. Used by CL2G and CL2C. */
+  const claudeSourceChips = (hasUpload, totalUsers) =>
+    hasUpload
+      ? [`${totalUsers||'?'} users loaded — continue to Map Users`, 'Upload a different Claude ZIP', 'Show me the conversation counts']
+      : ['I have a Claude export ZIP — open the upload widget', 'How do I export from Claude.ai step by step?'];
+
+  /** Copilot source — pulls from Graph API live. Used by C2G and C2C. */
+  const copilotSourceChips = () =>
+    ['Continue to Map Users', 'What gets pulled from Copilot?'];
+
+  /** G2G extra step — Select source + destination Google accounts. */
+  const g2gAccountChips = (sourceId, destId) => {
+    if (sourceId && destId) return ['Continue to Upload Data', 'Change source account', 'Change destination account'];
+    if (sourceId && !destId) return ['Set destination account', 'Show available Google accounts'];
+    if (!sourceId && destId) return ['Set source account', 'Show available Google accounts'];
+    return ['Show me my connected Google accounts', 'Help me pick source and destination'];
+  };
+
+  /** C2C extra step — Pick consented source + destination tenants. */
+  const c2cTenantChips = (sourceId, destId) => {
+    if (sourceId && destId) return ['Continue to Map Users', 'Change source tenant', 'Change destination tenant'];
+    if (sourceId && !destId) return ['Grant consent for destination tenant', 'Show me consented tenants'];
+    if (!sourceId && destId) return ['Grant consent for source tenant', 'Show me consented tenants'];
+    return ['Grant consent for source tenant', 'Grant consent for destination tenant', 'Show me consented tenants'];
+  };
+
+  /**
+   * Map Users step — TWO phases:
+   *   A. No mappings yet  → Auto-map / CSV / Manual
+   *   B. Mappings done, no selection → Select-all / Pick-specific / Adjust
+   *   C. Ready (mappings + selection) → Continue to Options
+   */
+  const mapStepChips = (mappedCount, selectedCount = 0) => {
+    if (mappedCount === 0) {
+      return ['Auto-map all users by email', 'I have a mapping CSV — open the upload widget', 'I\'ll map users manually in the table'];
+    }
+    if (selectedCount === 0) {
+      return [
+        `${mappedCount} users mapped — now select which to migrate`,
+        `Select ALL ${mappedCount} mapped users`,
+        `Let me pick specific users to migrate`,
+        'I have a mapping CSV — open the upload widget',
+        'Clear mappings and start over',
+      ];
+    }
+    return [
+      `${selectedCount} of ${mappedCount} selected — continue to Options`,
+      `Select all ${mappedCount} mapped users`,
+      'Deselect everyone and pick again',
+      'I have a mapping CSV — open the upload widget',
+    ];
+  };
+
+  const optionsStepChips = () => dryRunDone
+    ? ['Run the live migration now', 'What happened in the dry run?', 'Change the folder name', 'Set a date range']
+    : ['Run a dry run first — safe preview', 'Change the folder name', 'Set a date range (e.g. last 7 days)', 'I understand the risk — go live now'];
+
+  const postMigrationChips = (isDryDone, errs) => {
+    if (isDryDone) {
+      return errs > 0
+        ? ['Retry failed users, then go live', 'Skip errors and run live migration', 'Download dry run report']
+        : ['Everything looks good — start live migration', 'Download dry run report', 'Migrate another set of users'];
+    }
+    return errs > 0
+      ? ['Retry the failed items now', 'Download report with error details', 'Migrate another set of users']
+      : ['Download the migration report', 'Migrate another set of users', 'Change migration direction'];
+  };
+
+  // Pull commonly-needed counts up-front. Each combo uses its own state key.
+  const c2g_selected_users_count = state.c2g_selected_users_count ?? 0;
+  const cl2g_selected_users_count = state.cl2g_selected_users_count ?? 0;
+  const cl2c_upload_users = state.cl2c_upload_users ?? 0;
+  const cl2c_mappings_count = state.cl2c_mappings_count ?? 0;
+  const cl2c_selected_users_count = state.cl2c_selected_users_count ?? 0;
+  const cl2c_done = state.cl2c_done;
+  const g2g_source_account_id = state.g2g_source_account_id || '';
+  const g2g_dest_account_id   = state.g2g_dest_account_id || '';
+  const g2g_upload_users = state.g2g_upload_users ?? 0;
+  const g2g_mappings_count = state.g2g_mappings_count ?? 0;
+  const g2g_selected_users_count = state.g2g_selected_users_count ?? 0;
+  const g2g_done = state.g2g_done;
+  const c2c_source_tenant_id = state.c2c_source_tenant_id || '';
+  const c2c_dest_tenant_id   = state.c2c_dest_tenant_id || '';
+  const c2c_mappings_count = state.c2c_mappings_count ?? 0;
+  const c2c_selected_users_count = state.c2c_selected_users_count ?? 0;
+  const c2c_done = state.c2c_done;
+
+  // ─── G2C (Google → Copilot) — Google source ─────────────────────────────
   if (migDir === 'gemini-copilot') {
-    if (step <= 1) return [
-      'Take me to the Import Data step',
-      'What data gets migrated?',
-    ];
-    if (step === 2) return uploadData
-      ? [`${uploadData.total_users} users imported — map them now`, 'Show me what was imported']
-      : ['How do I export my Google Workspace data?', 'I have a Vault ZIP ready to upload'];
-    if (step === 3) return mappings_count === 0
-      ? ['Auto-map all users by email now', 'Why do I need to map users?']
-      : [`${mappings_count} users mapped — take me to Options`, 'Add more mappings manually'];
-    if (step === 4) return dryRunDone
-      ? ['Run the live migration now', 'What happened in the dry run?']
-      : ['Run a dry run first — safe preview', 'I understand the risk — go live now'];
-    if (migDone) return dryRunDone
-      ? activeErrors > 0
-        ? ['Retry failed users, then go live', 'Skip errors and run live migration', 'Download dry run report']
-        : ['Everything looks good — start live migration', 'Download dry run report']
-      : activeErrors > 0
-        ? ['Retry the failed items now', 'Download report with error details']
-        : ['Download the migration report', 'Migrate another set of users'];
+    if (step <= 1) return ['Continue to Import Data (Gemini → Copilot)', ...altDirectionChips('gemini-copilot')];
+    if (step === 2) return googleSourceChips(!!uploadData, uploadData?.total_users);
+    if (step === 3) return mapStepChips(mappings_count, selected_users_count);
+    if (step === 4) return optionsStepChips();
+    if (migDone) return postMigrationChips(dryRunDone, activeErrors);
   }
 
+  // ─── C2G (Copilot → Gemini) — Copilot source (no upload step) ──────────
   if (migDir === 'copilot-gemini') {
-    if (step <= 1) return ['Take me to Map Users', 'What data gets migrated?'];
-    if (step === 2) return c2g_mappings_count === 0
-      ? ['Auto-map all users by email now', 'Why do I need to map users?']
-      : [`${c2g_mappings_count} users mapped — take me to Options`, 'Add more mappings manually'];
-    if (step === 3) return dryRunDone
-      ? ['Run the live migration now', 'What happened in the dry run?']
-      : ['Run a dry run first — safe preview', 'I understand the risk — go live now'];
-    if (c2g_done) return dryRunDone
-      ? activeErrors > 0
-        ? ['Retry failed users, then go live', 'Skip errors and run live migration', 'Download dry run report']
-        : ['Everything looks good — start live migration', 'Download dry run report']
-      : activeErrors > 0
-        ? ['Retry the failed items now', 'Download report with error details']
-        : ['Download the migration report', 'Migrate another set of users'];
+    if (step <= 1) return ['Continue to Map Users (Copilot → Gemini)', ...altDirectionChips('copilot-gemini')];
+    if (step === 2) return mapStepChips(c2g_mappings_count, c2g_selected_users_count);
+    if (step === 3) return optionsStepChips();
+    if (c2g_done) return postMigrationChips(dryRunDone, activeErrors);
   }
 
+  // ─── CL2G (Claude → Gemini) — Claude source ─────────────────────────────
   if (migDir === 'claude-gemini') {
-    if (step <= 1) return [
-      'Take me to the Upload step',
-      'How do I export my Claude conversations?',
-    ];
-    if (step === 2) return cl2g_upload_users > 0
-      ? [`${cl2g_upload_users} users loaded — map them now`, 'Show me the conversation count']
-      : ['Show me how to export from Claude.ai step by step', 'I have the ZIP — take me to the upload area'];
-    if (step === 3) return cl2g_mappings_count === 0
-      ? ['Auto-map all users by email now', 'Why do I need to map users?']
-      : [`${cl2g_mappings_count} users mapped — take me to Options`, 'Add more mappings manually'];
-    if (step === 4) return dryRunDone
-      ? ['Run the live migration now', 'What happened in the dry run?']
-      : ['Run a dry run first — safe preview', 'I understand the risk — go live now'];
-    if (cl2g_done) return dryRunDone
-      ? activeErrors > 0
-        ? ['Retry failed users, then go live', 'Skip errors and run live migration', 'Download dry run report']
-        : ['Everything looks good — start live migration', 'Download dry run report']
-      : activeErrors > 0
-        ? ['Retry the failed items now', 'Download report with error details']
-        : ['Download the migration report', 'Migrate another set of users'];
+    if (step <= 1) return ['Continue to Upload ZIP (Claude → Gemini)', ...altDirectionChips('claude-gemini')];
+    if (step === 2) return claudeSourceChips(cl2g_upload_users > 0, cl2g_upload_users);
+    if (step === 3) return mapStepChips(cl2g_mappings_count, cl2g_selected_users_count);
+    if (step === 4) return optionsStepChips();
+    if (cl2g_done) return postMigrationChips(dryRunDone, activeErrors);
+  }
+
+  // ─── CL2C (Claude → Copilot) — Claude source ────────────────────────────
+  if (migDir === 'claude-copilot') {
+    if (step <= 1) return ['Continue to Upload ZIP (Claude → Copilot)', ...altDirectionChips('claude-copilot')];
+    if (step === 2) return claudeSourceChips(cl2c_upload_users > 0, cl2c_upload_users);
+    if (step === 3) return mapStepChips(cl2c_mappings_count, cl2c_selected_users_count);
+    if (step === 4) return optionsStepChips();
+    if (cl2c_done) return postMigrationChips(dryRunDone, activeErrors);
+  }
+
+  // ─── G2G (Google → Google) — Google source + extra Select-Accounts step ─
+  if (migDir === 'gemini-gemini') {
+    if (step <= 1) return ['Continue to Select Accounts (Google → Google)', ...altDirectionChips('gemini-gemini')];
+    if (step === 2) return g2gAccountChips(g2g_source_account_id, g2g_dest_account_id);
+    if (step === 3) return googleSourceChips(g2g_upload_users > 0, g2g_upload_users);
+    if (step === 4) return mapStepChips(g2g_mappings_count, g2g_selected_users_count);
+    if (step === 5) return optionsStepChips();
+    if (g2g_done) return postMigrationChips(dryRunDone, activeErrors);
+  }
+
+  // ─── C2C (Copilot → Copilot) — Copilot source + extra Select-Tenants step
+  if (migDir === 'copilot-copilot') {
+    if (step <= 1) return ['Continue to Select Tenants (Copilot → Copilot cross-tenant)', ...altDirectionChips('copilot-copilot')];
+    if (step === 2) return c2cTenantChips(c2c_source_tenant_id, c2c_dest_tenant_id);
+    if (step === 3) return mapStepChips(c2c_mappings_count, c2c_selected_users_count);
+    if (step === 4) return optionsStepChips();
+    if (c2c_done) return postMigrationChips(dryRunDone, activeErrors);
   }
 
   return ['Show me the current migration status', 'What do I need to do next?'];
@@ -222,8 +361,37 @@ function buildStepContextInstruction(state) {
   return `\n\n[AUTO CONTEXT] User just navigated to step ${step} (${migDir}). Tell them exactly what to do next. 1-2 sentences, no questions.`;
 }
 
+/**
+ * Detect direction intent from a user message and return the canonical migDir
+ * code, or null if no direction phrase is recognized. This runs BEFORE the LLM
+ * so chip generation and prompt context already know the new direction —
+ * prevents the case where the agent's text says "switched to G2G" but it
+ * forgot to call select_direction, leaving stale C2C chips.
+ */
+function detectDirectionFromMessage(msg) {
+  if (!msg || typeof msg !== 'string') return null;
+  const m = msg.toLowerCase();
+  // Order matters — more specific patterns first
+  if (/(gemini|google)\s*(→|->|to)\s*(gemini|google)\b/.test(m) || /\bg2g\b|gemini.{0,5}gemini|google.{0,5}google/i.test(m)) return 'gemini-gemini';
+  if (/(copilot|microsoft|ms365|m365)\s*(→|->|to)\s*(copilot|microsoft|ms365|m365)\b/.test(m) || /\bc2c\b|copilot.{0,5}copilot|cross.?tenant/i.test(m)) return 'copilot-copilot';
+  if (/(gemini|google).*(→|->|to).*(copilot|microsoft|ms365|m365|onenote)/i.test(m) || /\bg2c\b|gemini.{0,30}copilot|google.{0,30}microsoft/i.test(m)) return 'gemini-copilot';
+  if (/(copilot|microsoft|ms365|m365).*(→|->|to).*(gemini|google|drive)/i.test(m) || /\bc2g\b|copilot.{0,30}gemini|microsoft.{0,30}google/i.test(m)) return 'copilot-gemini';
+  if (/claude.*(→|->|to).*(gemini|google|drive)/i.test(m) || /\bcl2g\b|claude.{0,30}gemini|claude.{0,30}google/i.test(m)) return 'claude-gemini';
+  if (/claude.*(→|->|to).*(copilot|microsoft|onenote|ms365|m365)/i.test(m) || /\bcl2c\b|claude.{0,30}copilot|claude.{0,30}microsoft/i.test(m)) return 'claude-copilot';
+  return null;
+}
+
 export async function runAgentLoop(req, res, { message, migrationState: _migrationState, migrationLogs, isSystemTrigger, db, agentDeps }) {
   let migrationState = _migrationState;
+  // Pre-LLM direction detection: if the user clearly named a direction in
+  // this message, update migrationState so chips + prompt match the user's
+  // intent even if the LLM forgets to call select_direction.
+  if (!isSystemTrigger && message) {
+    const detected = detectDirectionFromMessage(message);
+    if (detected && detected !== migrationState?.migDir) {
+      migrationState = { ...migrationState, migDir: detected };
+    }
+  }
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');

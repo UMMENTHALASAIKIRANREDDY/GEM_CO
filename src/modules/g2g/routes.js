@@ -66,7 +66,10 @@ export function createG2GRouter(deps) {
       }
 
       const { google } = await import('googleapis');
-      const auth = getClient(appUserId, accountId);
+      const { getServiceAccountAuthForUser } = await import('../c2g/googleService.js');
+      // Use service-account auth instead of user OAuth so the admin's token
+      // expiry (invalid_rapt reauth policy) never blocks this endpoint.
+      const auth = await getServiceAccountAuthForUser(appUserId, accountId);
       const admin = google.admin({ version: 'directory_v1', auth });
       const users = [];
       let pageToken = undefined;
@@ -83,6 +86,42 @@ export function createG2GRouter(deps) {
       console.error('[g2g/users]', err.message);
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // ── User mappings (mappings + csvEmails per app user) ──────────────
+  router.get('/user-mappings', requireAuth, async (req, res) => {
+    try {
+      const { appUserId } = getWorkspaceContext(req);
+      const doc = await db().collection('userMappings').findOne({ appUserId, migDir: 'gemini-gemini' });
+      res.json(doc || null);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.post('/user-mappings', requireAuth, async (req, res) => {
+    try {
+      const { appUserId } = getWorkspaceContext(req);
+      const { mappings, csvEmails } = req.body;
+      await db().collection('userMappings').updateOne(
+        { appUserId, migDir: 'gemini-gemini' },
+        {
+          $set: { migDir: 'gemini-gemini', appUserId, mappings, csvEmails: csvEmails ?? null, updatedAt: new Date() },
+          $setOnInsert: { createdAt: new Date() },
+        },
+        { upsert: true }
+      );
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.delete('/user-mappings', requireAuth, async (req, res) => {
+    try {
+      const { appUserId } = getWorkspaceContext(req);
+      await db().collection('userMappings').updateOne(
+        { appUserId, migDir: 'gemini-gemini' },
+        { $set: { mappings: {}, csvEmails: null, updatedAt: new Date() } }
+      );
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
   // GET /api/g2g/session — get current G2G migration session state
@@ -200,14 +239,45 @@ export function createG2GRouter(deps) {
           // sourceCreds is unused now (vault data already extracted to extractPath);
           // destCreds is unused (we use service account impersonation per destination user).
           // We still resolve sourceCreds defensively in case future hooks need it.
+          // Service-account auth so the migration is never blocked by user-OAuth
+          // reauth policy (invalid_rapt).
           let sourceCreds = null;
-          try { sourceCreds = getClient(appUserId, sourceAccountId); } catch { /* optional */ }
+          try {
+            const { getServiceAccountAuthForUser, SCOPES_VAULT, SCOPES_DRIVE } = await import('../c2g/googleService.js');
+            sourceCreds = await getServiceAccountAuthForUser(appUserId, sourceAccountId, [...SCOPES_VAULT, ...SCOPES_DRIVE]);
+          } catch { /* optional */ }
 
           const opts = { gemName: g2gGemName };
           if (fromDate) opts.fromDate = fromDate;
           if (toDate) opts.toDate = toDate;
 
           g2gLog('info', `Starting G2G ${isDryRun ? 'dry run' : 'migration'} (source=${sourceAccountId}, dest=${destAccountId}, ${selectedUsers?.length || 0} users)...`);
+
+          // Pre-flight validator (only on dry-run; additive)
+          if (isDryRun) {
+            try {
+              const { runDryRunValidator } = await import('../dry-run/validator.js');
+              const validatorPairs = (selectedUsers || []).map(srcEmail => ({
+                sourceEmail: srcEmail,
+                destEmail: userMappings?.[srcEmail] || srcEmail,
+              }));
+              const dryRunReport = await runDryRunValidator({
+                migDir: 'gemini-gemini',
+                pairs: validatorPairs,
+                config: { folderName: g2gGemName, fromDate, toDate, dryRun: true },
+                appUserId,
+                extractPath,
+                sourceAccountId, destAccountId,
+              });
+              await db().collection('migrationWorkspaces').updateOne(
+                { _id: batchId },
+                { $set: { dryRunReport } }
+              ).catch(() => {});
+              g2gLog('info', `Dry-run validator: ${dryRunReport.summary.ready} ready · ${dryRunReport.summary.warning} warning · ${dryRunReport.summary.blocker} blocker`);
+            } catch (e) {
+              g2gLog('warn', `Dry-run validator failed: ${e.message}`);
+            }
+          }
 
           const result = await runG2GMigration(
             {

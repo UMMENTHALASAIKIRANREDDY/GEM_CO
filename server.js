@@ -431,7 +431,7 @@ app.get('/api/auth/google/accounts', requireAuth, (req, res) => {
   res.json({ accounts: getGoogleAccounts(appUserId) });
 });
 
-app.post('/api/auth/google/disconnect', requireAuth, (req, res) => {
+app.post('/api/auth/google/disconnect', requireAuth, async (req, res) => {
   const { appUserId } = getWorkspaceContext(req);
   const { accountId } = req.body || {};
   if (accountId) {
@@ -443,6 +443,13 @@ app.post('/api/auth/google/disconnect', requireAuth, (req, res) => {
     clearGoogleToken(appUserId);
     delete req.session.googleEmail;
   }
+  // Wipe cached Google directory members when no Google accounts remain so a
+  // freshly connected (different) domain doesn't show stale users in mapping.
+  try {
+    if (!getGoogleAccounts(appUserId).length) {
+      await db().collection('cloudMembers').deleteMany({ appUserId, source: 'google' });
+    }
+  } catch (e) { console.warn('[disconnect google] cloudMembers cleanup failed:', e.message); }
   res.json({ success: true });
 });
 
@@ -474,7 +481,7 @@ app.get('/api/auth/ms/users', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/api/auth/ms/disconnect', requireAuth, (req, res) => {
+app.post('/api/auth/ms/disconnect', requireAuth, async (req, res) => {
   const { appUserId } = getWorkspaceContext(req);
   const { accountId } = req.body || {};
   if (accountId) {
@@ -486,6 +493,23 @@ app.post('/api/auth/ms/disconnect', requireAuth, (req, res) => {
     clearMsToken(appUserId);
     delete req.session.msEmail;
   }
+  // Wipe cached Microsoft directory members AND previously-consented C2C
+  // tenants when no MS accounts remain — otherwise a freshly connected
+  // (different) tenant would still see stale users in mapping AND the C2C
+  // tenant picker would show consents from a prior session that the user
+  // didn't grant in this session. Matches user expectation of "fresh state".
+  try {
+    if (!getMsAccounts(appUserId).length) {
+      await db().collection('cloudMembers').deleteMany({ appUserId, source: 'microsoft' });
+      const c2cWipe = await db().collection('connectedTenants').updateMany(
+        { appUserId, consentState: { $ne: 'revoked' } },
+        { $set: { consentState: 'revoked', revokedAt: new Date(), revokeReason: 'all_ms_accounts_disconnected' } }
+      );
+      if (c2cWipe.modifiedCount > 0) {
+        console.log(`[disconnect ms] soft-revoked ${c2cWipe.modifiedCount} C2C tenant consent(s) for appUserId=${appUserId}`);
+      }
+    }
+  } catch (e) { console.warn('[disconnect ms] cleanup failed:', e.message); }
   res.json({ success: true });
 });
 

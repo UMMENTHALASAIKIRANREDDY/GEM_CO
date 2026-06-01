@@ -246,6 +246,28 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
           cl2cLog('info', `Starting CL2C ${isDryRun ? 'dry run' : 'migration'} for ${pairs.length} user(s)...`);
           cl2cLog('total', JSON.stringify({ total: pairs.length }));
 
+          // Pre-flight validator (only on dry-run; additive)
+          if (isDryRun) {
+            try {
+              const { runDryRunValidator } = await import('../dry-run/validator.js');
+              const dryRunReport = await runDryRunValidator({
+                migDir: 'claude-copilot',
+                pairs: pairs.map(p => ({ sourceEmail: p.sourceEmail, sourceUuid: p.sourceUuid, destEmail: p.destEmail, expectedConversationCount: p.conversationCount || 0 })),
+                config: { folderName: cl2cFolder, dryRun: true },
+                appUserId, msEmail,
+                msAccountId: req.body?.msAccountId || null,
+                uploadData: uploadDoc,
+              });
+              await db().collection('migrationWorkspaces').updateOne(
+                { _id: batchId },
+                { $set: { dryRunReport } }
+              ).catch(() => {});
+              cl2cLog('info', `Dry-run validator: ${dryRunReport.summary.ready} ready · ${dryRunReport.summary.warning} warning · ${dryRunReport.summary.blocker} blocker`);
+            } catch (e) {
+              cl2cLog('warn', `Dry-run validator failed: ${e.message}`);
+            }
+          }
+
           for (const pair of pairs) {
             cl2cLog('info', `Processing: ${pair.sourceDisplayName} → ${pair.destEmail}`);
 

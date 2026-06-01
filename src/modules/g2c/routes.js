@@ -229,7 +229,8 @@ export function createG2CRouter(deps) {
     const endTime   = end   ? new Date(end)   : new Date();
     try {
       const { appUserId } = getWorkspaceContext(req);
-      const auth = getGoogleOAuth2Client(appUserId);
+      const { getServiceAccountAuthForUser, SCOPES_AUDIT_LOG } = await import('../c2g/googleService.js');
+      const auth = await getServiceAccountAuthForUser(appUserId, null, SCOPES_AUDIT_LOG);
       const client = new AuditLogClient(auth);
       const result = await client.testQuery(email, startTime, endTime);
       res.json({ email, startTime, endTime, ...result });
@@ -241,7 +242,8 @@ export function createG2CRouter(deps) {
     const { ownerEmail } = req.query;
     try {
       const { appUserId } = getWorkspaceContext(req);
-      const auth = getGoogleOAuth2Client(appUserId);
+      const { getServiceAccountAuthForUser, SCOPES_DRIVE } = await import('../c2g/googleService.js');
+      const auth = await getServiceAccountAuthForUser(appUserId, null, SCOPES_DRIVE);
       const drive = google.drive({ version: 'v3', auth });
       const r = await drive.files.list({
         q: `'${ownerEmail}' in owners and trashed = false`,
@@ -260,7 +262,8 @@ export function createG2CRouter(deps) {
     }
     try {
       const { appUserId } = getWorkspaceContext(req);
-      const googleClient = getGoogleOAuth2Client(appUserId);
+      const { getServiceAccountAuthForUser, SCOPES_DRIVE } = await import('../c2g/googleService.js');
+      const googleClient = await getServiceAccountAuthForUser(appUserId, null, SCOPES_DRIVE);
       const matcher = new DriveFileMatcher(googleClient, ownerEmail, appUserId);
       const driveFile = { id: fileId, name: fileName, mimeType: mimeType || 'application/vnd.google-apps.document' };
       const result = await matcher.uploadToOneDrive(driveFile, targetEmail);
@@ -278,7 +281,8 @@ export function createG2CRouter(deps) {
   router.get('/check-permissions', requireGoogleAuth, async (req, res) => {
     try {
       const { appUserId } = getWorkspaceContext(req);
-      const googleClient = getGoogleOAuth2Client(appUserId);
+      const { getServiceAccountAuthForUser, SCOPES_DRIVE } = await import('../c2g/googleService.js');
+      const googleClient = await getServiceAccountAuthForUser(appUserId, null, SCOPES_DRIVE);
       const result = await checkPermissions(googleClient);
       res.json(result);
     } catch (err) {
@@ -308,7 +312,9 @@ export function createG2CRouter(deps) {
   router.get('/google/users', requireGoogleAuth, async (req, res) => {
     try {
       const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
-      const auth = getGoogleOAuth2Client(appUserId);
+      const { getServiceAccountAuthForUser } = await import('../c2g/googleService.js');
+      // Service-account auth — bypasses Google's user-OAuth reauth policy.
+      const auth = await getServiceAccountAuthForUser(appUserId);
       const admin = google.admin({ version: 'directory_v1', auth });
       const users = [];
       let pageToken = undefined;
@@ -690,20 +696,40 @@ export function createG2CRouter(deps) {
       const count = Object.keys(mappings).length;
       if (count === 0) return res.status(400).json({ error: 'No valid rows found. CSV must have source_email,dest_email columns.' });
 
+      const csvEmails = Object.keys(mappings);
       await db().collection('userMappings').updateOne(
         { appUserId, migDir: migDirParam },
         {
-          $set: { mappings, appUserId, migDir: migDirParam, googleEmail, msEmail, updatedAt: new Date() },
+          $set: { mappings, csvEmails, appUserId, migDir: migDirParam, googleEmail, msEmail, updatedAt: new Date() },
           $setOnInsert: { createdAt: new Date() }
         },
         { upsert: true }
       );
 
       dbLog.info(`userMappings-csv — ${migDirParam} ${count} mappings from CSV`);
-      res.json({ success: true, count, mappings, migDir: migDirParam });
+      res.json({ success: true, count, mappings, csvEmails, migDir: migDirParam });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
+  });
+
+  // GET current user mappings (mappings + csvEmails) for G2C — used by Step2 on mount
+  router.get('/user-mappings', async (req, res) => {
+    const { appUserId } = getWorkspaceContext(req);
+    if (!appUserId) return res.json(null);
+    const doc = await db().collection('userMappings').findOne({ appUserId, migDir: 'gemini-copilot' });
+    res.json(doc || null);
+  });
+
+  // DELETE — clear CSV-uploaded mappings for G2C (restores cloud auto-mapping)
+  router.delete('/user-mappings', async (req, res) => {
+    const { appUserId } = getWorkspaceContext(req);
+    if (!appUserId) return res.json({ ok: true });
+    await db().collection('userMappings').updateOne(
+      { appUserId, migDir: 'gemini-copilot' },
+      { $set: { mappings: {}, csvEmails: null, updatedAt: new Date() } }
+    );
+    res.json({ ok: true });
   });
 
   // Migration logs (historical)
@@ -789,6 +815,31 @@ export function createG2CRouter(deps) {
       emit('info', `Discovered ${allUsers.length} users — migrating ${users.length} selected`);
 
       if (dry_run) {
+        // Pre-flight validator (additive — runs alongside count loop)
+        try {
+          const { runDryRunValidator } = await import('../dry-run/validator.js');
+          const validatorPairs = users.map(u => ({
+            sourceEmail: u.email,
+            destEmail: user_mappings[u.email] || u.email,
+            expectedConversationCount: u.conversationCount || 0,
+          }));
+          const uploadDoc = await db().collection('uploads').findOne({ _id: upload_id });
+          const dryRunReport = await runDryRunValidator({
+            migDir: 'gemini-copilot',
+            pairs: validatorPairs,
+            config: { folderName: customer_name, fromDate: from_date, toDate: to_date, dryRun: true },
+            appUserId, googleEmail, msEmail,
+            uploadData: uploadDoc,
+            extractPath: extract_path,
+          });
+          await db().collection('migrationWorkspaces').updateOne(
+            { _id: batchId },
+            { $set: { dryRunReport } }
+          ).catch(() => {});
+          emit('info', `Dry-run validator: ${dryRunReport.summary.ready} ready · ${dryRunReport.summary.warning} warning · ${dryRunReport.summary.blocker} blocker`);
+        } catch (e) {
+          emit('warn', `Dry-run validator failed: ${e.message}`);
+        }
         for (const u of users) {
           const m365Email = user_mappings[u.email] || u.email;
           emit('user', `${u.email} → ${m365Email} (${u.conversationCount} conversations)`);
@@ -844,12 +895,17 @@ export function createG2CRouter(deps) {
           let fileCorrelator = null;
           let driveMatcher = null;
           try {
-            googleClient = getGoogleOAuth2Client(appUserId);
+            // Service-account auth so the migration runs regardless of the
+            // admin's user-OAuth token freshness (no invalid_rapt failures).
+            // Migration needs Drive + Audit Log scopes (FileCorrelator queries
+            // the audit log; DriveFileMatcher reads/writes Drive).
+            const { getServiceAccountAuthForUser, SCOPES_DRIVE, SCOPES_AUDIT_LOG } = await import('../c2g/googleService.js');
+            googleClient = await getServiceAccountAuthForUser(appUserId, null, [...SCOPES_DRIVE, ...SCOPES_AUDIT_LOG]);
             fileCorrelator = new FileCorrelator(googleClient, gEmail);
             driveMatcher = new DriveFileMatcher(googleClient, gEmail, appUserId);
             emit('info', `  Drive file resolution enabled for ${gEmail}`);
-          } catch (_) {
-            emit('warn', `  Drive file resolution skipped for ${gEmail} — Google not authenticated`);
+          } catch (err) {
+            emit('warn', `  Drive file resolution skipped for ${gEmail} — ${err.message}`);
           }
 
           let enrichedConversations = conversations;
@@ -1022,11 +1078,25 @@ export function createG2CRouter(deps) {
       report.write(reportPath);
       const fullReport = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
 
+      const _totalErrors = fullReport.summary?.total_errors || 0;
+      // NB: reportWriter writes `users` at the TOP level (not under summary).
+      const _reportUsers = Array.isArray(fullReport.users) ? fullReport.users : [];
+      const _migratedUsers = _reportUsers.length > 0
+        ? _reportUsers.filter(u => u.status === 'success' || u.status === 'partial').length
+        : (fullReport.summary?.total_users || 0);
+      const _failedUsers = _reportUsers.length > 0
+        ? _reportUsers.filter(u => u.status === 'failed').length
+        : (_totalErrors > 0 ? 1 : 0);
+      // status: completed = at least one user produced pages OR no errors; failed = nobody produced anything but errors exist
+      const _finalStatus = (fullReport.summary?.total_pages_created || 0) === 0 && _totalErrors > 0
+        ? 'failed'
+        : 'completed';
       const reportUpdate = {
-        status: 'completed', endTime: new Date(),
+        status: _finalStatus, endTime: new Date(),
         totalUsers: fullReport.summary?.total_users || users.length,
-        migratedUsers: fullReport.summary?.total_users || 0,
-        failedUsers: fullReport.summary?.total_errors > 0 ? 1 : 0,
+        migratedUsers: _migratedUsers,
+        failedUsers: _failedUsers,
+        totalErrors: _totalErrors,  // ← was missing; reports panel uses this for Success/Partial/Failed badge
         totalConversations: fullReport.summary?.total_conversations || 0,
         migratedConversations: fullReport.summary?.total_pages_created || 0,
         flaggedAssets: fullReport.summary?.total_flagged || Object.values(visualReports || {}).reduce((s, v) => s + (v?.length || 0), 0),

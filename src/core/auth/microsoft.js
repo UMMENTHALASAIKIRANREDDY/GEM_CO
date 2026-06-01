@@ -47,7 +47,10 @@ export async function getAuthUrl(tenantId, appUserId) {
   const url = await msalApp.getAuthCodeUrl({
     scopes: DELEGATED_SCOPES,
     redirectUri: `${baseUrl}/auth/callback`,
-    prompt: 'consent',
+    // 'select_account' shows Microsoft's account picker even when the browser
+    // is already signed into one account — required so "+ Add Another" can
+    // actually add a SECOND tenant for C2C migration.
+    prompt: 'select_account',
     state,
   });
   // Pre-register session slot so callback can find it

@@ -249,6 +249,27 @@ export function createCL2GRouter({ db }) {
           cl2gLog('info', `Starting CL2G ${isDryRun ? 'dry run' : 'migration'} for ${pairs.length} user(s)...`);
           cl2gLog('total', JSON.stringify({ total: pairs.length }));
 
+          // Pre-flight validator (only on dry-run; additive — does not affect existing loop)
+          if (isDryRun) {
+            try {
+              const { runDryRunValidator } = await import('../dry-run/validator.js');
+              const dryRunReport = await runDryRunValidator({
+                migDir: 'claude-gemini',
+                pairs: pairs.map(p => ({ sourceEmail: p.sourceEmail, sourceUuid: p.sourceUuid, destEmail: p.destEmail, expectedConversationCount: p.conversationCount || 0 })),
+                config: { folderName: cl2gFolder, dryRun: true },
+                appUserId, googleEmail,
+                uploadData: uploadDoc,
+              });
+              await db().collection('migrationWorkspaces').updateOne(
+                { _id: batchId },
+                { $set: { dryRunReport } }
+              ).catch(() => {});
+              cl2gLog('info', `Dry-run validator: ${dryRunReport.summary.ready} ready · ${dryRunReport.summary.warning} warning · ${dryRunReport.summary.blocker} blocker`);
+            } catch (e) {
+              cl2gLog('warn', `Dry-run validator failed: ${e.message}`);
+            }
+          }
+
           for (const pair of pairs) {
             cl2gLog('info', `Processing: ${pair.sourceDisplayName} → ${pair.destEmail}`);
 
