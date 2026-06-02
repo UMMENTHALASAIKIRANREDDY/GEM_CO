@@ -247,20 +247,46 @@ export async function migrateC2CUserPair(
       return result;
     }
 
-    // 2. Fetch Copilot interactions for the source user
-    let interactions;
-    try {
-      interactions = await fetchInteractionsWithToken(sourceToken, sourceUserId);
-    } catch (e) {
-      const msg = e.message || String(e);
-      if (msg.includes('Copilot license')) {
-        result.errors.push(`User does not have a valid M365 Copilot license.`);
-      } else if (msg.includes('403')) {
-        result.errors.push(`Access denied fetching Copilot data: ${msg}`);
-      } else {
-        result.errors.push(`Failed to fetch Copilot data: ${msg}`);
+    // 2. Fetch Copilot interactions for the source user.
+    //    DB-first: on retry, conversations already in DB — read from there.
+    let interactions = null;
+    if (runOpts?.batchId && runOpts?.appUserId && runOpts?.sourceEmail) {
+      try {
+        const { loadConversationsFromStore } = await import('../../_shared/conversationStore.js');
+        const fromStore = await loadConversationsFromStore({
+          appUserId: runOpts.appUserId,
+          sourceEmail: runOpts.sourceEmail,
+          batchId: runOpts.batchId,
+          fromDate: runOpts.fromDate,
+          toDate: runOpts.toDate,
+          includeMigrated: true,
+        });
+        if (fromStore && fromStore.length > 0) {
+          // Flatten conversation payloads back to interactions array
+          interactions = [];
+          for (const conv of fromStore) {
+            if (conv.interactions && Array.isArray(conv.interactions)) {
+              interactions.push(...conv.interactions);
+            }
+          }
+          console.log(`[C2C] Loaded ${fromStore.length} conversations (${interactions.length} interactions) from conversationStore for ${sourceDisplayName}`);
+        }
+      } catch (_) { /* fall through to Graph fetch */ }
+    }
+    if (!interactions) {
+      try {
+        interactions = await fetchInteractionsWithToken(sourceToken, sourceUserId);
+      } catch (e) {
+        const msg = e.message || String(e);
+        if (msg.includes('Copilot license')) {
+          result.errors.push(`User does not have a valid M365 Copilot license.`);
+        } else if (msg.includes('403')) {
+          result.errors.push(`Access denied fetching Copilot data: ${msg}`);
+        } else {
+          result.errors.push(`Failed to fetch Copilot data: ${msg}`);
+        }
+        return result;
       }
-      return result;
     }
 
     // 3. Date filter

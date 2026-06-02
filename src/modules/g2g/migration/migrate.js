@@ -474,11 +474,32 @@ export async function runG2GMigration(
 
       let conversations = [];
       try {
-        conversations = await vaultReader.loadUserConversations(
-          sourceEmail,
-          opts?.fromDate,
-          opts?.toDate
-        );
+        // DB-first: try conversationStore (populated at upload time)
+        if (appUserId && uploadId) {
+          try {
+            const { loadConversationsFromStore } = await import('../../_shared/conversationStore.js');
+            const fromStore = await loadConversationsFromStore({
+              appUserId,
+              sourceEmail,
+              uploadId,
+              fromDate: opts?.fromDate,
+              toDate: opts?.toDate,
+              includeMigrated: true,
+            });
+            if (fromStore && fromStore.length > 0) {
+              conversations = fromStore;
+              onLog({ type: 'info', message: `  Loaded ${conversations.length} conversations from conversationStore for ${sourceEmail}` });
+            }
+          } catch (_) { /* fall through to disk */ }
+        }
+        // Disk fallback (legacy uploads or DB miss)
+        if (conversations.length === 0) {
+          conversations = await vaultReader.loadUserConversations(
+            sourceEmail,
+            opts?.fromDate,
+            opts?.toDate
+          );
+        }
       } catch (err) {
         const errMsg = `${sourceEmail}: load failed — ${err.message}`;
         result.errors.push(errMsg);

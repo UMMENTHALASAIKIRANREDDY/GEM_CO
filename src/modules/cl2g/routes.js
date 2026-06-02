@@ -328,7 +328,7 @@ export function createCL2GRouter({ db }) {
             }
 
             const r = await migrateUserPair(
-              { sourceUuid: pair.sourceUuid, sourceDisplayName: pair.sourceDisplayName, destUserEmail: pair.destEmail, extractPath: uploadDoc.extractPath },
+              { sourceUuid: pair.sourceUuid, sourceDisplayName: pair.sourceDisplayName, destUserEmail: pair.destEmail, extractPath: uploadDoc.extractPath, appUserId, uploadId, sourceEmail: pair.sourceEmail },
               { folderName: cl2gFolder, fromDate, toDate, includeMemory, includeProjects }
             );
 

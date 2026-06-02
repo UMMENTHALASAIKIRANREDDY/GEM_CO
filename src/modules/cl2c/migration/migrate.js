@@ -14,6 +14,9 @@ export async function migrateUserPair({
   destUserEmail,
   extractPath,
   appUserId,
+  // Optional DB-first ctx
+  uploadId,
+  sourceEmail,
 }, opts = {}) {
   const result = {
     sourceUuid,
@@ -26,12 +29,31 @@ export async function migrateUserPair({
   };
 
   try {
-    if (!fs.existsSync(extractPath)) {
+    // DB-first conversation load (Chunk 2b)
+    let dbConversations = null;
+    if (appUserId && uploadId && sourceEmail) {
+      try {
+        const { loadConversationsFromStore } = await import('../../_shared/conversationStore.js');
+        dbConversations = await loadConversationsFromStore({
+          appUserId,
+          sourceEmail,
+          uploadId,
+          fromDate: opts?.fromDate,
+          toDate: opts?.toDate,
+          includeMigrated: true,
+        });
+      } catch (_) { /* fall through to disk */ }
+    }
+
+    if (!fs.existsSync(extractPath) && !dbConversations) {
       result.errors.push(`Upload directory not found: ${extractPath}. The uploaded ZIP was likely lost after a server restart. Please re-upload the ZIP file.`);
       return result;
     }
 
-    const { conversations, memory, projects } = getUserData(extractPath, sourceUuid);
+    const diskData = fs.existsSync(extractPath) ? getUserData(extractPath, sourceUuid) : { conversations: [], memory: null, projects: [] };
+    const conversations = (dbConversations && dbConversations.length > 0) ? dbConversations : diskData.conversations;
+    const memory = diskData.memory;
+    const projects = diskData.projects;
     result.conversationsCount = conversations.length;
 
     const folderName = opts.folderName || 'ClaudeChats';
