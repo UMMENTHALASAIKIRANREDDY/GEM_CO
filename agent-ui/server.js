@@ -28,7 +28,7 @@ app.get('*', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, '127.0.0.1', () => {
   console.log(`Agent Harness UI running at http://localhost:${PORT}`);
   console.log(`Proxying API calls to GEM CO at ${GEM_ORIGIN}`);
 }).on('error', (err) => {
