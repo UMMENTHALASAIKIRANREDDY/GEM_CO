@@ -11,7 +11,7 @@ services:
     ports:
       # Host port 4001 (host 4000 is taken by another container on this server,
       # host 4006 is taken by gem-co-migration-prod). 4000 inside container.
-      - "4001:4000"
+      - "127.0.0.1:4001:4000"
     env_file:
       - .env
     volumes:
@@ -37,7 +37,7 @@ services:
       # used for direct debugging from the server's localhost. The app
       # connects via the Docker network using container name + internal
       # port 27017, NOT this host port.
-      - "29019:27017"
+      - "127.0.0.1:29019:27017"
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_USERNAME:-admin}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-DevSecret2026!}
