@@ -258,13 +258,16 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
 
       setImmediate(async () => {
         let files = 0, errors = 0;
+        const { startHeartbeat, stopHeartbeat, markUserPairMigrated, markUserPairFailed } = await import('../_shared/conversationStore.js');
+        let _heartbeatId = null;
 
         try {
           await db().collection('migrationWorkspaces').updateOne(
             { _id: batchId },
-            { $set: { migDir: 'claude-copilot', customerName: cl2cFolder, startTime, status: 'running', dryRun: isDryRun, appUserId, msEmail, totalUsers: pairs.length } },
+            { $set: { migDir: 'claude-copilot', customerName: cl2cFolder, startTime, status: 'running', dryRun: isDryRun, appUserId, msEmail, totalUsers: pairs.length, lastHeartbeat: new Date() } },
             { upsert: true }
           );
+          _heartbeatId = startHeartbeat(batchId);
 
           if (!uploadDoc.extractPath || !fs.existsSync(uploadDoc.extractPath)) {
             const msg = `Upload files not found on disk (${uploadDoc.extractPath}). The server may have restarted and lost the uploaded ZIP. Please re-upload the ZIP file and try again.`;
@@ -344,6 +347,13 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
 
             const status = r.errors?.length ? (r.filesUploaded > 0 ? 'partial' : 'failed') : 'success';
             reportUsers.push({ email: pair.sourceEmail, destEmail: pair.destEmail, displayName: r.sourceDisplayName, status, pages_created: r.filesUploaded, conversations_processed: r.conversationsCount, error_count: r.errors.length, errors: r.errors.map(e => ({ error_message: e })), files: r.files });
+
+            // Mark conversationStore rows
+            if (status === 'failed') {
+              await markUserPairFailed({ appUserId, uploadId, batchId, sourceEmail: pair.sourceEmail, error: r.errors[0] || 'unknown' });
+            } else {
+              await markUserPairMigrated({ appUserId, uploadId, batchId, sourceEmail: pair.sourceEmail, destEmail: pair.destEmail });
+            }
 
             if (r.errors.length) r.errors.forEach(e => { cl2cLog('warn', e); dbLog.warn(`[CL2C] ${r.sourceDisplayName}: ${e}`); });
             files  += r.filesUploaded;
@@ -461,6 +471,8 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
             { $set: { migDir: 'claude-copilot', status: files > 0 ? 'completed' : 'failed', endTime: new Date(), migratedConversations: files, totalErrors: errors + 1, error: e.message } }
           ).catch(() => {});
           cl2cLog('done', JSON.stringify({ files, errors: errors + 1, users: pairs.length, batchId }));
+        } finally {
+          stopHeartbeat(_heartbeatId);
         }
       });
 

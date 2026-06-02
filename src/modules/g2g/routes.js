@@ -206,6 +206,9 @@ export function createG2GRouter(deps) {
 
       setImmediate(async () => {
         let files = 0, errors = 0;
+        // Heartbeat so boot-time orphan detector knows this batch is alive
+        const { startHeartbeat, stopHeartbeat } = await import('../_shared/conversationStore.js');
+        let _heartbeatId = null;
 
         try {
           await db().collection('migrationWorkspaces').updateOne(
@@ -223,11 +226,13 @@ export function createG2GRouter(deps) {
               totalUsers: selectedUsers?.length || 0,
               migratedConversations: 0,
               filesUploaded: 0,
-              totalErrors: 0
+              totalErrors: 0,
+              lastHeartbeat: new Date()
             } },
             { upsert: true }
           );
           dbLog.info(`migrationWorkspaces.insert — G2G batch ${batchId} status=running (dryRun=${isDryRun}, ${selectedUsers?.length || 0} users)`);
+          _heartbeatId = startHeartbeat(batchId);
         } catch (dbErr) {
           console.error('[G2G] DB insert error:', dbErr.message);
         }
@@ -348,6 +353,8 @@ export function createG2GRouter(deps) {
             { $set: { migDir: 'gemini-gemini', status: 'failed', endTime: new Date(), error: err.message } }
           ).catch(() => {});
           g2gLog('done', JSON.stringify({ files, errors: 1, batchId }));
+        } finally {
+          stopHeartbeat(_heartbeatId);
         }
       });
     } catch (err) {

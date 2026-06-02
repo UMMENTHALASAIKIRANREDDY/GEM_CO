@@ -468,6 +468,96 @@ export async function markUserPairFailed({ appUserId, uploadId, batchId, sourceE
   }
 }
 
+/**
+ * Load conversations for a single user pair from conversationStore.
+ *
+ * Returns the conversations in the SAME SHAPE as the original source readers
+ * (VaultReader.loadUserConversations / zipParser.getUserData) — because we
+ * stored `payload: c` (the raw conversation object) at ingest time, we just
+ * unwrap it. Each returned object has `_storeId` and `_storeSessionId`
+ * appended so the caller can mark per-row status if desired.
+ *
+ * Returns null if no rows match (caller can fall back to disk-based read).
+ *
+ * @param {object} filter
+ *   - appUserId (required)
+ *   - sourceEmail (required, lowercased internally)
+ *   - uploadId (optional — ZIP sources)
+ *   - batchId (optional — Graph sources)
+ *   - fromDate / toDate (optional — date filter)
+ *   - includeMigrated (default false — only loads unmigrated rows for resume)
+ */
+export async function loadConversationsFromStore({
+  appUserId, sourceEmail, uploadId, batchId, fromDate, toDate, includeMigrated = false,
+}) {
+  if (!appUserId || !sourceEmail) return null;
+  try {
+    const db = getDb();
+    const query = { appUserId };
+    // Case-insensitive sourceEmail match — store may have mixed case
+    query.sourceEmail = { $regex: `^${sourceEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' };
+    if (uploadId) query.uploadId = uploadId;
+    else if (batchId) query.batchId = batchId;
+    if (!includeMigrated) {
+      query.status = { $ne: CONVERSATION_STATUS.MIGRATED };
+    }
+    const rows = await db.collection(COLLECTION).find(query).toArray();
+    if (rows.length === 0) return null;
+
+    // Apply date filter in-memory (createdDateTime varies in shape per source)
+    let filtered = rows;
+    if (fromDate || toDate) {
+      const from = fromDate ? new Date(fromDate) : null;
+      const to = toDate ? new Date(toDate + (toDate.length === 10 ? 'T23:59:59Z' : '')) : null;
+      filtered = rows.filter(r => {
+        if (!r.createdDateTime) return true; // include rows missing timestamps
+        const d = new Date(r.createdDateTime);
+        if (from && d < from) return false;
+        if (to && d > to) return false;
+        return true;
+      });
+    }
+
+    return filtered.map(r => {
+      // Unwrap the original conversation object, attach store metadata
+      const conversation = (r.payload && typeof r.payload === 'object') ? { ...r.payload } : {};
+      conversation._storeId = r._id;
+      conversation._storeSessionId = r.sessionId;
+      return conversation;
+    });
+  } catch (e) {
+    logger.warn(`loadConversationsFromStore failed (non-fatal): ${e.message}`);
+    return null;
+  }
+}
+
+/**
+ * Start a heartbeat updater for a running migration batch.
+ * Updates migrationWorkspaces.lastHeartbeat every 30s so the boot-time
+ * orphan detector knows this batch is alive.
+ *
+ * Returns an interval ID — caller MUST clearInterval() on completion
+ * (or in a try/finally) to avoid leaks.
+ */
+export function startHeartbeat(batchId, intervalMs = 30_000) {
+  if (!batchId) return null;
+  const update = async () => {
+    try {
+      const db = getDb();
+      await db.collection('migrationWorkspaces').updateOne(
+        { _id: batchId },
+        { $set: { lastHeartbeat: new Date() } }
+      );
+    } catch (_) { /* ignore — non-critical */ }
+  };
+  update(); // immediate first heartbeat
+  return setInterval(update, intervalMs);
+}
+
+export function stopHeartbeat(intervalId) {
+  if (intervalId) clearInterval(intervalId);
+}
+
 /** Mark a conversation as failed with an error. Idempotent. */
 export async function markFailedBySession(batchId, sessionId, error) {
   if (!batchId || !sessionId) return false;

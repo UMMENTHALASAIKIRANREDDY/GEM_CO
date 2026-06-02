@@ -260,13 +260,16 @@ export function createCL2GRouter({ db }) {
 
       setImmediate(async () => {
         let files = 0, errors = 0;
+        const { startHeartbeat, stopHeartbeat, markUserPairMigrated, markUserPairFailed } = await import('../_shared/conversationStore.js');
+        let _heartbeatId = null;
 
         try {
           await db().collection('migrationWorkspaces').updateOne(
             { _id: batchId },
-            { $set: { migDir: 'claude-gemini', direction: 'claude-gemini', customerName: cl2gFolder, startTime, status: 'running', dryRun: isDryRun, appUserId, googleEmail, totalUsers: pairs.length } },
+            { $set: { migDir: 'claude-gemini', direction: 'claude-gemini', customerName: cl2gFolder, startTime, status: 'running', dryRun: isDryRun, appUserId, googleEmail, totalUsers: pairs.length, lastHeartbeat: new Date() } },
             { upsert: true }
           );
+          _heartbeatId = startHeartbeat(batchId);
 
           // Verify the extracted ZIP directory is still present on disk
           if (!uploadDoc.extractPath || !fs.existsSync(uploadDoc.extractPath)) {
@@ -334,6 +337,13 @@ export function createCL2GRouter({ db }) {
             const status = r.errors?.length ? (r.filesUploaded > 0 ? 'partial' : 'failed') : 'success';
             reportUsers.push({ email: pair.sourceEmail, destEmail: pair.destEmail, displayName: r.sourceDisplayName, status, pages_created: r.filesUploaded, conversations_processed: r.conversationsCount, error_count: r.errors.length, errors: r.errors.map(e => ({ error_message: e })), files: r.files });
 
+            // Mark conversationStore rows for this user pair
+            if (status === 'failed') {
+              await markUserPairFailed({ appUserId, uploadId, batchId, sourceEmail: pair.sourceEmail, error: r.errors[0] || 'unknown' });
+            } else {
+              await markUserPairMigrated({ appUserId, uploadId, batchId, sourceEmail: pair.sourceEmail, destEmail: pair.destEmail });
+            }
+
             if (r.errors.length) {
               r.errors.forEach(e => { cl2gLog('warn', e); dbLog.warn(`[CL2G] ${r.sourceDisplayName}: ${e}`); });
             }
@@ -370,6 +380,8 @@ export function createCL2GRouter({ db }) {
             { $set: { migDir: 'claude-gemini', status: files > 0 ? 'completed' : 'failed', endTime: new Date(), migratedConversations: files, totalErrors: errors + 1, error: e.message } }
           ).catch(() => {});
           cl2gLog('done', JSON.stringify({ files, errors: errors + 1, users: pairs.length, batchId }));
+        } finally {
+          stopHeartbeat(_heartbeatId);
         }
       });
 

@@ -99,15 +99,18 @@ export function createC2GRouter(deps) {
 
       setImmediate(async () => {
         let files = 0, errors = 0;
+        const { startHeartbeat, stopHeartbeat, markUserPairMigrated, markUserPairFailed } = await import('../_shared/conversationStore.js');
+        let _heartbeatId = null;
 
         // Create report doc in DB
         try {
           await db().collection('migrationWorkspaces').updateOne(
             { _id: batchId },
-            { $set: { migDir: 'copilot-gemini', customerName: c2gFolderName, tenantId: process.env.SOURCE_AZURE_TENANT_ID || process.env.C2G_AZURE_TENANT_ID || '', startTime, status: 'running', dryRun: isDryRun, direction: 'c2g', appUserId, googleEmail, msEmail } },
+            { $set: { migDir: 'copilot-gemini', customerName: c2gFolderName, tenantId: process.env.SOURCE_AZURE_TENANT_ID || process.env.C2G_AZURE_TENANT_ID || '', startTime, status: 'running', dryRun: isDryRun, direction: 'c2g', appUserId, googleEmail, msEmail, lastHeartbeat: new Date() } },
             { upsert: true }
           );
           dbLog.info(`migrationWorkspaces.insert — C2G batch ${batchId} status=running (dryRun=${isDryRun})`);
+          _heartbeatId = startHeartbeat(batchId);
         } catch (dbErr) { console.error('[C2G] DB insert error:', dbErr.message); }
 
         try {
@@ -312,6 +315,15 @@ export function createC2GRouter(deps) {
             };
             reportUsers.push(userReport);
 
+            // Mark conversationStore rows for this user pair (Graph source, batchId-based)
+            if (!isDryRun) {
+              if (userReport.status === 'failed') {
+                await markUserPairFailed({ appUserId, batchId, sourceEmail: userReport.email, error: (r.errors || [])[0] || 'unknown' });
+              } else {
+                await markUserPairMigrated({ appUserId, batchId, sourceEmail: userReport.email, destEmail: userReport.destEmail });
+              }
+            }
+
             if (r.errors?.length) {
               console.error(`[C2G] ${r.sourceDisplayName} errors:`, r.errors.join(' | '));
               r.errors.forEach(err => {
@@ -352,6 +364,8 @@ export function createC2GRouter(deps) {
           c2gLog('error', e.message || String(e));
           await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'copilot-gemini', status: 'failed', endTime: new Date(), error: e.message } }).catch(() => {});
           c2gLog('done', JSON.stringify({ files, errors, users: 0, batchId }));
+        } finally {
+          stopHeartbeat(_heartbeatId);
         }
       });
     } catch (err) {

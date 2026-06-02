@@ -424,6 +424,8 @@ export function createC2CRouter(deps) {
 
       setImmediate(async () => {
         let files = 0, errors = 0;
+        const { startHeartbeat, stopHeartbeat, markUserPairMigrated, markUserPairFailed } = await import('../_shared/conversationStore.js');
+        let _heartbeatId = null;
         try {
           await db().collection('migrationWorkspaces').updateOne(
             { _id: batchId },
@@ -432,10 +434,12 @@ export function createC2CRouter(deps) {
               sourceTenantId, destTenantId, startTime, status: 'running',
               dryRun: isDryRun, appUserId,
               totalUsers: pairs.length, migratedConversations: 0, filesUploaded: 0, totalErrors: 0,
+              lastHeartbeat: new Date(),
             }},
             { upsert: true }
           );
           dbLog.info(`migrationWorkspaces.insert — C2C batch ${batchId} status=running`);
+          _heartbeatId = startHeartbeat(batchId);
 
           // Pre-flight validator (only on dry-run; additive)
           if (isDryRun) {
@@ -576,6 +580,15 @@ export function createC2CRouter(deps) {
             };
             reportUsers.push(userReport);
 
+            // Mark conversationStore rows for this user pair
+            if (!isDryRun) {
+              if (userReport.status === 'failed') {
+                await markUserPairFailed({ appUserId, batchId, sourceEmail: pair.sourceEmail, error: (r.errors || [])[0] || 'unknown' });
+              } else {
+                await markUserPairMigrated({ appUserId, batchId, sourceEmail: pair.sourceEmail, destEmail: pair.destUserEmail });
+              }
+            }
+
             if (r.errors?.length) {
               r.errors.forEach(err => c2cLog('warn', `${pair.sourceDisplayName}: ${err}`));
             }
@@ -671,6 +684,8 @@ export function createC2CRouter(deps) {
           c2cLog('error', e.message || String(e));
           await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'copilot-copilot', status: 'failed', endTime: new Date(), error: e.message } }).catch(() => {});
           c2cLog('done', JSON.stringify({ files, errors, users: 0, batchId }));
+        } finally {
+          stopHeartbeat(_heartbeatId);
         }
       });
     } catch (err) {

@@ -748,6 +748,17 @@ export async function runG2GMigration(
         type: 'success',
         message: `Completed ${sourceEmail} → ${mappedTo}: ${userRecord.files_created} file(s) uploaded`
       });
+      // Mark conversationStore rows for this user pair (live runs only)
+      if (!isDryRun && batchId && appUserId) {
+        try {
+          const { markUserPairMigrated, markUserPairFailed } = await import('../../_shared/conversationStore.js');
+          if (userRecord.status === 'failed') {
+            await markUserPairFailed({ appUserId, uploadId, batchId, sourceEmail, error: `${userBatchErrors} batch error(s)` });
+          } else {
+            await markUserPairMigrated({ appUserId, uploadId, batchId, sourceEmail, destEmail: mappedTo });
+          }
+        } catch (_) { /* non-fatal */ }
+      }
       emitProgress();
     }
 
