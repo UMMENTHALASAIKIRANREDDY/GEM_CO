@@ -13,6 +13,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import session from 'express-session';
 import bcrypt from 'bcryptjs';
+import { randomBytes as _randomBytes } from 'crypto';
 
 import { getAuthUrl, acquireTokenByCode, isAuthenticated, getValidToken, clearMsToken, clearMsAccount, getMsAccounts, restoreMsSessions, verifyAppOnlyAccess } from './src/core/auth/microsoft.js';
 import { fetchTenantInfo, buildAdminConsentUrl } from './src/modules/c2c/tenantConsent.js';
@@ -59,8 +60,22 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json());
+
+// Session secret resolution.
+// - If SESSION_SECRET is set (production + properly-configured dev), use it.
+// - If missing, generate a random 32-byte secret for THIS process only.
+//   This means a server restart invalidates existing sessions (users have to
+//   sign in again) but eliminates the previously-hardcoded "gemco-session-2026"
+//   default which any reader of the source code could use to forge cookies.
+//   We log a loud warning so misconfigured deploys are obvious.
+const _sessionSecret = process.env.SESSION_SECRET || (() => {
+  const generated = _randomBytes(32).toString('base64');
+  console.warn('[security] SESSION_SECRET env var is missing. Using a process-ephemeral random secret. Sessions will not survive server restart. Set SESSION_SECRET in your .env to fix.');
+  return generated;
+})();
+
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'gemco-session-2026',
+  secret: _sessionSecret,
   resave: false,
   saveUninitialized: false,
   cookie: { maxAge: 24 * 60 * 60 * 1000 } // 24 hours
@@ -446,10 +461,27 @@ app.post('/api/auth/google/disconnect', requireAuth, async (req, res) => {
   // Wipe cached Google directory members when no Google accounts remain so a
   // freshly connected (different) domain doesn't show stale users in mapping.
   try {
+    // ConversationStore: drop rows for the specific Google account being
+    // disconnected (matches by sourceAccountId for G2C/G2G source side OR
+    // destAccountId for C2G/CL2G destination side).
+    const { deleteByGoogleAccount } = await import('./src/modules/_shared/conversationStore.js');
+    if (accountId) {
+      await deleteByGoogleAccount(appUserId, accountId);
+    }
     if (!getGoogleAccounts(appUserId).length) {
       await db().collection('cloudMembers').deleteMany({ appUserId, source: 'google' });
+      // Belt-and-suspenders: clear all vault-source conversationStore rows
+      // when no Google account remains for this user.
+      const { getDb } = await import('./src/db/mongo.js');
+      const conv = await getDb().collection('conversationStore').deleteMany({
+        appUserId,
+        sourceType: 'vault',
+      });
+      if (conv.deletedCount > 0) {
+        console.log(`[disconnect google] cleared ${conv.deletedCount} vault-source conversationStore rows`);
+      }
     }
-  } catch (e) { console.warn('[disconnect google] cloudMembers cleanup failed:', e.message); }
+  } catch (e) { console.warn('[disconnect google] cleanup failed:', e.message); }
   res.json({ success: true });
 });
 
@@ -484,7 +516,12 @@ app.get('/api/auth/ms/users', requireAuth, async (req, res) => {
 app.post('/api/auth/ms/disconnect', requireAuth, async (req, res) => {
   const { appUserId } = getWorkspaceContext(req);
   const { accountId } = req.body || {};
+  // Capture tenantId BEFORE clearing — we need it to wipe conversationStore
+  // rows scoped to this specific tenant.
+  let disconnectedTenantId = null;
   if (accountId) {
+    const before = getMsAccounts(appUserId).find(a => a.accountId === accountId);
+    disconnectedTenantId = before?.tenantId || null;
     clearMsAccount(appUserId, accountId);
     const remaining = getMsAccounts(appUserId);
     if (!remaining.length) delete req.session.msEmail;
@@ -499,6 +536,13 @@ app.post('/api/auth/ms/disconnect', requireAuth, async (req, res) => {
   // tenant picker would show consents from a prior session that the user
   // didn't grant in this session. Matches user expectation of "fresh state".
   try {
+    // ConversationStore: drop rows for the specific tenant being disconnected.
+    // If `accountId` was passed and we knew its tenantId, wipe only that one.
+    // If all MS accounts are gone, wipe everything graph-sourced for this user.
+    const { deleteByTenant, deleteByAppUser } = await import('./src/modules/_shared/conversationStore.js');
+    if (disconnectedTenantId) {
+      await deleteByTenant(appUserId, disconnectedTenantId);
+    }
     if (!getMsAccounts(appUserId).length) {
       await db().collection('cloudMembers').deleteMany({ appUserId, source: 'microsoft' });
       const c2cWipe = await db().collection('connectedTenants').updateMany(
@@ -507,6 +551,16 @@ app.post('/api/auth/ms/disconnect', requireAuth, async (req, res) => {
       );
       if (c2cWipe.modifiedCount > 0) {
         console.log(`[disconnect ms] soft-revoked ${c2cWipe.modifiedCount} C2C tenant consent(s) for appUserId=${appUserId}`);
+      }
+      // Belt-and-suspenders: clear all graph-source conversationStore rows
+      // when no MS account remains (covers tenantId-less rows from prior sessions)
+      const { getDb } = await import('./src/db/mongo.js');
+      const conv = await getDb().collection('conversationStore').deleteMany({
+        appUserId,
+        sourceType: 'graph',
+      });
+      if (conv.deletedCount > 0) {
+        console.log(`[disconnect ms] cleared ${conv.deletedCount} graph-source conversationStore rows`);
       }
     }
   } catch (e) { console.warn('[disconnect ms] cleanup failed:', e.message); }
@@ -771,6 +825,19 @@ connectMongo().then(async () => {
 
   await restoreGoogleSessions();
   await restoreMsSessions();
+
+  // Boot-time orphan-batch cleanup. If the server was killed mid-migration
+  // (deploy, crash, container restart), there will be migrationWorkspaces
+  // stuck in status='running' with stale heartbeats. Mark them failed so
+  // the UI doesn't show "Running..." forever.
+  try {
+    const { detectAndMarkOrphanedBatches } = await import('./src/modules/_shared/conversationStore.js');
+    const { found } = await detectAndMarkOrphanedBatches({ cutoffMs: 60_000 });
+    if (found > 0) console.log(`[startup] Marked ${found} orphaned migration batch(es) as failed`);
+  } catch (e) {
+    console.warn('[startup] Orphan-batch cleanup non-fatal:', e.message);
+  }
+
   const httpServer = app.listen(PORT, () => {
     console.log(`\nCloudFuze Migration`);
     console.log(`Open: http://localhost:${PORT}\n`);

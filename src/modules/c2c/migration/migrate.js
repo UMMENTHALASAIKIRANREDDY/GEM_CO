@@ -283,6 +283,36 @@ export async function migrateC2CUserPair(
       return result;
     }
 
+    // Persist source conversations to conversationStore (additive, live runs only).
+    if (!runOpts.dryRun && runOpts.batchId && runOpts.appUserId) {
+      try {
+        const { persistSourceConversations, SOURCE_TYPE } = await import('../../_shared/conversationStore.js');
+        const conversationDocs = Array.from(sessions.entries()).map(([sid, items]) => ({
+          sessionId: sid,
+          title: items[0]?.responseEnvelope?.title || items[0]?.body?.content?.slice(0, 80) || 'Untitled Copilot conversation',
+          createdDateTime: items[0]?.createdDateTime,
+          payload: { interactions: items },
+        }));
+        await persistSourceConversations(
+          {
+            batchId: runOpts.batchId,
+            appUserId: runOpts.appUserId,
+            migDir: 'copilot-copilot',
+            sourceType: SOURCE_TYPE.GRAPH,
+            sourceTenantId,
+            sourceUserId,
+            sourceEmail: runOpts.sourceEmail || null,
+            sourceDisplayName,
+            destEmail: destUserEmail,
+            destTenantId,
+          },
+          conversationDocs
+        );
+      } catch (persistErr) {
+        console.warn(`[C2C] conversationStore persist (non-fatal): ${persistErr.message}`);
+      }
+    }
+
     // 5. Dry run stops here — we have the counts
     if (runOpts.dryRun) {
       return result;

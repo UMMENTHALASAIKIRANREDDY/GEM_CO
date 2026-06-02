@@ -378,7 +378,8 @@ async function uploadFileToDrive(auth, fileName, mimeType, content, parentFolder
 }
 
 export async function runG2GMigration(
-  { vaultZipPath, extractPath, sourceAuth, destAuth, isDryRun, selectedUsers, userMappings, opts },
+  { vaultZipPath, extractPath, sourceAuth, destAuth, isDryRun, selectedUsers, userMappings, opts,
+    batchId, appUserId, sourceAccountId, destAccountId, uploadId },
   onLog
 ) {
   const result = {
@@ -500,6 +501,9 @@ export async function runG2GMigration(
       }
 
       result.conversationsCount += conversations.length;
+
+      // Note: conversations already persisted to conversationStore at upload time
+      // (via the shared /api/upload endpoint that serves both G2C and G2G).
 
       if (isDryRun) {
         onLog({

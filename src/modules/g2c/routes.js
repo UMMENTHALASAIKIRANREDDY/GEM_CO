@@ -497,7 +497,18 @@ export function createG2CRouter(deps) {
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
 
-  // Upload ZIP
+  // Upload ZIP — extracts conversations to conversationStore (DB) at upload time
+  //
+  // Flow:
+  //  1. Multer drops raw ZIP on disk
+  //  2. Extract to uploads/extracted_{filename}/
+  //  3. Parse all users + all conversations via VaultReader
+  //  4. EVERY conversation is written to `conversationStore` (status='fetched')
+  //  5. uploads metadata saved (includes extractPath for backward compat with
+  //     existing migration code — will be removed once migration reads from DB)
+  //
+  // After Chunk 2 ships (migration reads from DB), this endpoint will also
+  // delete the disk files immediately after persisting to DB.
   router.post('/upload', requireGoogleAuth, upload.single('vault_zip'), async (req, res) => {
     try {
       const zipPath = req.file.path;
@@ -511,19 +522,60 @@ export function createG2CRouter(deps) {
       const reader = new VaultReader(extractTo);
       const users = await reader.discoverUsers();
       if (users.length === 0) return res.status(400).json({ error: 'No users found in Vault export XML files.' });
-      const usersArr = users.map(u => ({ email: u.email, displayName: u.displayName, conversationCount: u.conversationCount }));
+
+      // NEW: Write all conversations to conversationStore at upload time
       const { appUserId: _appUserId, googleEmail: _googleEmail, msEmail: _msEmail } = getWorkspaceContext(req);
+      const uploadId = req.file.filename;
+      const ingestBatchId = `ingest_${uploadId}`;
+      let totalPersisted = 0;
+      try {
+        const { persistSourceConversations, SOURCE_TYPE } = await import('../_shared/conversationStore.js');
+        for (const u of users) {
+          const userConvs = await reader.loadUserConversations(u.email, null, null);
+          if (!userConvs?.length) continue;
+          const r = await persistSourceConversations(
+            {
+              batchId: ingestBatchId,
+              appUserId: _appUserId,
+              migDir: 'gemini-copilot',
+              sourceType: SOURCE_TYPE.VAULT,
+              sourceEmail: u.email,
+              sourceDisplayName: u.displayName,
+              uploadId,
+            },
+            userConvs.map(c => ({
+              sessionId: c.id || `${u.email}::${c.title || 'untitled'}::${c.createdDateTime || ''}`,
+              title: c.title,
+              createdDateTime: c.createdDateTime,
+              payload: c,
+            }))
+          );
+          totalPersisted += r.inserted;
+        }
+        dbLog.info(`conversationStore.upsert — ${totalPersisted} conversations persisted at upload time for ${req.file.originalname}`);
+      } catch (persistErr) {
+        // Non-fatal: upload still succeeds even if DB write fails. Migration falls back to disk.
+        dbLog.warn(`conversationStore persist failed at upload (non-fatal): ${persistErr.message}`);
+      }
+
+      const usersArr = users.map(u => ({ email: u.email, displayName: u.displayName, conversationCount: u.conversationCount }));
       const uploadDoc = {
-        _id: req.file.filename, originalName: req.file.originalname || 'vault_export.zip',
-        uploadTime: new Date(), extractPath: extractTo, totalUsers: users.length,
+        _id: uploadId, originalName: req.file.originalname || 'vault_export.zip',
+        uploadTime: new Date(),
+        extractPath: extractTo,   // kept for backward compat during Chunk 1; removed in Chunk 2
+        ingestBatchId,
+        conversationsPersisted: totalPersisted,
+        totalUsers: users.length,
         totalConversations: users.reduce((s, u) => s + u.conversationCount, 0), users: usersArr,
         appUserId: _appUserId, googleEmail: _googleEmail, msEmail: _msEmail,
       };
       await db().collection('uploads').updateOne({ _id: uploadDoc._id }, { $set: uploadDoc }, { upsert: true });
-      dbLog.info(`uploads.upsert — ${uploadDoc.originalName} (${uploadDoc.totalUsers} users, ${uploadDoc.totalConversations} conversations)`);
+      dbLog.info(`uploads.upsert — ${uploadDoc.originalName} (${uploadDoc.totalUsers} users, ${uploadDoc.totalConversations} conversations, ${totalPersisted} in conversationStore)`);
       res.json({
         id: uploadDoc._id, original_name: uploadDoc.originalName, upload_time: uploadDoc.uploadTime.toISOString(),
         extract_path: extractTo, total_users: uploadDoc.totalUsers, total_conversations: uploadDoc.totalConversations,
+        conversations_persisted: totalPersisted,
+        ingest_batch_id: ingestBatchId,
         users: usersArr.map(u => ({ email: u.email, display_name: u.displayName, conversation_count: u.conversationCount }))
       });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -890,6 +942,9 @@ export function createG2CRouter(deps) {
         try {
           conversations = await reader.loadUserConversations(gEmail, from_date, to_date);
           emit('info', `  Loaded ${conversations.length} conversations for ${gEmail}`);
+          // Note: conversations are ALREADY persisted to conversationStore at upload
+          // time. Migration reads from disk for now (Chunk 2 will switch this to
+          // read from conversationStore for resume support).
 
           let googleClient = null;
           let fileCorrelator = null;

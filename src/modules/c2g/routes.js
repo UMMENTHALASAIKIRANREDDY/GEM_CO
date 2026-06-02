@@ -287,7 +287,14 @@ export function createC2GRouter(deps) {
             c2gLog('info', `Processing: ${pair.sourceDisplayName} → ${pair.destUserEmail}`);
             const r = await migrateUserPair(
               { sourceUserId: pair.sourceUserId, sourceDisplayName: pair.sourceDisplayName, destUserEmail: pair.destUserEmail, userDelegatedToken },
-              migOpts,
+              {
+                ...migOpts,
+                // Context plumbed for conversationStore persistence
+                batchId,
+                appUserId,
+                sourceTenantId: process.env.SOURCE_AZURE_TENANT_ID || process.env.C2G_AZURE_TENANT_ID || null,
+                sourceEmail: pair.sourceEmail || pair.sourceDisplayName,
+              },
               ({ filesUploaded, convIdx, totalConvs }) => {
                 c2gLog('progress', JSON.stringify({ files: files + filesUploaded, errors, users: results.length, total: migPairs.length, convIdx, totalConvs }));
               }

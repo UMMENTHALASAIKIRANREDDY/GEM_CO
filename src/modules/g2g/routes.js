@@ -287,7 +287,13 @@ export function createG2GRouter(deps) {
               isDryRun,
               selectedUsers,
               userMappings,
-              opts
+              opts,
+              // Context passed through for conversationStore persistence
+              batchId,
+              appUserId,
+              sourceAccountId,
+              destAccountId,
+              uploadId: extractPath || null,  // G2G uses extractPath as the upload identifier
             },
             (logEntry) => {
               g2gLog(logEntry.type, logEntry.message);

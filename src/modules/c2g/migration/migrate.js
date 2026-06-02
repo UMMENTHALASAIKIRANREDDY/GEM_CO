@@ -1196,6 +1196,36 @@ export async function migrateUserPair({
       return result;
     }
 
+    // Persist Copilot interactions to conversationStore (additive).
+    // Each session becomes one row keyed by (batchId, sessionId).
+    if (opts?.batchId && opts?.appUserId) {
+      try {
+        const { persistSourceConversations, SOURCE_TYPE } = await import('../../_shared/conversationStore.js');
+        const conversationDocs = Array.from(sessions.entries()).map(([sid, items]) => ({
+          sessionId: sid,
+          title: items[0]?.responseEnvelope?.title || items[0]?.body?.content?.slice(0, 80) || 'Untitled Copilot conversation',
+          createdDateTime: items[0]?.createdDateTime,
+          payload: { interactions: items },
+        }));
+        await persistSourceConversations(
+          {
+            batchId: opts.batchId,
+            appUserId: opts.appUserId,
+            migDir: 'copilot-gemini',
+            sourceType: SOURCE_TYPE.GRAPH,
+            sourceTenantId: opts.sourceTenantId || null,
+            sourceUserId,
+            sourceEmail: opts.sourceEmail || null,
+            sourceDisplayName,
+            destEmail: destUserEmail,
+          },
+          conversationDocs
+        );
+      } catch (persistErr) {
+        console.warn(`[C2G] conversationStore persist (non-fatal): ${persistErr.message}`);
+      }
+    }
+
     const auth = getServiceAccountAuth(destUserEmail);
     const mainFolder = await createDriveFolder(auth, folderName);
     // Two subfolders: chats as Google Docs go to "Copilot Conversations",

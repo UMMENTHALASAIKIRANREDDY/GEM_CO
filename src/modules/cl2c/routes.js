@@ -110,12 +110,48 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
 
       const parsed = parseClaudeExport(extractDir);
 
+      // NEW: Persist all Claude conversations to conversationStore at upload time
+      const ingestBatchId = `ingest_${uploadId}`;
+      let totalPersisted = 0;
+      try {
+        const { getUserData } = await import('../cl2g/zipParser.js');
+        const { persistSourceConversations, SOURCE_TYPE } = await import('../_shared/conversationStore.js');
+        for (const u of parsed.users) {
+          const { conversations: userConvs } = getUserData(extractDir, u.uuid);
+          if (!userConvs?.length) continue;
+          const r = await persistSourceConversations(
+            {
+              batchId: ingestBatchId,
+              appUserId,
+              migDir: 'claude-copilot',
+              sourceType: SOURCE_TYPE.CLAUDE,
+              sourceEmail: u.email_address,
+              sourceUserId: u.uuid,
+              sourceDisplayName: u.full_name || u.name,
+              uploadId,
+            },
+            userConvs.map(c => ({
+              sessionId: c.uuid || c.id || `${u.uuid}::${c.name || 'untitled'}`,
+              title: c.name || c.title || 'Untitled',
+              createdDateTime: c.created_at || c.createdDateTime,
+              payload: c,
+            }))
+          );
+          totalPersisted += r.inserted;
+        }
+        dbLog.info(`conversationStore.upsert — ${totalPersisted} Claude conversations persisted at upload time for ${req.file.originalname}`);
+      } catch (persistErr) {
+        dbLog.warn(`conversationStore persist failed at CL2C upload (non-fatal): ${persistErr.message}`);
+      }
+
       const doc = {
         _id:                uploadId,
         appUserId,
         msEmail,
         fileName:           req.file.originalname,
-        extractPath:        extractDir,
+        extractPath:        extractDir,    // kept for backward compat
+        ingestBatchId,
+        conversationsPersisted: totalPersisted,
         uploadTime:         new Date(),
         totalConversations: parsed.totalConversations,
         totalMemories:      parsed.totalMemories,
@@ -125,9 +161,9 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
       };
 
       await db().collection('cl2cUploads').insertOne(doc);
-      dbLog.info(`cl2cUploads.insert — ${uploadId} (${parsed.users.length} users, ${parsed.totalConversations} convs)`);
+      dbLog.info(`cl2cUploads.insert — ${uploadId} (${parsed.users.length} users, ${parsed.totalConversations} convs, ${totalPersisted} in conversationStore)`);
 
-      res.json({ uploadId, users: parsed.users, totalConversations: parsed.totalConversations, totalMemories: parsed.totalMemories, totalProjects: parsed.totalProjects });
+      res.json({ uploadId, users: parsed.users, totalConversations: parsed.totalConversations, totalMemories: parsed.totalMemories, totalProjects: parsed.totalProjects, conversations_persisted: totalPersisted, ingest_batch_id: ingestBatchId });
     } catch (err) {
       fs.rm(extractDir, { recursive: true, force: true }, () => {});
       fs.unlink(req.file.path, () => {});
@@ -303,6 +339,8 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
               { sourceUuid: pair.sourceUuid, sourceDisplayName: pair.sourceDisplayName, destUserEmail: pair.destEmail, extractPath: uploadDoc.extractPath, appUserId },
               { folderName: cl2cFolder, fromDate, toDate, includeMemory, includeProjects }
             );
+
+            // Note: conversations already persisted to conversationStore at upload time.
 
             const status = r.errors?.length ? (r.filesUploaded > 0 ? 'partial' : 'failed') : 'success';
             reportUsers.push({ email: pair.sourceEmail, destEmail: pair.destEmail, displayName: r.sourceDisplayName, status, pages_created: r.filesUploaded, conversations_processed: r.conversationsCount, error_count: r.errors.length, errors: r.errors.map(e => ({ error_message: e })), files: r.files });

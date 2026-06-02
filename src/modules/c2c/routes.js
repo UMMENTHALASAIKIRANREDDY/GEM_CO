@@ -140,6 +140,11 @@ export function createC2CRouter(deps) {
         { $set: { consentState: 'revoked', revokedAt: new Date() } }
       );
       clearTenantToken(tenantId);
+      // ConversationStore: drop rows where this tenant was source OR destination
+      try {
+        const { deleteByTenant } = await import('../_shared/conversationStore.js');
+        await deleteByTenant(appUserId, tenantId);
+      } catch (e) { /* non-fatal */ }
       res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ error: e.message });
@@ -518,7 +523,13 @@ export function createC2CRouter(deps) {
 
           const { migrateC2CUserPair } = await import('./migration/migrate.js');
           const reportUsers = [];
-          const runOpts = { folderName: c2cFolderName, dryRun: isDryRun };
+          const runOpts = {
+            folderName: c2cFolderName,
+            dryRun: isDryRun,
+            // Context plumbed for conversationStore persistence
+            batchId,
+            appUserId,
+          };
           if (fromDate) runOpts.fromDate = fromDate;
           if (toDate) runOpts.toDate = toDate;
 
@@ -535,8 +546,10 @@ export function createC2CRouter(deps) {
 
           for (const pair of migPairs) {
             c2cLog('info', `Processing: ${pair.sourceDisplayName} → ${pair.destUserEmail}`);
+            // Inject per-pair sourceEmail into runOpts for store persistence
+            const perPairRunOpts = { ...runOpts, sourceEmail: pair.sourceEmail || pair.sourceUpn || null };
             const r = await migrateC2CUserPair(
-              { ...pair, sourceLabel, runOpts, destDelegatedAuth },
+              { ...pair, sourceLabel, runOpts: perPairRunOpts, destDelegatedAuth },
               ({ pagesCreated, filesUploaded, convIdx, totalConvs }) => {
                 c2cLog('progress', JSON.stringify({
                   files: totalPages + (pagesCreated || 0),
