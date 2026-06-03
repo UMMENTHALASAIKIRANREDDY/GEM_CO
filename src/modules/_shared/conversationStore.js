@@ -244,17 +244,34 @@ export async function deleteByBatch(batchId) {
 }
 
 /**
- * Boot-time orphan-batch cleanup.
+ * Boot-time orphan-batch cleanup + AUTO-RESUME.
  *
  * On server start, find migrationWorkspaces stuck in 'running' status with
  * either no heartbeat or a stale heartbeat (>60s old). These batches' Node
- * processes died (deploy, crash, container kill). Mark them 'failed' so the
- * UI doesn't show "Running..." forever, and so the customer knows to retry.
+ * processes died (deploy, crash, container kill).
  *
- * Per-conversation auto-resume requires the destination-reads-from-DB
- * refactor (Chunk 2). For now, we surface the orphan state clearly so the
- * customer can take action.
+ * For each orphan:
+ *   - If a `resumeContext` is saved AND a registered resume handler exists
+ *     for that direction → AUTO-RESUME (re-launch the migration runner).
+ *     The runner reads conversationStore with includeMigrated:false so
+ *     already-migrated conversations are skipped naturally.
+ *   - Otherwise → mark 'failed' so the UI doesn't show "Running..." forever.
+ *
+ * Resume handlers are registered via registerResumeHandler() from each
+ * direction's routes.js (only g2g for now; other directions still mark failed).
  */
+const _resumeHandlers = new Map();
+
+/**
+ * Register a resume handler for a migration direction.
+ *   kind: 'g2g' | 'g2c' | 'c2g' | 'c2c' | 'cl2g' | 'cl2c'
+ *   handler: async function({ batchId, resumeContext, startTime })
+ */
+export function registerResumeHandler(kind, handler) {
+  _resumeHandlers.set(kind, handler);
+  logger.info(`Resume handler registered for kind=${kind}`);
+}
+
 export async function detectAndMarkOrphanedBatches({ cutoffMs = 60_000 } = {}) {
   try {
     const db = getDb();
@@ -266,25 +283,58 @@ export async function detectAndMarkOrphanedBatches({ cutoffMs = 60_000 } = {}) {
         { lastHeartbeat: { $exists: false } },
       ],
     }).toArray();
-    if (orphans.length === 0) return { found: 0 };
+    if (orphans.length === 0) return { found: 0, resumed: 0, failed: 0 };
+
+    let resumed = 0;
+    let failedCount = 0;
+
     for (const batch of orphans) {
-      await db.collection('migrationWorkspaces').updateOne(
-        { _id: batch._id },
-        {
-          $set: {
-            status: 'failed',
-            endTime: new Date(),
-            error: 'Server restarted while migration was running. Conversations already migrated are preserved at the destination. Retry the migration to process the remaining users.',
-            orphanedAt: new Date(),
-          },
+      const ctx = batch.resumeContext;
+      const handler = ctx?.kind ? _resumeHandlers.get(ctx.kind) : null;
+
+      if (handler && ctx && !batch.dryRun) {
+        // AUTO-RESUME: re-launch the migration with saved context
+        try {
+          logger.warn(`Boot: AUTO-RESUMING orphaned batch ${batch._id} (migDir=${batch.migDir}, kind=${ctx.kind})`);
+          // Delay slightly so the rest of server boot finishes first
+          setTimeout(() => {
+            try {
+              handler({ batchId: batch._id, resumeContext: ctx, startTime: batch.startTime });
+            } catch (handlerErr) {
+              logger.warn(`Resume handler threw for batch ${batch._id}: ${handlerErr.message}`);
+            }
+          }, 5000);
+          resumed++;
+        } catch (e) {
+          logger.warn(`Failed to schedule resume for ${batch._id}: ${e.message}`);
+          await db.collection('migrationWorkspaces').updateOne(
+            { _id: batch._id },
+            { $set: { status: 'failed', endTime: new Date(), error: `Auto-resume failed: ${e.message}`, orphanedAt: new Date() } }
+          );
+          failedCount++;
         }
-      );
-      logger.warn(`Boot: marked orphaned batch ${batch._id} (migDir=${batch.migDir}) as failed`);
+      } else {
+        // No resume handler / no context / dry-run → mark failed (existing behavior)
+        await db.collection('migrationWorkspaces').updateOne(
+          { _id: batch._id },
+          {
+            $set: {
+              status: 'failed',
+              endTime: new Date(),
+              error: 'Server restarted while migration was running. Conversations already migrated are preserved at the destination. Retry the migration to process the remaining users.',
+              orphanedAt: new Date(),
+            },
+          }
+        );
+        logger.warn(`Boot: marked orphaned batch ${batch._id} (migDir=${batch.migDir}) as failed (no resume handler)`);
+        failedCount++;
+      }
     }
-    return { found: orphans.length };
+
+    return { found: orphans.length, resumed, failed: failedCount };
   } catch (e) {
     logger.warn(`detectAndMarkOrphanedBatches failed: ${e.message}`);
-    return { found: 0, error: e.message };
+    return { found: 0, resumed: 0, failed: 0, error: e.message };
   }
 }
 

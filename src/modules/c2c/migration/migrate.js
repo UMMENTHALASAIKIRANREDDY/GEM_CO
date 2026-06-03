@@ -259,7 +259,7 @@ export async function migrateC2CUserPair(
           batchId: runOpts.batchId,
           fromDate: runOpts.fromDate,
           toDate: runOpts.toDate,
-          includeMigrated: true,
+          includeMigrated: !runOpts?.isResume,
         });
         if (fromStore && fromStore.length > 0) {
           // Flatten conversation payloads back to interactions array

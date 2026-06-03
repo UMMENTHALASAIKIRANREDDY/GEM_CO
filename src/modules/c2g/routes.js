@@ -89,15 +89,31 @@ export function createC2GRouter(deps) {
       const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
       const { pairs, folderName, dryRun, fromDate, toDate } = req.body;
       if (!pairs?.length) return res.status(400).json({ error: 'No user pairs provided' });
-      const isDryRun = dryRun === true;
-      const c2gFolderName = folderName || 'CopilotChats';
 
       res.json({ started: true });
 
       const batchId = `c2g_${Date.now()}`;
       const startTime = new Date();
+      const resumeContext = {
+        kind: 'c2g',
+        appUserId, googleEmail, msEmail,
+        pairs, folderName, dryRun, fromDate, toDate,
+      };
 
-      setImmediate(async () => {
+      setImmediate(() => executeC2GMigration({ batchId, startTime, resumeContext, isResume: false }));
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Callable from boot-time auto-resume. The body is the original /migrate
+  // setImmediate work, with all closures replaced by resumeContext fields.
+  async function executeC2GMigration({ batchId, startTime, resumeContext, isResume }) {
+    try {
+      const { appUserId, googleEmail, msEmail, pairs, folderName, dryRun, fromDate, toDate } = resumeContext;
+      const isDryRun = dryRun === true;
+      const c2gFolderName = folderName || 'CopilotChats';
+      {
         let files = 0, errors = 0;
         const { startHeartbeat, stopHeartbeat, markUserPairMigrated, markUserPairFailed } = await import('../_shared/conversationStore.js');
         let _heartbeatId = null;
@@ -106,10 +122,10 @@ export function createC2GRouter(deps) {
         try {
           await db().collection('migrationWorkspaces').updateOne(
             { _id: batchId },
-            { $set: { migDir: 'copilot-gemini', customerName: c2gFolderName, tenantId: process.env.SOURCE_AZURE_TENANT_ID || process.env.C2G_AZURE_TENANT_ID || '', startTime, status: 'running', dryRun: isDryRun, direction: 'c2g', appUserId, googleEmail, msEmail, lastHeartbeat: new Date() } },
+            { $set: { migDir: 'copilot-gemini', customerName: c2gFolderName, tenantId: process.env.SOURCE_AZURE_TENANT_ID || process.env.C2G_AZURE_TENANT_ID || '', startTime, status: 'running', dryRun: isDryRun, direction: 'c2g', appUserId, googleEmail, msEmail, lastHeartbeat: new Date(), resumeContext, ...(isResume ? { resumedAt: new Date() } : {}) } },
             { upsert: true }
           );
-          dbLog.info(`migrationWorkspaces.insert — C2G batch ${batchId} status=running (dryRun=${isDryRun})`);
+          dbLog.info(`migrationWorkspaces.${isResume ? 'resume' : 'insert'} — C2G batch ${batchId} status=running (${isResume ? 'AUTO-RESUMED' : `dryRun=${isDryRun}`})`);
           _heartbeatId = startHeartbeat(batchId);
         } catch (dbErr) { console.error('[C2G] DB insert error:', dbErr.message); }
 
@@ -275,6 +291,7 @@ export function createC2GRouter(deps) {
           const migOpts = { folderName: c2gFolderName };
           if (fromDate) migOpts.fromDate = fromDate;
           if (toDate) migOpts.toDate = toDate;
+          if (isResume) migOpts.isResume = true;
           const { migrateUserPair } = migModule;
           const results = [];
           const reportUsers = [];
@@ -367,11 +384,13 @@ export function createC2GRouter(deps) {
         } finally {
           stopHeartbeat(_heartbeatId);
         }
-      });
+      }
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      console.error('[C2G] executeC2GMigration top-level error:', err);
     }
-  });
+  }
+
+  router.executeC2GMigration = executeC2GMigration;
 
   return router;
 }

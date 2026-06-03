@@ -379,9 +379,22 @@ async function uploadFileToDrive(auth, fileName, mimeType, content, parentFolder
 
 export async function runG2GMigration(
   { vaultZipPath, extractPath, sourceAuth, destAuth, isDryRun, selectedUsers, userMappings, opts,
-    batchId, appUserId, sourceAccountId, destAccountId, uploadId },
+    batchId, appUserId, sourceAccountId, destAccountId, uploadId: rawUploadId },
   onLog
 ) {
+  // The upload endpoint stores the raw filename hash as uploadId in conversationStore.
+  // G2G receives the full extractPath (e.g. ".../uploads/extracted_<hash>"). Derive
+  // the actual uploadId by stripping the "extracted_" prefix from the path basename,
+  // so DB-first read and status marking match the row keys.
+  let uploadId = rawUploadId;
+  if (uploadId && typeof uploadId === 'string') {
+    const base = path.basename(uploadId);
+    if (base.startsWith('extracted_')) {
+      uploadId = base.slice('extracted_'.length);
+    } else {
+      uploadId = base;
+    }
+  }
   const result = {
     conversationsCount: 0,
     filesUploaded: 0,
@@ -473,27 +486,34 @@ export async function runG2GMigration(
       onLog({ type: 'user', message: sourceEmail });
 
       let conversations = [];
+      let userAlreadyFullyMigrated = false;
       try {
         // DB-first: try conversationStore (populated at upload time)
         if (appUserId && uploadId) {
           try {
             const { loadConversationsFromStore } = await import('../../_shared/conversationStore.js');
+            // On RESUME, only load unmigrated rows. If user has 0 unmigrated rows
+            // (already fully migrated), skip them. Fresh runs load everything.
             const fromStore = await loadConversationsFromStore({
               appUserId,
               sourceEmail,
               uploadId,
               fromDate: opts?.fromDate,
               toDate: opts?.toDate,
-              includeMigrated: true,
+              includeMigrated: !opts?.isResume,   // ← key change: resume skips already-done
             });
             if (fromStore && fromStore.length > 0) {
               conversations = fromStore;
-              onLog({ type: 'info', message: `  Loaded ${conversations.length} conversations from conversationStore for ${sourceEmail}` });
+              onLog({ type: 'info', message: `  Loaded ${conversations.length} conversations from conversationStore for ${sourceEmail}${opts?.isResume ? ' (RESUME)' : ''}` });
+            } else if (opts?.isResume) {
+              // Resume + empty result = this user pair is fully migrated already
+              userAlreadyFullyMigrated = true;
+              onLog({ type: 'info', message: `  Skipping ${sourceEmail} — all conversations already migrated (resume)` });
             }
           } catch (_) { /* fall through to disk */ }
         }
-        // Disk fallback (legacy uploads or DB miss)
-        if (conversations.length === 0) {
+        // Disk fallback (legacy uploads or DB miss) — skip if resume already determined fully-done
+        if (conversations.length === 0 && !userAlreadyFullyMigrated) {
           conversations = await vaultReader.loadUserConversations(
             sourceEmail,
             opts?.fromDate,
@@ -513,7 +533,10 @@ export async function runG2GMigration(
       }
 
       if (!conversations.length) {
-        onLog({ type: 'warn', message: `No conversations for ${sourceEmail}` });
+        const msg = userAlreadyFullyMigrated
+          ? `All conversations for ${sourceEmail} already migrated — skipping (resume)`
+          : `No conversations for ${sourceEmail}`;
+        onLog({ type: userAlreadyFullyMigrated ? 'info' : 'warn', message: msg });
         userRecord.status = 'success';
         result.users.push(userRecord);
         result.migratedUsers++;

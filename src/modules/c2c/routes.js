@@ -342,23 +342,17 @@ export function createC2CRouter(deps) {
       const batch = await db().collection('migrationWorkspaces').findOne({ _id: req.params.id, appUserId, migDir: 'copilot-copilot' });
       if (!batch) return res.status(404).json({ error: 'Batch not found' });
       const users = batch.users || batch.report?.users || [];
-      const customerName = batch.customerName || 'Copilot';
-      const sectionName = `${customerName} Conversations`;
-      // Destination Path = the OneNote section path for the destination user
-      const destPath = (destEmail) => destEmail
-        ? `${destEmail}/OneNote/Notebooks/${customerName}/${sectionName}`
-        : '';
-      const rows = [['Source Email', 'Destination Email', 'Destination Path', 'Status', 'Pages Created', 'Conversations', 'Errors', 'Error Message']];
+      // Unified CSV columns across all 6 migration directions (mirrors C2G shape).
+      const rows = [['Source Email', 'Destination Email', 'Status', 'Files Uploaded', 'Conversations', 'Errors', 'Error Message']];
       for (const u of users) {
-        const path = destPath(u.destEmail);
         const sourceEmail = u.email || '';
         const destEmail = u.destEmail || '';
         if (u.errors && u.errors.length > 0) {
           for (const e of u.errors) {
-            rows.push([sourceEmail, destEmail, path, u.status || '', u.pages_created || 0, u.conversations_processed || 0, u.error_count || 0, e.error_message || e.error || '']);
+            rows.push([sourceEmail, destEmail, u.status || '', u.pages_created || 0, u.conversations_processed || 0, u.error_count || 0, e.error_message || e.error || '']);
           }
         } else {
-          rows.push([sourceEmail, destEmail, path, u.status || '', u.pages_created || 0, u.conversations_processed || 0, u.error_count || 0, '']);
+          rows.push([sourceEmail, destEmail, u.status || '', u.pages_created || 0, u.conversations_processed || 0, u.error_count || 0, '']);
         }
       }
       const csv = rows.map(r => r.map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
@@ -414,15 +408,52 @@ export function createC2CRouter(deps) {
         ? { appUserId, accountId: resolvedDestAccountId, adminUserId: adminUserIdInDestTenant, adminEmail: adminEmailForGrant }
         : null;
 
-      const isDryRun = dryRun === true || dryRun === 'true';
-      const c2cFolderName = folderName || 'CopilotChats';
-
       res.json({ started: true });
 
       const batchId = `c2c_${Date.now()}`;
       const startTime = new Date();
+      const resumeContext = {
+        kind: 'c2c',
+        appUserId,
+        sourceTenantId, destTenantId,
+        pairs, folderName, dryRun, fromDate, toDate,
+        destAccountId: resolvedDestAccountId,
+      };
 
-      setImmediate(async () => {
+      setImmediate(() => executeC2CMigration({ batchId, startTime, resumeContext, isResume: false, destDelegatedAuth }));
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  async function executeC2CMigration({ batchId, startTime, resumeContext, isResume, destDelegatedAuth: destDelegatedAuthOverride }) {
+    const { appUserId, sourceTenantId, destTenantId, pairs, folderName, dryRun, fromDate, toDate, destAccountId } = resumeContext;
+    const isDryRun = dryRun === true || dryRun === 'true';
+    const c2cFolderName = folderName || 'CopilotChats';
+
+    // On boot resume, re-resolve destDelegatedAuth from saved destAccountId.
+    // Microsoft session is restored during boot; if expired we still try and
+    // the underlying call will fail with a clear error.
+    let destDelegatedAuth = destDelegatedAuthOverride;
+    if (!destDelegatedAuth && destAccountId) {
+      let adminEmailForGrant = null;
+      let adminUserIdInDestTenant = null;
+      try {
+        const { getMsAccounts } = await import('../../core/auth/microsoft.js');
+        const accounts = getMsAccounts(appUserId) || [];
+        const adminAcct = accounts.find(a => a.accountId === destAccountId);
+        adminEmailForGrant = adminAcct?.email || null;
+      } catch {}
+      if (adminEmailForGrant && !isDryRun) {
+        try {
+          const { resolveAdminUserIdInTenant } = await import('./sitePermissions.js');
+          adminUserIdInDestTenant = await resolveAdminUserIdInTenant(destTenantId, adminEmailForGrant);
+        } catch {}
+      }
+      destDelegatedAuth = { appUserId, accountId: destAccountId, adminUserId: adminUserIdInDestTenant, adminEmail: adminEmailForGrant };
+    }
+
+    {
         let files = 0, errors = 0;
         const { startHeartbeat, stopHeartbeat, markUserPairMigrated, markUserPairFailed } = await import('../_shared/conversationStore.js');
         let _heartbeatId = null;
@@ -435,6 +466,7 @@ export function createC2CRouter(deps) {
               dryRun: isDryRun, appUserId,
               totalUsers: pairs.length, migratedConversations: 0, filesUploaded: 0, totalErrors: 0,
               lastHeartbeat: new Date(),
+              resumeContext, ...(isResume ? { resumedAt: new Date() } : {}),
             }},
             { upsert: true }
           );
@@ -536,6 +568,7 @@ export function createC2CRouter(deps) {
           };
           if (fromDate) runOpts.fromDate = fromDate;
           if (toDate) runOpts.toDate = toDate;
+          if (isResume) runOpts.isResume = true;
 
           // Resolve source tenant display name for OneNote footers + folder name
           let sourceLabel = sourceTenantId;
@@ -687,11 +720,10 @@ export function createC2CRouter(deps) {
         } finally {
           stopHeartbeat(_heartbeatId);
         }
-      });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+      }
+  }
+
+  router.executeC2CMigration = executeC2CMigration;
 
   return router;
 }

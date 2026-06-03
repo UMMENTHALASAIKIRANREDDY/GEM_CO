@@ -40,7 +40,7 @@ export async function migrateUserPair({
           uploadId,
           fromDate: opts?.fromDate,
           toDate: opts?.toDate,
-          includeMigrated: true,
+          includeMigrated: !opts?.isResume,
         });
       } catch (_) { /* fall through to disk */ }
     }

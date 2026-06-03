@@ -1162,7 +1162,7 @@ export async function migrateUserPair({
           batchId: opts.batchId,
           fromDate: opts.fromDate,
           toDate: opts.toDate,
-          includeMigrated: true,
+          includeMigrated: !opts?.isResume,
         });
         if (fromStore && fromStore.length > 0) {
           dbConversations = fromStore;

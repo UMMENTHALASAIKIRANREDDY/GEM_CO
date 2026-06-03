@@ -249,14 +249,35 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
       const uploadDoc = await db().collection('cl2cUploads').findOne({ _id: uploadId, appUserId });
       if (!uploadDoc) return res.status(404).json({ error: 'Upload not found' });
 
-      const isDryRun   = dryRun === true;
-      const cl2cFolder = folderName || 'ClaudeChats';
       const batchId    = `cl2c_${Date.now()}`;
       const startTime  = new Date();
+      const resumeContext = {
+        kind: 'cl2c',
+        appUserId, msEmail,
+        pairs, uploadId, folderName, dryRun, fromDate, toDate, includeMemory, includeProjects,
+      };
 
       res.json({ started: true, batchId });
 
-      setImmediate(async () => {
+      setImmediate(() => executeCL2CMigration({ batchId, startTime, resumeContext, isResume: false }));
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  async function executeCL2CMigration({ batchId, startTime, resumeContext, isResume }) {
+    const { appUserId, msEmail, pairs, uploadId, folderName, dryRun, fromDate, toDate, includeMemory, includeProjects } = resumeContext;
+    const isDryRun   = dryRun === true;
+    const cl2cFolder = folderName || 'ClaudeChats';
+
+    const uploadDoc = await db().collection('cl2cUploads').findOne({ _id: uploadId, appUserId });
+    if (!uploadDoc) {
+      dbLog.error(`[CL2C] Upload ${uploadId} not found on ${isResume ? 'resume' : 'start'} — aborting batch ${batchId}`);
+      await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { status: 'failed', endTime: new Date(), error: 'Upload doc missing' } }).catch(() => {});
+      return;
+    }
+
+    {
         let files = 0, errors = 0;
         const { startHeartbeat, stopHeartbeat, markUserPairMigrated, markUserPairFailed } = await import('../_shared/conversationStore.js');
         let _heartbeatId = null;
@@ -264,7 +285,7 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
         try {
           await db().collection('migrationWorkspaces').updateOne(
             { _id: batchId },
-            { $set: { migDir: 'claude-copilot', customerName: cl2cFolder, startTime, status: 'running', dryRun: isDryRun, appUserId, msEmail, totalUsers: pairs.length, lastHeartbeat: new Date() } },
+            { $set: { migDir: 'claude-copilot', customerName: cl2cFolder, startTime, status: 'running', dryRun: isDryRun, appUserId, msEmail, totalUsers: pairs.length, lastHeartbeat: new Date(), resumeContext, ...(isResume ? { resumedAt: new Date() } : {}) } },
             { upsert: true }
           );
           _heartbeatId = startHeartbeat(batchId);
@@ -340,7 +361,7 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
 
             const r = await migrateUserPair(
               { sourceUuid: pair.sourceUuid, sourceDisplayName: pair.sourceDisplayName, destUserEmail: pair.destEmail, extractPath: uploadDoc.extractPath, appUserId, uploadId, sourceEmail: pair.sourceEmail },
-              { folderName: cl2cFolder, fromDate, toDate, includeMemory, includeProjects }
+              { folderName: cl2cFolder, fromDate, toDate, includeMemory, includeProjects, isResume }
             );
 
             // Note: conversations already persisted to conversationStore at upload time.
@@ -474,12 +495,10 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
         } finally {
           stopHeartbeat(_heartbeatId);
         }
-      });
+      }
+  }
 
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+  router.executeCL2CMigration = executeCL2CMigration;
 
   return router;
 }

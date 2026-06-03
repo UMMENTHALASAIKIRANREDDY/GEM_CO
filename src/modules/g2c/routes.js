@@ -653,17 +653,15 @@ export function createG2CRouter(deps) {
     const doc = await db().collection('migrationWorkspaces').findOne({ _id: req.params.id, appUserId });
     if (!doc) return res.status(404).json({ error: 'Batch not found' });
     const users = doc.report?.users || [];
-    const isC2G = doc.migDir === 'copilot-gemini';
-    const customerName = doc.customerName || 'Gemini';
-    const destFor = (email, destEmail) => isC2G ? (destEmail || '') : `${email}/OneDrive/Notebooks/${customerName}/${customerName} Conversations`;
-    const header = isC2G ? 'Source Email,Destination Email,Status,Files Uploaded,Conversations,Errors,Error Message' : 'Email,Destination Path,Status,Pages Created,Conversations,Errors,Error Message';
+    // Unified CSV columns across all 6 migration directions (mirrors C2G shape).
+    const header = 'Source Email,Destination Email,Status,Files Uploaded,Conversations,Errors,Error Message';
     const rows = [header];
     users.forEach(u => {
-      const dest = destFor(u.email, u.destEmail);
+      const dest = u.destEmail || '';
       if (u.errors?.length > 0) {
-        u.errors.forEach(e => rows.push([u.email, dest, u.status, u.pages_created, u.conversations_processed, u.error_count, e.error_message || ''].map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(',')));
+        u.errors.forEach(e => rows.push([u.email, dest, u.status, u.pages_created || 0, u.conversations_processed || 0, u.error_count || 0, e.error_message || ''].map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(',')));
       } else {
-        rows.push([u.email, dest, u.status, u.pages_created, u.conversations_processed, u.error_count, ''].map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(','));
+        rows.push([u.email, dest, u.status, u.pages_created || 0, u.conversations_processed || 0, u.error_count || 0, ''].map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(','));
       }
     });
     res.setHeader('Content-Type', 'text/csv');
@@ -811,12 +809,24 @@ export function createG2CRouter(deps) {
 
     const batch_id = randomUUID();
     res.json({ started: true, batch_id });
-    runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id, upload_id, appUserId, googleEmail, msEmail }).catch(e => {
+    const resumeContext = {
+      kind: 'g2c',
+      extract_path, tenant_id, customer_name, user_mappings,
+      dry_run, skip_followups, skip_ai_response,
+      from_date, to_date, upload_id,
+      appUserId, googleEmail, msEmail,
+    };
+    executeG2CMigration({ batchId: batch_id, startTime: new Date(), resumeContext, isResume: false }).catch(e => {
       console.error('[G2C] runMigration unhandled error:', e.message);
     });
   });
 
-  async function runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id, upload_id, appUserId, googleEmail, msEmail }) {
+  async function executeG2CMigration({ batchId, startTime, resumeContext, isResume }) {
+    const { extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, upload_id, appUserId, googleEmail, msEmail } = resumeContext;
+    return runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id: batchId, upload_id, appUserId, googleEmail, msEmail, isResume, resumeContext, startTime });
+  }
+
+  async function runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id, upload_id, appUserId, googleEmail, msEmail, isResume = false, resumeContext = null, startTime: providedStartTime = null }) {
     logBuffers.set(appUserId, []);
     const batchId = batch_id || randomUUID();
     currentBatchId = batchId;
@@ -833,10 +843,10 @@ export function createG2CRouter(deps) {
 
     await db().collection('migrationWorkspaces').updateOne(
       { _id: batchId },
-      { $set: { migDir: 'gemini-copilot', customerName: customer_name, tenantId: tenant_id, startTime, status: 'running', dryRun: dry_run, uploadId: upload_id, appUserId, googleEmail, msEmail, lastHeartbeat: new Date() } },
+      { $set: { migDir: 'gemini-copilot', customerName: customer_name, tenantId: tenant_id, startTime, status: 'running', dryRun: dry_run, uploadId: upload_id, appUserId, googleEmail, msEmail, lastHeartbeat: new Date(), ...(resumeContext ? { resumeContext } : {}), ...(isResume ? { resumedAt: new Date() } : {}) } },
       { upsert: true }
     );
-    dbLog.info(`migrationWorkspaces.insert — batch ${batchId} status=running`);
+    dbLog.info(`migrationWorkspaces.${isResume ? 'resume' : 'insert'} — batch ${batchId} status=running${isResume ? ' (AUTO-RESUMED)' : ''}`);
 
     // Start heartbeat so the boot-time orphan detector knows this batch is alive
     const { startHeartbeat, stopHeartbeat, loadConversationsFromStore, markUserPairMigrated, markUserPairFailed } = await import('../_shared/conversationStore.js');
@@ -952,7 +962,7 @@ export function createG2CRouter(deps) {
             uploadId: upload_id,
             fromDate: from_date,
             toDate: to_date,
-            includeMigrated: true,  // include already-migrated rows for resumed batches
+            includeMigrated: !isResume,  // resume skips already-migrated rows
           });
           if (fromStore && fromStore.length > 0) {
             conversations = fromStore;
@@ -1511,6 +1521,8 @@ export function createG2CRouter(deps) {
       auditEmitter.off('event', onEvent);
     });
   });
+
+  router.executeG2CMigration = executeG2CMigration;
 
   return router;
 }

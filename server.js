@@ -780,6 +780,15 @@ app.use('/api/cl2c', cl2cRouter);
 const g2gRouter = createG2GRouter({ db, getGoogleOAuth2Client });
 app.use('/api/g2g', g2gRouter);
 
+// Register G2G as a resume-capable migration so boot-time orphan detector
+// auto-resumes G2G batches instead of just marking them failed.
+try {
+  const { registerResumeHandler } = await import('./src/modules/_shared/conversationStore.js');
+  if (typeof g2gRouter.executeG2GMigration === 'function') {
+    registerResumeHandler('g2g', g2gRouter.executeG2GMigration);
+  }
+} catch (e) { console.warn('[startup] G2G resume registration failed:', e.message); }
+
 app.use('/copilot', createCopilotRouter());
 
 // C2C router — mounted at /api/c2c (Copilot → Copilot, cross-tenant)
@@ -788,6 +797,17 @@ app.use('/api/c2c', c2cRouter);
 
 // Tenant consent callback for C2C — outside /api prefix so MS can redirect to it
 app.get('/auth/ms/tenant-consent-callback', createTenantConsentCallback({ db }));
+
+// Register auto-resume handlers for the remaining 5 directions. Must run BEFORE
+// detectAndMarkOrphanedBatches (below) so the boot scan finds a handler to dispatch.
+try {
+  const { registerResumeHandler } = await import('./src/modules/_shared/conversationStore.js');
+  if (typeof g2cRouter.executeG2CMigration === 'function')  registerResumeHandler('g2c',  g2cRouter.executeG2CMigration);
+  if (typeof c2gRouter.executeC2GMigration === 'function')  registerResumeHandler('c2g',  c2gRouter.executeC2GMigration);
+  if (typeof c2cRouter.executeC2CMigration === 'function')  registerResumeHandler('c2c',  c2cRouter.executeC2CMigration);
+  if (typeof cl2gRouter.executeCL2GMigration === 'function') registerResumeHandler('cl2g', cl2gRouter.executeCL2GMigration);
+  if (typeof cl2cRouter.executeCL2CMigration === 'function') registerResumeHandler('cl2c', cl2cRouter.executeCL2CMigration);
+} catch (e) { console.warn('[startup] Resume handler registration failed:', e.message); }
 
 // ─── Index bootstrap ──────────────────────────────────────────────────────────
 
