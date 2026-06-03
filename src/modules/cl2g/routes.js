@@ -106,48 +106,12 @@ export function createCL2GRouter({ db }) {
 
       const parsed = parseClaudeExport(extractDir);
 
-      // NEW: Persist all Claude conversations to conversationStore at upload time
-      const ingestBatchId = `ingest_${uploadId}`;
-      let totalPersisted = 0;
-      try {
-        const { getUserData } = await import('./zipParser.js');
-        const { persistSourceConversations, SOURCE_TYPE } = await import('../_shared/conversationStore.js');
-        for (const u of parsed.users) {
-          const { conversations: userConvs } = getUserData(extractDir, u.uuid);
-          if (!userConvs?.length) continue;
-          const r = await persistSourceConversations(
-            {
-              batchId: ingestBatchId,
-              appUserId,
-              migDir: 'claude-gemini',
-              sourceType: SOURCE_TYPE.CLAUDE,
-              sourceEmail: u.email_address,
-              sourceUserId: u.uuid,
-              sourceDisplayName: u.full_name || u.name,
-              uploadId,
-            },
-            userConvs.map(c => ({
-              sessionId: c.uuid || c.id || `${u.uuid}::${c.name || 'untitled'}`,
-              title: c.name || c.title || 'Untitled',
-              createdDateTime: c.created_at || c.createdDateTime,
-              payload: c,
-            }))
-          );
-          totalPersisted += r.inserted;
-        }
-        dbLog.info(`conversationStore.upsert — ${totalPersisted} Claude conversations persisted at upload time for ${req.file.originalname}`);
-      } catch (persistErr) {
-        dbLog.warn(`conversationStore persist failed at CL2G upload (non-fatal): ${persistErr.message}`);
-      }
-
       const doc = {
         _id:                uploadId,
         appUserId,
         googleEmail,
         fileName:           req.file.originalname,
-        extractPath:        extractDir,    // kept for backward compat
-        ingestBatchId,
-        conversationsPersisted: totalPersisted,
+        extractPath:        extractDir,
         uploadTime:         new Date(),
         totalConversations: parsed.totalConversations,
         totalMemories:      parsed.totalMemories,
@@ -157,9 +121,9 @@ export function createCL2GRouter({ db }) {
       };
 
       await db().collection('cl2gUploads').insertOne(doc);
-      dbLog.info(`cl2gUploads.insert — ${uploadId} (${parsed.users.length} users, ${parsed.totalConversations} convs, ${totalPersisted} in conversationStore)`);
+      dbLog.info(`cl2gUploads.insert — ${uploadId} (${parsed.users.length} users, ${parsed.totalConversations} convs)`);
 
-      res.json({ uploadId, users: parsed.users, totalConversations: parsed.totalConversations, totalMemories: parsed.totalMemories, totalProjects: parsed.totalProjects, conversations_persisted: totalPersisted, ingest_batch_id: ingestBatchId });
+      res.json({ uploadId, users: parsed.users, totalConversations: parsed.totalConversations, totalMemories: parsed.totalMemories, totalProjects: parsed.totalProjects });
     } catch (err) {
       fs.rm(extractDir, { recursive: true, force: true }, () => {});
       fs.unlink(req.file.path, () => {});
@@ -251,47 +215,22 @@ export function createCL2GRouter({ db }) {
       const uploadDoc = await db().collection('cl2gUploads').findOne({ _id: uploadId, appUserId });
       if (!uploadDoc) return res.status(404).json({ error: 'Upload not found' });
 
+      const isDryRun    = dryRun === true;
+      const cl2gFolder  = folderName || 'ClaudeChats';
       const batchId     = `cl2g_${Date.now()}`;
       const startTime   = new Date();
-      const resumeContext = {
-        kind: 'cl2g',
-        appUserId, googleEmail,
-        pairs, uploadId, folderName, dryRun, fromDate, toDate, includeMemory, includeProjects,
-      };
 
       res.json({ started: true, batchId });
 
-      setImmediate(() => executeCL2GMigration({ batchId, startTime, resumeContext, isResume: false }));
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  async function executeCL2GMigration({ batchId, startTime, resumeContext, isResume }) {
-    const { appUserId, googleEmail, pairs, uploadId, folderName, dryRun, fromDate, toDate, includeMemory, includeProjects } = resumeContext;
-    const isDryRun   = dryRun === true;
-    const cl2gFolder = folderName || 'ClaudeChats';
-
-    // Re-look up uploadDoc by id on resume (uploadDoc not in closure here)
-    const uploadDoc = await db().collection('cl2gUploads').findOne({ _id: uploadId, appUserId });
-    if (!uploadDoc) {
-      dbLog.error(`[CL2G] Upload ${uploadId} not found on ${isResume ? 'resume' : 'start'} — aborting batch ${batchId}`);
-      await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { status: 'failed', endTime: new Date(), error: 'Upload doc missing' } }).catch(() => {});
-      return;
-    }
-
-    {
+      setImmediate(async () => {
         let files = 0, errors = 0;
-        const { startHeartbeat, stopHeartbeat, markUserPairMigrated, markUserPairFailed } = await import('../_shared/conversationStore.js');
-        let _heartbeatId = null;
 
         try {
           await db().collection('migrationWorkspaces').updateOne(
             { _id: batchId },
-            { $set: { migDir: 'claude-gemini', direction: 'claude-gemini', customerName: cl2gFolder, startTime, status: 'running', dryRun: isDryRun, appUserId, googleEmail, totalUsers: pairs.length, lastHeartbeat: new Date(), resumeContext, ...(isResume ? { resumedAt: new Date() } : {}) } },
+            { $set: { migDir: 'claude-gemini', direction: 'claude-gemini', customerName: cl2gFolder, startTime, status: 'running', dryRun: isDryRun, appUserId, googleEmail, totalUsers: pairs.length } },
             { upsert: true }
           );
-          _heartbeatId = startHeartbeat(batchId);
 
           // Verify the extracted ZIP directory is still present on disk
           if (!uploadDoc.extractPath || !fs.existsSync(uploadDoc.extractPath)) {
@@ -350,21 +289,12 @@ export function createCL2GRouter({ db }) {
             }
 
             const r = await migrateUserPair(
-              { sourceUuid: pair.sourceUuid, sourceDisplayName: pair.sourceDisplayName, destUserEmail: pair.destEmail, extractPath: uploadDoc.extractPath, appUserId, uploadId, sourceEmail: pair.sourceEmail },
-              { folderName: cl2gFolder, fromDate, toDate, includeMemory, includeProjects, isResume }
+              { sourceUuid: pair.sourceUuid, sourceDisplayName: pair.sourceDisplayName, destUserEmail: pair.destEmail, extractPath: uploadDoc.extractPath },
+              { folderName: cl2gFolder, fromDate, toDate, includeMemory, includeProjects }
             );
-
-            // Note: conversations already persisted to conversationStore at upload time.
 
             const status = r.errors?.length ? (r.filesUploaded > 0 ? 'partial' : 'failed') : 'success';
             reportUsers.push({ email: pair.sourceEmail, destEmail: pair.destEmail, displayName: r.sourceDisplayName, status, pages_created: r.filesUploaded, conversations_processed: r.conversationsCount, error_count: r.errors.length, errors: r.errors.map(e => ({ error_message: e })), files: r.files });
-
-            // Mark conversationStore rows for this user pair
-            if (status === 'failed') {
-              await markUserPairFailed({ appUserId, uploadId, batchId, sourceEmail: pair.sourceEmail, error: r.errors[0] || 'unknown' });
-            } else {
-              await markUserPairMigrated({ appUserId, uploadId, batchId, sourceEmail: pair.sourceEmail, destEmail: pair.destEmail });
-            }
 
             if (r.errors.length) {
               r.errors.forEach(e => { cl2gLog('warn', e); dbLog.warn(`[CL2G] ${r.sourceDisplayName}: ${e}`); });
@@ -402,13 +332,13 @@ export function createCL2GRouter({ db }) {
             { $set: { migDir: 'claude-gemini', status: files > 0 ? 'completed' : 'failed', endTime: new Date(), migratedConversations: files, totalErrors: errors + 1, error: e.message } }
           ).catch(() => {});
           cl2gLog('done', JSON.stringify({ files, errors: errors + 1, users: pairs.length, batchId }));
-        } finally {
-          stopHeartbeat(_heartbeatId);
         }
-      }
-  }
+      });
 
-  router.executeCL2GMigration = executeCL2GMigration;
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
   return router;
 }

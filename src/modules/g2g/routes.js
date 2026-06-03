@@ -204,39 +204,8 @@ export function createG2GRouter(deps) {
       const batchId = `g2g_${Date.now()}`;
       const startTime = new Date();
 
-      // Save resume context BEFORE kicking off the migration so a server crash
-      // before the runner starts is still recoverable on boot.
-      const resumeContext = {
-        kind: 'g2g',
-        appUserId,
-        sourceAccountId,
-        destAccountId,
-        g2gGemName,
-        isDryRun,
-        extractPath,
-        selectedUsers,
-        userMappings,
-        fromDate,
-        toDate,
-      };
-
-      executeG2GMigration({ batchId, startTime, resumeContext, isResume: false });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // Internal function that runs the actual migration. Callable from:
-  //   1. POST /api/g2g/migrate (fresh run)
-  //   2. server.js boot-time orphan resume
-  async function executeG2GMigration({ batchId, startTime, resumeContext, isResume }) {
-    const { appUserId, sourceAccountId, destAccountId, g2gGemName, isDryRun, extractPath, selectedUsers, userMappings, fromDate, toDate } = resumeContext;
-
       setImmediate(async () => {
         let files = 0, errors = 0;
-        // Heartbeat so boot-time orphan detector knows this batch is alive
-        const { startHeartbeat, stopHeartbeat } = await import('../_shared/conversationStore.js');
-        let _heartbeatId = null;
 
         try {
           await db().collection('migrationWorkspaces').updateOne(
@@ -244,7 +213,7 @@ export function createG2GRouter(deps) {
             { $set: {
               migDir: 'gemini-gemini',
               customerName: g2gGemName,
-              startTime: startTime || new Date(),
+              startTime,
               status: 'running',
               dryRun: isDryRun,
               direction: 'g2g',
@@ -254,15 +223,11 @@ export function createG2GRouter(deps) {
               totalUsers: selectedUsers?.length || 0,
               migratedConversations: 0,
               filesUploaded: 0,
-              totalErrors: 0,
-              lastHeartbeat: new Date(),
-              resumeContext,                  // ← save context for future auto-resume
-              ...(isResume ? { resumedAt: new Date() } : {}),
+              totalErrors: 0
             } },
             { upsert: true }
           );
-          dbLog.info(`migrationWorkspaces.${isResume ? 'resume' : 'insert'} — G2G batch ${batchId} status=running (${isResume ? 'AUTO-RESUMED' : `dryRun=${isDryRun}, ${selectedUsers?.length || 0} users`})`);
-          _heartbeatId = startHeartbeat(batchId);
+          dbLog.info(`migrationWorkspaces.insert — G2G batch ${batchId} status=running (dryRun=${isDryRun}, ${selectedUsers?.length || 0} users)`);
         } catch (dbErr) {
           console.error('[G2G] DB insert error:', dbErr.message);
         }
@@ -285,7 +250,6 @@ export function createG2GRouter(deps) {
           const opts = { gemName: g2gGemName };
           if (fromDate) opts.fromDate = fromDate;
           if (toDate) opts.toDate = toDate;
-          if (isResume) opts.isResume = true;
 
           g2gLog('info', `Starting G2G ${isDryRun ? 'dry run' : 'migration'} (source=${sourceAccountId}, dest=${destAccountId}, ${selectedUsers?.length || 0} users)...`);
 
@@ -323,13 +287,7 @@ export function createG2GRouter(deps) {
               isDryRun,
               selectedUsers,
               userMappings,
-              opts,
-              // Context passed through for conversationStore persistence
-              batchId,
-              appUserId,
-              sourceAccountId,
-              destAccountId,
-              uploadId: extractPath || null,  // G2G uses extractPath as the upload identifier
+              opts
             },
             (logEntry) => {
               g2gLog(logEntry.type, logEntry.message);
@@ -384,14 +342,12 @@ export function createG2GRouter(deps) {
             { $set: { migDir: 'gemini-gemini', status: 'failed', endTime: new Date(), error: err.message } }
           ).catch(() => {});
           g2gLog('done', JSON.stringify({ files, errors: 1, batchId }));
-        } finally {
-          stopHeartbeat(_heartbeatId);
         }
       });
-  }  // end executeG2GMigration
-
-  // Export the executeG2GMigration so boot-time resume can call it
-  router.executeG2GMigration = executeG2GMigration;
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
   // GET /api/g2g/reports — list all G2G migration batches for this user
   router.get('/reports', requireAuth, async (req, res) => {
@@ -474,15 +430,14 @@ export function createG2GRouter(deps) {
       const batch = await db().collection('migrationWorkspaces').findOne({ _id: req.params.id, appUserId, migDir: 'gemini-gemini' });
       if (!batch) return res.status(404).json({ error: 'Batch not found' });
       const users = batch.users || batch.report?.users || [];
-      // Unified CSV columns across all 6 migration directions (mirrors C2G shape).
-      const rows = [['Source Email', 'Destination Email', 'Status', 'Files Uploaded', 'Conversations', 'Errors', 'Error Message']];
+      const rows = [['Source User', 'Destination User', 'Status', 'Files Created', 'Conversations', 'Errors', 'Error Detail']];
       for (const u of users) {
         if (u.errors && u.errors.length > 0) {
           for (const e of u.errors) {
-            rows.push([u.email, u.destEmail || '', u.status || '', u.pages_created || u.files_created || 0, u.conversations_processed || 0, u.error_count || 0, e.error_message || e.error || '']);
+            rows.push([u.email, u.destEmail || '', u.status || '', u.files_created || 0, u.pages_created || 0, u.error_count || 0, e.error_message || e.error || '']);
           }
         } else {
-          rows.push([u.email, u.destEmail || '', u.status || '', u.pages_created || u.files_created || 0, u.conversations_processed || 0, u.error_count || 0, '']);
+          rows.push([u.email, u.destEmail || '', u.status || '', u.files_created || 0, u.pages_created || 0, u.error_count || 0, '']);
         }
       }
       const csv = rows.map(r => r.map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');

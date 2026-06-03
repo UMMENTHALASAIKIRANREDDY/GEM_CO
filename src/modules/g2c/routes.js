@@ -497,18 +497,7 @@ export function createG2CRouter(deps) {
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
 
-  // Upload ZIP — extracts conversations to conversationStore (DB) at upload time
-  //
-  // Flow:
-  //  1. Multer drops raw ZIP on disk
-  //  2. Extract to uploads/extracted_{filename}/
-  //  3. Parse all users + all conversations via VaultReader
-  //  4. EVERY conversation is written to `conversationStore` (status='fetched')
-  //  5. uploads metadata saved (includes extractPath for backward compat with
-  //     existing migration code — will be removed once migration reads from DB)
-  //
-  // After Chunk 2 ships (migration reads from DB), this endpoint will also
-  // delete the disk files immediately after persisting to DB.
+  // Upload ZIP
   router.post('/upload', requireGoogleAuth, upload.single('vault_zip'), async (req, res) => {
     try {
       const zipPath = req.file.path;
@@ -522,60 +511,19 @@ export function createG2CRouter(deps) {
       const reader = new VaultReader(extractTo);
       const users = await reader.discoverUsers();
       if (users.length === 0) return res.status(400).json({ error: 'No users found in Vault export XML files.' });
-
-      // NEW: Write all conversations to conversationStore at upload time
-      const { appUserId: _appUserId, googleEmail: _googleEmail, msEmail: _msEmail } = getWorkspaceContext(req);
-      const uploadId = req.file.filename;
-      const ingestBatchId = `ingest_${uploadId}`;
-      let totalPersisted = 0;
-      try {
-        const { persistSourceConversations, SOURCE_TYPE } = await import('../_shared/conversationStore.js');
-        for (const u of users) {
-          const userConvs = await reader.loadUserConversations(u.email, null, null);
-          if (!userConvs?.length) continue;
-          const r = await persistSourceConversations(
-            {
-              batchId: ingestBatchId,
-              appUserId: _appUserId,
-              migDir: 'gemini-copilot',
-              sourceType: SOURCE_TYPE.VAULT,
-              sourceEmail: u.email,
-              sourceDisplayName: u.displayName,
-              uploadId,
-            },
-            userConvs.map(c => ({
-              sessionId: c.id || `${u.email}::${c.title || 'untitled'}::${c.createdDateTime || ''}`,
-              title: c.title,
-              createdDateTime: c.createdDateTime,
-              payload: c,
-            }))
-          );
-          totalPersisted += r.inserted;
-        }
-        dbLog.info(`conversationStore.upsert — ${totalPersisted} conversations persisted at upload time for ${req.file.originalname}`);
-      } catch (persistErr) {
-        // Non-fatal: upload still succeeds even if DB write fails. Migration falls back to disk.
-        dbLog.warn(`conversationStore persist failed at upload (non-fatal): ${persistErr.message}`);
-      }
-
       const usersArr = users.map(u => ({ email: u.email, displayName: u.displayName, conversationCount: u.conversationCount }));
+      const { appUserId: _appUserId, googleEmail: _googleEmail, msEmail: _msEmail } = getWorkspaceContext(req);
       const uploadDoc = {
-        _id: uploadId, originalName: req.file.originalname || 'vault_export.zip',
-        uploadTime: new Date(),
-        extractPath: extractTo,   // kept for backward compat during Chunk 1; removed in Chunk 2
-        ingestBatchId,
-        conversationsPersisted: totalPersisted,
-        totalUsers: users.length,
+        _id: req.file.filename, originalName: req.file.originalname || 'vault_export.zip',
+        uploadTime: new Date(), extractPath: extractTo, totalUsers: users.length,
         totalConversations: users.reduce((s, u) => s + u.conversationCount, 0), users: usersArr,
         appUserId: _appUserId, googleEmail: _googleEmail, msEmail: _msEmail,
       };
       await db().collection('uploads').updateOne({ _id: uploadDoc._id }, { $set: uploadDoc }, { upsert: true });
-      dbLog.info(`uploads.upsert — ${uploadDoc.originalName} (${uploadDoc.totalUsers} users, ${uploadDoc.totalConversations} conversations, ${totalPersisted} in conversationStore)`);
+      dbLog.info(`uploads.upsert — ${uploadDoc.originalName} (${uploadDoc.totalUsers} users, ${uploadDoc.totalConversations} conversations)`);
       res.json({
         id: uploadDoc._id, original_name: uploadDoc.originalName, upload_time: uploadDoc.uploadTime.toISOString(),
         extract_path: extractTo, total_users: uploadDoc.totalUsers, total_conversations: uploadDoc.totalConversations,
-        conversations_persisted: totalPersisted,
-        ingest_batch_id: ingestBatchId,
         users: usersArr.map(u => ({ email: u.email, display_name: u.displayName, conversation_count: u.conversationCount }))
       });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -653,15 +601,17 @@ export function createG2CRouter(deps) {
     const doc = await db().collection('migrationWorkspaces').findOne({ _id: req.params.id, appUserId });
     if (!doc) return res.status(404).json({ error: 'Batch not found' });
     const users = doc.report?.users || [];
-    // Unified CSV columns across all 6 migration directions (mirrors C2G shape).
-    const header = 'Source Email,Destination Email,Status,Files Uploaded,Conversations,Errors,Error Message';
+    const isC2G = doc.migDir === 'copilot-gemini';
+    const customerName = doc.customerName || 'Gemini';
+    const destFor = (email, destEmail) => isC2G ? (destEmail || '') : `${email}/OneDrive/Notebooks/${customerName}/${customerName} Conversations`;
+    const header = isC2G ? 'Source Email,Destination Email,Status,Files Uploaded,Conversations,Errors,Error Message' : 'Email,Destination Path,Status,Pages Created,Conversations,Errors,Error Message';
     const rows = [header];
     users.forEach(u => {
-      const dest = u.destEmail || '';
+      const dest = destFor(u.email, u.destEmail);
       if (u.errors?.length > 0) {
-        u.errors.forEach(e => rows.push([u.email, dest, u.status, u.pages_created || 0, u.conversations_processed || 0, u.error_count || 0, e.error_message || ''].map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(',')));
+        u.errors.forEach(e => rows.push([u.email, dest, u.status, u.pages_created, u.conversations_processed, u.error_count, e.error_message || ''].map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(',')));
       } else {
-        rows.push([u.email, dest, u.status, u.pages_created || 0, u.conversations_processed || 0, u.error_count || 0, ''].map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(','));
+        rows.push([u.email, dest, u.status, u.pages_created, u.conversations_processed, u.error_count, ''].map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(','));
       }
     });
     res.setHeader('Content-Type', 'text/csv');
@@ -809,24 +759,12 @@ export function createG2CRouter(deps) {
 
     const batch_id = randomUUID();
     res.json({ started: true, batch_id });
-    const resumeContext = {
-      kind: 'g2c',
-      extract_path, tenant_id, customer_name, user_mappings,
-      dry_run, skip_followups, skip_ai_response,
-      from_date, to_date, upload_id,
-      appUserId, googleEmail, msEmail,
-    };
-    executeG2CMigration({ batchId: batch_id, startTime: new Date(), resumeContext, isResume: false }).catch(e => {
+    runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id, upload_id, appUserId, googleEmail, msEmail }).catch(e => {
       console.error('[G2C] runMigration unhandled error:', e.message);
     });
   });
 
-  async function executeG2CMigration({ batchId, startTime, resumeContext, isResume }) {
-    const { extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, upload_id, appUserId, googleEmail, msEmail } = resumeContext;
-    return runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id: batchId, upload_id, appUserId, googleEmail, msEmail, isResume, resumeContext, startTime });
-  }
-
-  async function runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id, upload_id, appUserId, googleEmail, msEmail, isResume = false, resumeContext = null, startTime: providedStartTime = null }) {
+  async function runMigration({ extract_path, tenant_id, customer_name, user_mappings, dry_run, skip_followups, skip_ai_response, from_date, to_date, batch_id, upload_id, appUserId, googleEmail, msEmail }) {
     logBuffers.set(appUserId, []);
     const batchId = batch_id || randomUUID();
     currentBatchId = batchId;
@@ -843,14 +781,10 @@ export function createG2CRouter(deps) {
 
     await db().collection('migrationWorkspaces').updateOne(
       { _id: batchId },
-      { $set: { migDir: 'gemini-copilot', customerName: customer_name, tenantId: tenant_id, startTime, status: 'running', dryRun: dry_run, uploadId: upload_id, appUserId, googleEmail, msEmail, lastHeartbeat: new Date(), ...(resumeContext ? { resumeContext } : {}), ...(isResume ? { resumedAt: new Date() } : {}) } },
+      { $set: { migDir: 'gemini-copilot', customerName: customer_name, tenantId: tenant_id, startTime, status: 'running', dryRun: dry_run, uploadId: upload_id, appUserId, googleEmail, msEmail } },
       { upsert: true }
     );
-    dbLog.info(`migrationWorkspaces.${isResume ? 'resume' : 'insert'} — batch ${batchId} status=running${isResume ? ' (AUTO-RESUMED)' : ''}`);
-
-    // Start heartbeat so the boot-time orphan detector knows this batch is alive
-    const { startHeartbeat, stopHeartbeat, loadConversationsFromStore, markUserPairMigrated, markUserPairFailed } = await import('../_shared/conversationStore.js');
-    const _heartbeatId = startHeartbeat(batchId);
+    dbLog.info(`migrationWorkspaces.insert — batch ${batchId} status=running`);
 
     const jobIds = {};
     if (!dry_run && Object.keys(user_mappings).length > 0) {
@@ -954,23 +888,8 @@ export function createG2CRouter(deps) {
         let pagesCreated = 0;
 
         try {
-          // Try to load from conversationStore FIRST (Chunk 2: DB-backed read).
-          // Falls back to disk-based reader if no rows found (legacy uploads).
-          const fromStore = await loadConversationsFromStore({
-            appUserId,
-            sourceEmail: gEmail,
-            uploadId: upload_id,
-            fromDate: from_date,
-            toDate: to_date,
-            includeMigrated: !isResume,  // resume skips already-migrated rows
-          });
-          if (fromStore && fromStore.length > 0) {
-            conversations = fromStore;
-            emit('info', `  Loaded ${conversations.length} conversations from conversationStore for ${gEmail}`);
-          } else {
-            conversations = await reader.loadUserConversations(gEmail, from_date, to_date);
-            emit('info', `  Loaded ${conversations.length} conversations (disk) for ${gEmail}`);
-          }
+          conversations = await reader.loadUserConversations(gEmail, from_date, to_date);
+          emit('info', `  Loaded ${conversations.length} conversations for ${gEmail}`);
 
           let googleClient = null;
           let fileCorrelator = null;
@@ -1128,19 +1047,11 @@ export function createG2CRouter(deps) {
 
           report.addUserResult({ email: m365Email, conversations: conversations.length, pagesCreated, visualAssetsFlagged: (visualReports[gEmail] || []).length, errors });
           await checkpoint.markComplete(gEmail);
-          // Mark conversationStore rows as migrated for this user pair
-          if (!dry_run) {
-            await markUserPairMigrated({ appUserId, uploadId: upload_id, batchId, sourceEmail: gEmail, destEmail: m365Email });
-          }
           emit('success', `  Done: ${pagesCreated}/${conversations.length} pages created for ${m365Email}`);
         } catch (err) {
           emit('error', `Fatal error for ${gEmail}: ${err.message}`);
           report.addUserResult({ email: m365Email, conversations: 0, pagesCreated: 0, visualAssetsFlagged: 0, errors: [{ error: err.message }] });
           progressErrors++;
-          // Mark conversationStore rows as failed
-          if (!dry_run) {
-            await markUserPairFailed({ appUserId, uploadId: upload_id, batchId, sourceEmail: gEmail, error: err.message });
-          }
         } finally {
           progressUsers++;
           progressPages += pagesCreated;
@@ -1269,7 +1180,6 @@ export function createG2CRouter(deps) {
       emit('done', `━━━ Migration complete! Reports saved. ━━━`, { batch_id: batchId });
       currentBatchId = null;
       _currentAppUserId = null;
-      stopHeartbeat(_heartbeatId);
     } catch (err) {
       console.error('[G2C] Migration failed:', err.message, err.stack);
       emit('error', `Migration failed: ${err.message}`);
@@ -1277,7 +1187,6 @@ export function createG2CRouter(deps) {
       dbLog.info(`migrationWorkspaces.update — batch ${batchId} status=failed`);
       currentBatchId = null;
       _currentAppUserId = null;
-      stopHeartbeat(_heartbeatId);
     }
     } catch (outerErr) {
       console.error('[G2C] Migration setup failed:', outerErr.message, outerErr.stack);
@@ -1285,7 +1194,6 @@ export function createG2CRouter(deps) {
       await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'gemini-copilot', status: 'failed', endTime: new Date(), error: outerErr.message } }).catch(() => {});
       currentBatchId = null;
       _currentAppUserId = null;
-      stopHeartbeat(_heartbeatId);
     }
   }
 
@@ -1521,8 +1429,6 @@ export function createG2CRouter(deps) {
       auditEmitter.off('event', onEvent);
     });
   });
-
-  router.executeG2CMigration = executeG2CMigration;
 
   return router;
 }

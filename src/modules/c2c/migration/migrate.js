@@ -247,46 +247,20 @@ export async function migrateC2CUserPair(
       return result;
     }
 
-    // 2. Fetch Copilot interactions for the source user.
-    //    DB-first: on retry, conversations already in DB — read from there.
-    let interactions = null;
-    if (runOpts?.batchId && runOpts?.appUserId && runOpts?.sourceEmail) {
-      try {
-        const { loadConversationsFromStore } = await import('../../_shared/conversationStore.js');
-        const fromStore = await loadConversationsFromStore({
-          appUserId: runOpts.appUserId,
-          sourceEmail: runOpts.sourceEmail,
-          batchId: runOpts.batchId,
-          fromDate: runOpts.fromDate,
-          toDate: runOpts.toDate,
-          includeMigrated: !runOpts?.isResume,
-        });
-        if (fromStore && fromStore.length > 0) {
-          // Flatten conversation payloads back to interactions array
-          interactions = [];
-          for (const conv of fromStore) {
-            if (conv.interactions && Array.isArray(conv.interactions)) {
-              interactions.push(...conv.interactions);
-            }
-          }
-          console.log(`[C2C] Loaded ${fromStore.length} conversations (${interactions.length} interactions) from conversationStore for ${sourceDisplayName}`);
-        }
-      } catch (_) { /* fall through to Graph fetch */ }
-    }
-    if (!interactions) {
-      try {
-        interactions = await fetchInteractionsWithToken(sourceToken, sourceUserId);
-      } catch (e) {
-        const msg = e.message || String(e);
-        if (msg.includes('Copilot license')) {
-          result.errors.push(`User does not have a valid M365 Copilot license.`);
-        } else if (msg.includes('403')) {
-          result.errors.push(`Access denied fetching Copilot data: ${msg}`);
-        } else {
-          result.errors.push(`Failed to fetch Copilot data: ${msg}`);
-        }
-        return result;
+    // 2. Fetch Copilot interactions for the source user
+    let interactions;
+    try {
+      interactions = await fetchInteractionsWithToken(sourceToken, sourceUserId);
+    } catch (e) {
+      const msg = e.message || String(e);
+      if (msg.includes('Copilot license')) {
+        result.errors.push(`User does not have a valid M365 Copilot license.`);
+      } else if (msg.includes('403')) {
+        result.errors.push(`Access denied fetching Copilot data: ${msg}`);
+      } else {
+        result.errors.push(`Failed to fetch Copilot data: ${msg}`);
       }
+      return result;
     }
 
     // 3. Date filter
@@ -307,36 +281,6 @@ export async function migrateC2CUserPair(
     if (sessions.size === 0) {
       result.errors.push('No Copilot conversations found for this user.');
       return result;
-    }
-
-    // Persist source conversations to conversationStore (additive, live runs only).
-    if (!runOpts.dryRun && runOpts.batchId && runOpts.appUserId) {
-      try {
-        const { persistSourceConversations, SOURCE_TYPE } = await import('../../_shared/conversationStore.js');
-        const conversationDocs = Array.from(sessions.entries()).map(([sid, items]) => ({
-          sessionId: sid,
-          title: items[0]?.responseEnvelope?.title || items[0]?.body?.content?.slice(0, 80) || 'Untitled Copilot conversation',
-          createdDateTime: items[0]?.createdDateTime,
-          payload: { interactions: items },
-        }));
-        await persistSourceConversations(
-          {
-            batchId: runOpts.batchId,
-            appUserId: runOpts.appUserId,
-            migDir: 'copilot-copilot',
-            sourceType: SOURCE_TYPE.GRAPH,
-            sourceTenantId,
-            sourceUserId,
-            sourceEmail: runOpts.sourceEmail || null,
-            sourceDisplayName,
-            destEmail: destUserEmail,
-            destTenantId,
-          },
-          conversationDocs
-        );
-      } catch (persistErr) {
-        console.warn(`[C2C] conversationStore persist (non-fatal): ${persistErr.message}`);
-      }
     }
 
     // 5. Dry run stops here — we have the counts

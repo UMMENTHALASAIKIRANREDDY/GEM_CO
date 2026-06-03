@@ -1150,49 +1150,19 @@ export async function migrateUserPair({
     console.log(`[Migration] Fetching Copilot data for userId="${sourceUserId}", displayName="${sourceDisplayName}"`);
 
     let interactions;
-    // DB-first: try to load previously-fetched conversations from conversationStore.
-    // For C2G this is used on RETRY — first run writes to DB, retry reads from DB.
-    let dbConversations = null;
-    if (opts?.batchId && opts?.appUserId && opts?.sourceEmail) {
-      try {
-        const { loadConversationsFromStore } = await import('../../_shared/conversationStore.js');
-        const fromStore = await loadConversationsFromStore({
-          appUserId: opts.appUserId,
-          sourceEmail: opts.sourceEmail,
-          batchId: opts.batchId,
-          fromDate: opts.fromDate,
-          toDate: opts.toDate,
-          includeMigrated: !opts?.isResume,
-        });
-        if (fromStore && fromStore.length > 0) {
-          dbConversations = fromStore;
-          console.log(`[Migration] Loaded ${fromStore.length} conversations from conversationStore for ${sourceDisplayName}`);
-          // Flatten back to interactions[] format that the rest of the code expects
-          // (each conv.payload contains { interactions: [...] })
-          interactions = [];
-          for (const conv of fromStore) {
-            if (conv.interactions && Array.isArray(conv.interactions)) {
-              interactions.push(...conv.interactions);
-            }
-          }
-        }
-      } catch (_) { /* fall through to Graph fetch */ }
-    }
-    if (!interactions) {
-      try {
-        interactions = await getCopilotInteractionsForUser(accessToken, sourceUserId, {});
-      } catch (fetchErr) {
-        const msg = fetchErr.message || String(fetchErr);
-        console.error(`[Migration] Failed to fetch for ${sourceDisplayName}: ${msg}`);
-        if (msg.includes("Copilot license")) {
-          result.errors.push(`User does not have a valid Microsoft 365 Copilot license. Please assign a Copilot license and wait 15-30 minutes for it to propagate.`);
-        } else if (msg.includes("403")) {
-          result.errors.push(`Access denied (403): ${msg}`);
-        } else {
-          result.errors.push(`Failed to fetch Copilot data: ${msg}`);
-        }
-        return result;
+    try {
+      interactions = await getCopilotInteractionsForUser(accessToken, sourceUserId, {});
+    } catch (fetchErr) {
+      const msg = fetchErr.message || String(fetchErr);
+      console.error(`[Migration] Failed to fetch for ${sourceDisplayName}: ${msg}`);
+      if (msg.includes("Copilot license")) {
+        result.errors.push(`User does not have a valid Microsoft 365 Copilot license. Please assign a Copilot license and wait 15-30 minutes for it to propagate.`);
+      } else if (msg.includes("403")) {
+        result.errors.push(`Access denied (403): ${msg}`);
+      } else {
+        result.errors.push(`Failed to fetch Copilot data: ${msg}`);
       }
+      return result;
     }
 
     console.log(`[Migration] Got ${interactions.length} interactions for ${sourceDisplayName}`);
@@ -1224,36 +1194,6 @@ export async function migrateUserPair({
     if (sessions.size === 0) {
       result.errors.push("No Copilot conversations found for this user.");
       return result;
-    }
-
-    // Persist Copilot interactions to conversationStore (additive).
-    // Each session becomes one row keyed by (batchId, sessionId).
-    if (opts?.batchId && opts?.appUserId) {
-      try {
-        const { persistSourceConversations, SOURCE_TYPE } = await import('../../_shared/conversationStore.js');
-        const conversationDocs = Array.from(sessions.entries()).map(([sid, items]) => ({
-          sessionId: sid,
-          title: items[0]?.responseEnvelope?.title || items[0]?.body?.content?.slice(0, 80) || 'Untitled Copilot conversation',
-          createdDateTime: items[0]?.createdDateTime,
-          payload: { interactions: items },
-        }));
-        await persistSourceConversations(
-          {
-            batchId: opts.batchId,
-            appUserId: opts.appUserId,
-            migDir: 'copilot-gemini',
-            sourceType: SOURCE_TYPE.GRAPH,
-            sourceTenantId: opts.sourceTenantId || null,
-            sourceUserId,
-            sourceEmail: opts.sourceEmail || null,
-            sourceDisplayName,
-            destEmail: destUserEmail,
-          },
-          conversationDocs
-        );
-      } catch (persistErr) {
-        console.warn(`[C2G] conversationStore persist (non-fatal): ${persistErr.message}`);
-      }
     }
 
     const auth = getServiceAccountAuth(destUserEmail);

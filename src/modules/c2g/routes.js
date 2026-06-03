@@ -89,44 +89,25 @@ export function createC2GRouter(deps) {
       const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
       const { pairs, folderName, dryRun, fromDate, toDate } = req.body;
       if (!pairs?.length) return res.status(400).json({ error: 'No user pairs provided' });
+      const isDryRun = dryRun === true;
+      const c2gFolderName = folderName || 'CopilotChats';
 
       res.json({ started: true });
 
       const batchId = `c2g_${Date.now()}`;
       const startTime = new Date();
-      const resumeContext = {
-        kind: 'c2g',
-        appUserId, googleEmail, msEmail,
-        pairs, folderName, dryRun, fromDate, toDate,
-      };
 
-      setImmediate(() => executeC2GMigration({ batchId, startTime, resumeContext, isResume: false }));
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // Callable from boot-time auto-resume. The body is the original /migrate
-  // setImmediate work, with all closures replaced by resumeContext fields.
-  async function executeC2GMigration({ batchId, startTime, resumeContext, isResume }) {
-    try {
-      const { appUserId, googleEmail, msEmail, pairs, folderName, dryRun, fromDate, toDate } = resumeContext;
-      const isDryRun = dryRun === true;
-      const c2gFolderName = folderName || 'CopilotChats';
-      {
+      setImmediate(async () => {
         let files = 0, errors = 0;
-        const { startHeartbeat, stopHeartbeat, markUserPairMigrated, markUserPairFailed } = await import('../_shared/conversationStore.js');
-        let _heartbeatId = null;
 
         // Create report doc in DB
         try {
           await db().collection('migrationWorkspaces').updateOne(
             { _id: batchId },
-            { $set: { migDir: 'copilot-gemini', customerName: c2gFolderName, tenantId: process.env.SOURCE_AZURE_TENANT_ID || process.env.C2G_AZURE_TENANT_ID || '', startTime, status: 'running', dryRun: isDryRun, direction: 'c2g', appUserId, googleEmail, msEmail, lastHeartbeat: new Date(), resumeContext, ...(isResume ? { resumedAt: new Date() } : {}) } },
+            { $set: { migDir: 'copilot-gemini', customerName: c2gFolderName, tenantId: process.env.SOURCE_AZURE_TENANT_ID || process.env.C2G_AZURE_TENANT_ID || '', startTime, status: 'running', dryRun: isDryRun, direction: 'c2g', appUserId, googleEmail, msEmail } },
             { upsert: true }
           );
-          dbLog.info(`migrationWorkspaces.${isResume ? 'resume' : 'insert'} — C2G batch ${batchId} status=running (${isResume ? 'AUTO-RESUMED' : `dryRun=${isDryRun}`})`);
-          _heartbeatId = startHeartbeat(batchId);
+          dbLog.info(`migrationWorkspaces.insert — C2G batch ${batchId} status=running (dryRun=${isDryRun})`);
         } catch (dbErr) { console.error('[C2G] DB insert error:', dbErr.message); }
 
         try {
@@ -291,7 +272,6 @@ export function createC2GRouter(deps) {
           const migOpts = { folderName: c2gFolderName };
           if (fromDate) migOpts.fromDate = fromDate;
           if (toDate) migOpts.toDate = toDate;
-          if (isResume) migOpts.isResume = true;
           const { migrateUserPair } = migModule;
           const results = [];
           const reportUsers = [];
@@ -307,14 +287,7 @@ export function createC2GRouter(deps) {
             c2gLog('info', `Processing: ${pair.sourceDisplayName} → ${pair.destUserEmail}`);
             const r = await migrateUserPair(
               { sourceUserId: pair.sourceUserId, sourceDisplayName: pair.sourceDisplayName, destUserEmail: pair.destUserEmail, userDelegatedToken },
-              {
-                ...migOpts,
-                // Context plumbed for conversationStore persistence
-                batchId,
-                appUserId,
-                sourceTenantId: process.env.SOURCE_AZURE_TENANT_ID || process.env.C2G_AZURE_TENANT_ID || null,
-                sourceEmail: pair.sourceEmail || pair.sourceDisplayName,
-              },
+              migOpts,
               ({ filesUploaded, convIdx, totalConvs }) => {
                 c2gLog('progress', JSON.stringify({ files: files + filesUploaded, errors, users: results.length, total: migPairs.length, convIdx, totalConvs }));
               }
@@ -331,15 +304,6 @@ export function createC2GRouter(deps) {
               files: r.files || [],
             };
             reportUsers.push(userReport);
-
-            // Mark conversationStore rows for this user pair (Graph source, batchId-based)
-            if (!isDryRun) {
-              if (userReport.status === 'failed') {
-                await markUserPairFailed({ appUserId, batchId, sourceEmail: userReport.email, error: (r.errors || [])[0] || 'unknown' });
-              } else {
-                await markUserPairMigrated({ appUserId, batchId, sourceEmail: userReport.email, destEmail: userReport.destEmail });
-              }
-            }
 
             if (r.errors?.length) {
               console.error(`[C2G] ${r.sourceDisplayName} errors:`, r.errors.join(' | '));
@@ -381,16 +345,12 @@ export function createC2GRouter(deps) {
           c2gLog('error', e.message || String(e));
           await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'copilot-gemini', status: 'failed', endTime: new Date(), error: e.message } }).catch(() => {});
           c2gLog('done', JSON.stringify({ files, errors, users: 0, batchId }));
-        } finally {
-          stopHeartbeat(_heartbeatId);
         }
-      }
+      });
     } catch (err) {
-      console.error('[C2G] executeC2GMigration top-level error:', err);
+      res.status(500).json({ error: err.message });
     }
-  }
-
-  router.executeC2GMigration = executeC2GMigration;
+  });
 
   return router;
 }

@@ -140,11 +140,6 @@ export function createC2CRouter(deps) {
         { $set: { consentState: 'revoked', revokedAt: new Date() } }
       );
       clearTenantToken(tenantId);
-      // ConversationStore: drop rows where this tenant was source OR destination
-      try {
-        const { deleteByTenant } = await import('../_shared/conversationStore.js');
-        await deleteByTenant(appUserId, tenantId);
-      } catch (e) { /* non-fatal */ }
       res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ error: e.message });
@@ -342,17 +337,23 @@ export function createC2CRouter(deps) {
       const batch = await db().collection('migrationWorkspaces').findOne({ _id: req.params.id, appUserId, migDir: 'copilot-copilot' });
       if (!batch) return res.status(404).json({ error: 'Batch not found' });
       const users = batch.users || batch.report?.users || [];
-      // Unified CSV columns across all 6 migration directions (mirrors C2G shape).
-      const rows = [['Source Email', 'Destination Email', 'Status', 'Files Uploaded', 'Conversations', 'Errors', 'Error Message']];
+      const customerName = batch.customerName || 'Copilot';
+      const sectionName = `${customerName} Conversations`;
+      // Destination Path = the OneNote section path for the destination user
+      const destPath = (destEmail) => destEmail
+        ? `${destEmail}/OneNote/Notebooks/${customerName}/${sectionName}`
+        : '';
+      const rows = [['Source Email', 'Destination Email', 'Destination Path', 'Status', 'Pages Created', 'Conversations', 'Errors', 'Error Message']];
       for (const u of users) {
+        const path = destPath(u.destEmail);
         const sourceEmail = u.email || '';
         const destEmail = u.destEmail || '';
         if (u.errors && u.errors.length > 0) {
           for (const e of u.errors) {
-            rows.push([sourceEmail, destEmail, u.status || '', u.pages_created || 0, u.conversations_processed || 0, u.error_count || 0, e.error_message || e.error || '']);
+            rows.push([sourceEmail, destEmail, path, u.status || '', u.pages_created || 0, u.conversations_processed || 0, u.error_count || 0, e.error_message || e.error || '']);
           }
         } else {
-          rows.push([sourceEmail, destEmail, u.status || '', u.pages_created || 0, u.conversations_processed || 0, u.error_count || 0, '']);
+          rows.push([sourceEmail, destEmail, path, u.status || '', u.pages_created || 0, u.conversations_processed || 0, u.error_count || 0, '']);
         }
       }
       const csv = rows.map(r => r.map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
@@ -408,55 +409,16 @@ export function createC2CRouter(deps) {
         ? { appUserId, accountId: resolvedDestAccountId, adminUserId: adminUserIdInDestTenant, adminEmail: adminEmailForGrant }
         : null;
 
+      const isDryRun = dryRun === true || dryRun === 'true';
+      const c2cFolderName = folderName || 'CopilotChats';
+
       res.json({ started: true });
 
       const batchId = `c2c_${Date.now()}`;
       const startTime = new Date();
-      const resumeContext = {
-        kind: 'c2c',
-        appUserId,
-        sourceTenantId, destTenantId,
-        pairs, folderName, dryRun, fromDate, toDate,
-        destAccountId: resolvedDestAccountId,
-      };
 
-      setImmediate(() => executeC2CMigration({ batchId, startTime, resumeContext, isResume: false, destDelegatedAuth }));
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  async function executeC2CMigration({ batchId, startTime, resumeContext, isResume, destDelegatedAuth: destDelegatedAuthOverride }) {
-    const { appUserId, sourceTenantId, destTenantId, pairs, folderName, dryRun, fromDate, toDate, destAccountId } = resumeContext;
-    const isDryRun = dryRun === true || dryRun === 'true';
-    const c2cFolderName = folderName || 'CopilotChats';
-
-    // On boot resume, re-resolve destDelegatedAuth from saved destAccountId.
-    // Microsoft session is restored during boot; if expired we still try and
-    // the underlying call will fail with a clear error.
-    let destDelegatedAuth = destDelegatedAuthOverride;
-    if (!destDelegatedAuth && destAccountId) {
-      let adminEmailForGrant = null;
-      let adminUserIdInDestTenant = null;
-      try {
-        const { getMsAccounts } = await import('../../core/auth/microsoft.js');
-        const accounts = getMsAccounts(appUserId) || [];
-        const adminAcct = accounts.find(a => a.accountId === destAccountId);
-        adminEmailForGrant = adminAcct?.email || null;
-      } catch {}
-      if (adminEmailForGrant && !isDryRun) {
-        try {
-          const { resolveAdminUserIdInTenant } = await import('./sitePermissions.js');
-          adminUserIdInDestTenant = await resolveAdminUserIdInTenant(destTenantId, adminEmailForGrant);
-        } catch {}
-      }
-      destDelegatedAuth = { appUserId, accountId: destAccountId, adminUserId: adminUserIdInDestTenant, adminEmail: adminEmailForGrant };
-    }
-
-    {
+      setImmediate(async () => {
         let files = 0, errors = 0;
-        const { startHeartbeat, stopHeartbeat, markUserPairMigrated, markUserPairFailed } = await import('../_shared/conversationStore.js');
-        let _heartbeatId = null;
         try {
           await db().collection('migrationWorkspaces').updateOne(
             { _id: batchId },
@@ -465,13 +427,10 @@ export function createC2CRouter(deps) {
               sourceTenantId, destTenantId, startTime, status: 'running',
               dryRun: isDryRun, appUserId,
               totalUsers: pairs.length, migratedConversations: 0, filesUploaded: 0, totalErrors: 0,
-              lastHeartbeat: new Date(),
-              resumeContext, ...(isResume ? { resumedAt: new Date() } : {}),
             }},
             { upsert: true }
           );
           dbLog.info(`migrationWorkspaces.insert — C2C batch ${batchId} status=running`);
-          _heartbeatId = startHeartbeat(batchId);
 
           // Pre-flight validator (only on dry-run; additive)
           if (isDryRun) {
@@ -559,16 +518,9 @@ export function createC2CRouter(deps) {
 
           const { migrateC2CUserPair } = await import('./migration/migrate.js');
           const reportUsers = [];
-          const runOpts = {
-            folderName: c2cFolderName,
-            dryRun: isDryRun,
-            // Context plumbed for conversationStore persistence
-            batchId,
-            appUserId,
-          };
+          const runOpts = { folderName: c2cFolderName, dryRun: isDryRun };
           if (fromDate) runOpts.fromDate = fromDate;
           if (toDate) runOpts.toDate = toDate;
-          if (isResume) runOpts.isResume = true;
 
           // Resolve source tenant display name for OneNote footers + folder name
           let sourceLabel = sourceTenantId;
@@ -583,10 +535,8 @@ export function createC2CRouter(deps) {
 
           for (const pair of migPairs) {
             c2cLog('info', `Processing: ${pair.sourceDisplayName} → ${pair.destUserEmail}`);
-            // Inject per-pair sourceEmail into runOpts for store persistence
-            const perPairRunOpts = { ...runOpts, sourceEmail: pair.sourceEmail || pair.sourceUpn || null };
             const r = await migrateC2CUserPair(
-              { ...pair, sourceLabel, runOpts: perPairRunOpts, destDelegatedAuth },
+              { ...pair, sourceLabel, runOpts, destDelegatedAuth },
               ({ pagesCreated, filesUploaded, convIdx, totalConvs }) => {
                 c2cLog('progress', JSON.stringify({
                   files: totalPages + (pagesCreated || 0),
@@ -612,15 +562,6 @@ export function createC2CRouter(deps) {
               files: r.pages || [],
             };
             reportUsers.push(userReport);
-
-            // Mark conversationStore rows for this user pair
-            if (!isDryRun) {
-              if (userReport.status === 'failed') {
-                await markUserPairFailed({ appUserId, batchId, sourceEmail: pair.sourceEmail, error: (r.errors || [])[0] || 'unknown' });
-              } else {
-                await markUserPairMigrated({ appUserId, batchId, sourceEmail: pair.sourceEmail, destEmail: pair.destUserEmail });
-              }
-            }
 
             if (r.errors?.length) {
               r.errors.forEach(err => c2cLog('warn', `${pair.sourceDisplayName}: ${err}`));
@@ -717,13 +658,12 @@ export function createC2CRouter(deps) {
           c2cLog('error', e.message || String(e));
           await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'copilot-copilot', status: 'failed', endTime: new Date(), error: e.message } }).catch(() => {});
           c2cLog('done', JSON.stringify({ files, errors, users: 0, batchId }));
-        } finally {
-          stopHeartbeat(_heartbeatId);
         }
-      }
-  }
-
-  router.executeC2CMigration = executeC2CMigration;
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
   return router;
 }
