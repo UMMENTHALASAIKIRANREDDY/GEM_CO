@@ -10,6 +10,64 @@ import { auditLog } from './auditLogger.js';
 const logger = getLogger('agent:loop');
 const MAX_ITERATIONS = 8;
 
+/**
+ * Generate 3 contextual quick-reply chips using a fast LLM call.
+ * Chips are based on the agent's last reply + current migration state.
+ * Falls back to defaultChips on any error so the main flow is never blocked.
+ */
+async function generateChips(agentReply, migrationState) {
+  const s = migrationState ?? {};
+  const stateCtx = [
+    `step=${s.step ?? 0}`,
+    `dir=${s.migDir || 'none'}`,
+    `google=${s.googleAuthed ? 'connected' : 'not connected'}`,
+    `ms=${s.msAuthed ? 'connected' : 'not connected'}`,
+    s.migDir === 'claude-gemini' ? `zip_users=${s.cl2g_upload_users ?? 0}` : null,
+    s.migDir === 'copilot-gemini' ? `mapped=${s.c2g_mappings_count ?? 0}` : null,
+    s.migDir === 'claude-gemini' ? `mapped=${s.cl2g_mappings_count ?? 0}` : null,
+    s.migDir === 'gemini-gemini' ? `mapped=${s.g2g_mappings_count ?? 0}` : null,
+    s.migDir === 'claude-copilot' ? `mapped=${s.cl2c_mappings_count ?? 0}` : null,
+    s.migDir === 'copilot-copilot' ? `mapped=${s.c2c_mappings_count ?? 0}` : null,
+    (s.migDone || s.c2g_done || s.cl2g_done || s.g2g_done || s.cl2c_done || s.c2c_done) ? 'migration=done' : null,
+    (s.live || s.c2g_live || s.cl2g_live || s.g2g_live || s.cl2c_live || s.c2c_live) ? 'migration=running' : null,
+  ].filter(Boolean).join(', ');
+
+  const snippet = (agentReply || '').slice(-300);
+
+  try {
+    const res = await callAI([
+      {
+        role: 'system',
+        content: `You generate exactly 3 short quick-reply chips for a migration assistant chat UI.
+Rules:
+- Each chip max 6 words, starts with a verb or noun (action-oriented)
+- Chips must directly follow up on what the assistant just said OR unblock the current step
+- Never repeat the agent's exact words
+- No generic chips like "What do I do next?" or "Tell me more"
+- Chips must be specific to the current migration state
+- Return ONLY a JSON array of 3 strings, nothing else. Example: ["Auto-map all users", "Upload Claude ZIP", "Start dry run"]`,
+      },
+      {
+        role: 'user',
+        content: `State: ${stateCtx}\nAssistant just said: "${snippet}"\n\nReturn 3 chips as JSON array:`,
+      },
+    ], null, { model: 'gpt-4.1-mini', maxTokens: 80 });
+
+    const raw = (res.content || '').trim();
+    // Extract JSON array from response (LLM sometimes wraps in markdown)
+    const match = raw.match(/\[[\s\S]*\]/);
+    if (match) {
+      const chips = JSON.parse(match[0]);
+      if (Array.isArray(chips) && chips.length > 0) {
+        return chips.slice(0, 4).map(c => String(c).trim()).filter(Boolean);
+      }
+    }
+  } catch (e) {
+    logger.warn(`[agentLoop] generateChips failed: ${e.message}`);
+  }
+  return null; // caller falls back to defaultChips
+}
+
 function defaultChips(migrationState) {
   // Alias so the various `state.foo ?? 0` reads below work without per-line refactor.
   const state = migrationState ?? {};
@@ -600,7 +658,10 @@ export async function runAgentLoop(req, res, { message, migrationState: _migrati
     }
 
     streamText(finalReply);
-    streamQuickReplies(defaultChips(migrationState));
+
+    // AI-generated chips — contextual to agent reply + state. Falls back to rule-based.
+    const aiChips = isSystemTrigger ? null : await generateChips(finalReply, migrationState);
+    streamQuickReplies(aiChips ?? defaultChips(migrationState));
 
     if (!isSystemTrigger) {
       await saveHistory(db, appUserId, 'user', message, migrationState?.migDir);
