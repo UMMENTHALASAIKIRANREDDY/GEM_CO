@@ -619,6 +619,8 @@ const StepDirection=({onSelect,onBack,googleAuthed,msAuthed,googleAccounts,msAcc
   if(multiMs){
     dirs.push({id:'copilot-copilot',label:'Copilot → Copilot',sub:'Microsoft 365 to Microsoft 365 (cross-tenant)',srcIcon:<MsIcon/>,tgtIcon:<MsIcon/>});
   }
+  // Gemini Insert is always available
+  dirs.push({id:'gemini-insert',label:'Insert to Gemini Chat',sub:'Import conversations into Gemini sidebar',srcIcon:<GoogleIcon/>,tgtIcon:<GoogleIcon/>});
   // Defensive dedup (multiGoogle + bothConnected etc. shouldn't collide today, but cheap insurance)
   const seenIds=new Set();
   const dedupedDirs=dirs.filter(d=>{if(seenIds.has(d.id))return false;seenIds.add(d.id);return true;});
@@ -2967,6 +2969,128 @@ const StepCL2GMigrate=({cl2gStats,cl2gDone,onRunAnother,onBack,onStart,cl2gLive,
 };
 
 /* ══════════════════════════════════════════ */
+/* ═══  GEMINI INSERT: OPTIONS STEP       ═══ */
+/* ══════════════════════════════════════════ */
+const StepGeminiInsertOptions=({giSampleConvs,setGiSampleConvs,onRun,onBack,googleAuthed,giResetProfile})=>{
+  const [convText,setConvText]=useState(giSampleConvs||'');
+  const [resetLoading,setResetLoading]=useState(false);
+  return(
+    <div className="fade-up" style={{padding:'0 2px'}}>
+      <div style={{fontWeight:700,fontSize:15,marginBottom:4,color:C.dark}}>Gemini Chat — Options</div>
+      <div style={{fontSize:12,color:C.muted,marginBottom:20}}>Conversations will be inserted directly into your Gemini sidebar. A browser window will open — sign in to Gemini if prompted.</div>
+
+      <div style={{marginBottom:16}}>
+        <div style={{fontSize:12,fontWeight:600,marginBottom:6,color:C.dark}}>Sample conversations (JSON)</div>
+        <div style={{fontSize:11,color:C.muted,marginBottom:8}}>
+          Paste a JSON array: <code style={{background:'#f1f5f9',padding:'1px 4px',borderRadius:3}}>{'[{"title":"...","messages":[{"role":"user","content":"..."},{"role":"assistant","content":"..."}]}]'}</code>
+        </div>
+        <textarea
+          value={convText}
+          onChange={e=>{setConvText(e.target.value);setGiSampleConvs(e.target.value);}}
+          rows={8}
+          placeholder='[{"title":"Cloud Storage","messages":[{"role":"user","content":"What is cloud storage?"},{"role":"assistant","content":"Cloud storage..."}]}]'
+          style={{width:'100%',border:`2px solid ${C.border}`,borderRadius:8,padding:'10px 12px',fontSize:12,fontFamily:'monospace',resize:'vertical',outline:'none',boxSizing:'border-box',transition:'border .2s'}}
+          onFocus={e=>e.target.style.borderColor=C.primary}
+          onBlur={e=>e.target.style.borderColor=C.border}
+        />
+      </div>
+
+      {!googleAuthed&&(
+        <div style={{background:'#FFF3CD',borderRadius:8,padding:'10px 14px',marginBottom:16,fontSize:12,color:'#856404'}}>
+          ⚠ Gemini sign-in happens in the browser window — you don't need Google OAuth here.
+        </div>
+      )}
+
+      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:20,padding:'10px 14px',background:C.tint,borderRadius:8,fontSize:12,color:C.primary}}>
+        <IcoInfo s={14}/> Browser will open. Sign in to Gemini if prompted, then migration runs automatically.
+      </div>
+
+      <div style={{display:'flex',gap:8,marginBottom:12}}>
+        <Btn onClick={()=>{
+          let convs=[];
+          try{convs=JSON.parse(convText||'[]');}catch{alert('Invalid JSON. Please fix the conversations JSON.');return;}
+          if(!convs.length){alert('No conversations to insert.');return;}
+          onRun(convs);
+        }} style={{flex:1,justifyContent:'center'}} disabled={!convText.trim()}>
+          <IcoRocket s={14}/>Start Gemini Insert
+        </Btn>
+        <Btn variant="ghost" onClick={onBack} style={{justifyContent:'center'}}>← Back</Btn>
+      </div>
+
+      <div style={{borderTop:`1px solid ${C.border}`,paddingTop:12,marginTop:4}}>
+        <div style={{fontSize:11,color:C.muted,marginBottom:8}}>Reset Gemini browser profile (forces re-login on next run):</div>
+        <TextBtn onClick={async()=>{
+          setResetLoading(true);
+          await fetch('/api/gemini-insert/profile',{method:'DELETE'}).catch(()=>{});
+          setResetLoading(false);
+          alert('Profile reset. Next run will prompt for Gemini sign-in.');
+        }} style={{fontSize:11,color:C.error}}>
+          {resetLoading?'Resetting...':'🗑 Reset Gemini Profile'}
+        </TextBtn>
+      </div>
+    </div>
+  );
+};
+
+/* ══════════════════════════════════════════ */
+/* ═══  GEMINI INSERT: MIGRATE STEP       ═══ */
+/* ══════════════════════════════════════════ */
+const StepGeminiInsertMigrate=({giStats,giDone,giLive,onRunAnother,onBack})=>{
+  const ring=giDone?100:giStats.total>0?Math.max(3,Math.min(Math.round((giStats.done/giStats.total)*100),99)):giLive?5:0;
+  return(
+    <div className="fade-up" style={{padding:'0 2px'}}>
+      {!giDone&&!giLive&&(
+        <div style={{textAlign:'center',padding:'30px 0',color:C.muted,fontSize:13}}>
+          <Spinner s={32}/><div style={{marginTop:12}}>Opening browser...</div>
+        </div>
+      )}
+      {!giDone&&giLive&&(
+        <div style={{textAlign:'center',padding:'20px 0'}}>
+          <div style={{position:'relative',display:'inline-flex',alignItems:'center',justifyContent:'center',width:80,height:80,marginBottom:16}}>
+            <svg width="80" height="80" viewBox="0 0 80 80" style={{position:'absolute',transform:'rotate(-90deg)'}}>
+              <circle cx="40" cy="40" r="34" fill="none" stroke={C.border} strokeWidth="6"/>
+              <circle cx="40" cy="40" r="34" fill="none" stroke={C.primary} strokeWidth="6" strokeDasharray={`${ring*2.136} 213.6`} strokeLinecap="round" style={{transition:'stroke-dasharray .5s ease'}}/>
+            </svg>
+            <div style={{fontSize:16,fontWeight:700,color:C.primary}}>{ring}%</div>
+          </div>
+          <div style={{fontSize:14,fontWeight:600,color:C.dark,marginBottom:4}}>Inserting into Gemini...</div>
+          <div style={{fontSize:12,color:C.muted}}>{giStats.done||0} of {giStats.total||0} conversations</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:16}}>
+            {[{label:'Inserted',val:giStats.inserted||0,c:'#20CC83'},{label:'Failed',val:giStats.failed||0,c:'#FF1F1F'}].map((e,i)=>(
+              <div key={i} style={{background:'white',borderRadius:10,padding:'10px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
+                <div style={{fontSize:20,fontWeight:700,color:e.c}}>{e.val}</div>
+                <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {giDone&&(
+        <>
+          <div style={{marginBottom:20,textAlign:'center'}}>
+            <div style={{display:'flex',justifyContent:'center',marginBottom:8,color:C.success}}><IcoDone s={48}/></div>
+            <div style={{fontSize:18,fontWeight:700,color:C.dark,marginBottom:4}}>Gemini Insert Complete!</div>
+            <div style={{fontSize:13,color:C.muted}}>Conversations now appear in your Gemini sidebar.</div>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:20}}>
+            {[{label:'Inserted',val:giStats.inserted||0,c:'#20CC83'},{label:'Failed',val:giStats.failed||0,c:'#FF1F1F'}].map((e,i)=>(
+              <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
+                <div style={{fontSize:22,fontWeight:700,color:e.c}}>{e.val}</div>
+                <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:16}}>
+            <Btn variant="ghost" onClick={onBack} style={{flex:'1 1 100px',justifyContent:'center'}}>← Options</Btn>
+            <Btn variant="ghost" onClick={()=>onRunAnother&&onRunAnother()} style={{flex:'1 1 120px',justifyContent:'center'}}>New Migration</Btn>
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
+/* ══════════════════════════════════════════ */
 /* ═══  CLAUDE→COPILOT: UPLOAD ZIP STEP   ═══ */
 /* ══════════════════════════════════════════ */
 const StepCL2CUpload=({cl2cUploadData,setCl2cUploadData,onNext,onBack,showToast,onUploadComplete})=>{
@@ -5124,6 +5248,12 @@ function App(){
   const [c2cDone,setC2cDone]=useState(()=>lsGet(LS_PREFS,{}).c2cDone||false);
   const [c2cLive,setC2cLive]=useState(false);
   const [c2cLastDry,setC2cLastDry]=useState(()=>lsGet(LS_PREFS,{}).c2cLastDry||false);
+  // Gemini Insert state
+  const [giSampleConvs,setGiSampleConvs]=useState('');
+  const [giStats,setGiStats]=useState({done:0,total:0,inserted:0,failed:0});
+  const [giDone,setGiDone]=useState(false);
+  const [giLive,setGiLive]=useState(false);
+  const runGiRef=useRef(null);
   const [chatGLoading,setChatGLoading]=useState(false);
   const [chatMLoading,setChatMLoading]=useState(false);
   const [chatUploading,setChatUploading]=useState(false);
@@ -6055,6 +6185,42 @@ function App(){
   },[c2cLive,c2cSelectedUsers,c2cMappings,c2cOptions,c2cConfig,msAccounts,addLog,addAgentMsg]);
   runC2CMigrationRef.current=runC2CMigration;
 
+  // Gemini Insert — POST conversations to /api/gemini-insert/migrate
+  const runGeminiInsert=useCallback(async(conversations)=>{
+    if(giLive)return;
+    setGiLive(true);setGiDone(false);setGiStats({done:0,total:conversations.length,inserted:0,failed:0});setStep(3);
+    // SSE log stream
+    if(sseRef.current)sseRef.current.close();
+    sseRef.current=new EventSource('/api/gemini-insert/log');
+    sseRef.current.onmessage=e=>{
+      try{
+        const d=JSON.parse(e.data);
+        if(d.type==='progress'){
+          const p=JSON.parse(d.message);
+          setGiStats(s=>({...s,done:p.done,total:p.total}));
+        } else if(d.type==='done'){
+          const p=JSON.parse(d.message);
+          setGiStats({done:p.total,total:p.total,inserted:p.inserted,failed:p.failed});
+          setGiDone(true);setGiLive(false);
+          sseRef.current?.close();sseRef.current=null;
+        } else if(d.type==='success'){
+          setGiStats(s=>({...s,inserted:s.inserted+1}));
+          addLog('success',d.message);
+        } else if(d.type==='warn'||d.type==='error'){
+          setGiStats(s=>({...s,failed:s.failed+1}));
+          addLog(d.type,d.message);
+        } else if(d.type==='info'){
+          addLog('info',d.message);
+        }
+      }catch{}
+    };
+    try{
+      const res=await fetch('/api/gemini-insert/migrate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({conversations})});
+      if(!res.ok){const d=await res.json().catch(()=>({}));addLog('error',d.error||`Failed (${res.status})`);setGiLive(false);}
+    }catch(err){addLog('error',err.message);setGiLive(false);}
+  },[giLive,addLog]);
+  runGiRef.current=runGeminiInsert;
+
   // When agent triggers start_migration, UI handles the actual execution (prevents double-migration)
   useEffect(()=>{
     if(!agentMigrationTrigger)return;
@@ -6080,6 +6246,7 @@ function App(){
     setG2gUploadData(null);setG2gConfig({gemName:'Gemini Conversations',sourceAccountId:'',destAccountId:''});setG2gMappings({});setG2gSelectedUsers(new Set());setG2gDone(false);setG2gStats({files:0,conversationCount:0,errors:0,users:0});
     setCl2cUploadData(null);setCl2cMappings({});setCl2cSelectedUuids(new Set());setCl2cDone(false);setCl2cStats({users:0,files:0,errors:0});setCl2cTotal(0);
     fetch('/api/g2g/session',{method:'DELETE'}).catch(()=>{});
+    setGiDone(false);setGiLive(false);setGiStats({done:0,total:0,inserted:0,failed:0});
     if(sseRef.current){sseRef.current.close();sseRef.current=null;}
     setLive(false);setC2gLive(false);setCl2gLive(false);setG2gLive(false);setCl2cLive(false);
   },[]);
@@ -6766,8 +6933,7 @@ function App(){
                   {step===1&&<StepDirection onSelect={dir=>{
                     setMigDir(dir);
                     const needsMs=dir==='gemini-copilot'||dir==='copilot-gemini'||dir==='claude-copilot';
-                    const needsGoogle=dir==='gemini-copilot'||dir==='copilot-gemini'||dir==='claude-gemini'||dir==='gemini-gemini';
-                    const missingGoogle=needsGoogle&&!googleAuthed;
+                    const missingGoogle=dir!=='gemini-insert'&&!googleAuthed;
                     const missingMs=needsMs&&!msAuthed;
                     if(missingGoogle||missingMs){
                       // Missing required auth — go back to connect clouds, agent will explain
@@ -6808,6 +6974,9 @@ function App(){
                   {step===3&&migDir==='copilot-copilot'&&<StepC2CUserMap c2cConfig={c2cConfig} c2cMappings={c2cMappings} setC2cMappings={setC2cMappings} c2cSelectedUsers={c2cSelectedUsers} setC2cSelectedUsers={setC2cSelectedUsers} onNext={()=>setStep(4)} onBack={()=>setStep(2)} showToast={showToast}/>}
                   {step===4&&migDir==='copilot-copilot'&&<StepC2COptions c2cConfig={c2cConfig} setC2cConfig={setC2cConfig} c2cOptions={c2cOptions} setC2cOptions={setC2cOptions} onRun={()=>{setStep(5);runC2CMigrationRef.current?.()}} onBack={()=>setStep(3)}/>}
                   {(step===5||step===6)&&migDir==='copilot-copilot'&&<StepC2CMigrate c2cStats={c2cStats} c2cDone={c2cDone} c2cLive={c2cLive} c2cTotal={c2cSelectedUsers.size} onRunAnother={()=>{setC2cDone(false);setC2cStats({users:0,files:0,errors:0,conversationCount:0});setC2cOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(4)} onChangeDirection={handleChangeDirection} lastRunWasDry={c2cLastDry} onStartLive={()=>runC2CMigration(true)}/>}
+                  {/* Gemini Insert steps */}
+                  {step===2&&migDir==='gemini-insert'&&<StepGeminiInsertOptions giSampleConvs={giSampleConvs} setGiSampleConvs={setGiSampleConvs} googleAuthed={googleAuthed} onRun={convs=>{runGiRef.current?.(convs);}} onBack={()=>setStep(1)} giResetProfile={()=>fetch('/api/gemini-insert/profile',{method:'DELETE'})}/>}
+                  {step===3&&migDir==='gemini-insert'&&<StepGeminiInsertMigrate giStats={giStats} giDone={giDone} giLive={giLive} onRunAnother={()=>{setGiDone(false);setGiStats({done:0,total:0,inserted:0,failed:0});setStep(2);}} onBack={()=>setStep(2)}/>}
                 </div>
               );
             })()}
@@ -6833,6 +7002,7 @@ function App(){
                     {migDir==='claude-gemini'&&<><ClaudeIcon/><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg><GoogleIcon/><span style={{fontSize:10,color:C.muted,marginLeft:2}}>Claude → Gemini</span></>}
                     {migDir==='gemini-gemini'&&<><GoogleIcon/><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg><GoogleIcon/><span style={{fontSize:10,color:C.muted,marginLeft:2}}>Google → Google</span></>}
                     {migDir==='claude-copilot'&&<><ClaudeIcon/><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.muted} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg><MsIcon/><span style={{fontSize:10,color:C.muted,marginLeft:2}}>Claude → Microsoft</span></>}
+                    {migDir==='gemini-insert'&&<><GoogleIcon/><span style={{fontSize:10,color:C.muted,marginLeft:2}}>Insert to Gemini Chat</span></>}
                   </div>}
                 </div>
               </div>
