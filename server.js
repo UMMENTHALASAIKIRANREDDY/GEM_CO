@@ -852,7 +852,10 @@ connectMongo().then(async () => {
   // the UI doesn't show "Running..." forever.
   try {
     const { detectAndMarkOrphanedBatches } = await import('./src/modules/_shared/conversationStore.js');
-    const { found } = await detectAndMarkOrphanedBatches({ cutoffMs: 60_000 });
+    // cutoffMs: 0 — on boot, ANY batch left in 'running' state is by definition
+    // orphaned (the previous process is gone). Using a >0 cutoff (e.g. 60s) means
+    // fast restarts skip resume entirely because the heartbeat is still fresh.
+    const { found } = await detectAndMarkOrphanedBatches({ cutoffMs: 0 });
     if (found > 0) console.log(`[startup] Marked ${found} orphaned migration batch(es) as failed`);
   } catch (e) {
     console.warn('[startup] Orphan-batch cleanup non-fatal:', e.message);

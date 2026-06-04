@@ -30,6 +30,29 @@ function formatTimestamp(iso) {
   } catch { return String(iso); }
 }
 
+/**
+ * fetch() with retry on 5xx responses (502 Bad Gateway, 503 Service Unavailable,
+ * 504 Gateway Timeout, 500 Internal Server Error). OneNote's Graph API is one of
+ * the flakier Microsoft endpoints — bursts of UnknownError + 504 are common
+ * when the destination user's mailbox region is busy. Microsoft's own SDK docs
+ * recommend retry-with-backoff for 5xx.
+ *
+ * 4xx responses are NOT retried (client errors won't get better with retries).
+ * Returns the last response regardless of success — caller still checks .ok.
+ */
+async function _fetchWithRetry(url, opts, label) {
+  let res;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    res = await fetch(url, opts);
+    if (res.ok) return res;
+    if (res.status < 500 || attempt === 3) return res;
+    const waitMs = Math.pow(3, attempt - 1) * 1000; // 1s, 3s, 9s
+    logger.warn(`${label}: HTTP ${res.status} — retry ${attempt}/3 in ${waitMs}ms`);
+    await new Promise(r => setTimeout(r, waitMs));
+  }
+  return res;
+}
+
 export class OneNotePagesCreator {
   /**
    * @param {string} destTenantId      Destination tenant GUID (kept for logging/back-compat)
@@ -104,11 +127,13 @@ export class OneNotePagesCreator {
       logger.info(`Created notebook "${notebookName}" for ${targetEmail}`);
     }
 
-    // Find or create section
+    // Find or create section (retry-with-backoff on 5xx — OneNote's API flakes
+    // intermittently with 504 / 503 / UnknownError when the mailbox region is busy)
     const filterSec = encodeURIComponent(`displayName eq '${sectionName}'`);
-    const secRes = await fetch(
+    const secRes = await _fetchWithRetry(
       `${GRAPH_BASE}/users/${encodeURIComponent(targetEmail)}/onenote/notebooks/${notebook.id}/sections?$filter=${filterSec}`,
-      { headers }
+      { headers },
+      `[onenote] lookup section "${sectionName}" for ${targetEmail}`
     );
     let section = null;
     if (secRes.ok) {
@@ -117,17 +142,24 @@ export class OneNotePagesCreator {
     }
 
     if (!section) {
-      const createSec = await fetch(
+      const createSec = await _fetchWithRetry(
         `${GRAPH_BASE}/users/${encodeURIComponent(targetEmail)}/onenote/notebooks/${notebook.id}/sections`,
         {
           method: 'POST',
           headers: { ...headers, 'Content-Type': 'application/json' },
           body: JSON.stringify({ displayName: sectionName }),
-        }
+        },
+        `[onenote] create section "${sectionName}" for ${targetEmail}`
       );
       if (!createSec.ok) {
         const err = await createSec.text();
-        throw new Error(`Cannot create section for ${targetEmail}: ${createSec.status} — ${err.slice(0, 200)}`);
+        // After 3 retries, surface a clearer error message so the operator knows
+        // this was a transient OneNote/Graph backend issue (likely retryable in
+        // a few minutes), not a permission or data problem.
+        const hint = createSec.status >= 500
+          ? ' (OneNote API transient error — retry the migration in a few minutes)'
+          : '';
+        throw new Error(`Cannot create section for ${targetEmail}: ${createSec.status}${hint} — ${err.slice(0, 200)}`);
       }
       section = await createSec.json();
       logger.info(`Created section "${sectionName}" for ${targetEmail}`);

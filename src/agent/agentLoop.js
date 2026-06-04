@@ -141,12 +141,38 @@ function defaultChips(migrationState) {
     return ['Show me my connected Google accounts', 'Help me pick source and destination'];
   };
 
-  /** C2C extra step — Pick consented source + destination tenants. */
+  /** C2C extra step — Pick consented source + destination tenants.
+   *  IMPORTANT distinction:
+   *    - msAccountsList = tenants the admin has CONSENTED to (via /api/c2c admin-consent)
+   *    - sourceId / destId  = which two of those tenants the user has PICKED for this migration
+   *  Showing "Grant consent" when 2+ tenants are already consented just confuses the user.
+   */
   const c2cTenantChips = (sourceId, destId) => {
+    const tenants = Array.isArray(state.msAccountsList) ? state.msAccountsList : [];
+    const consentedCount = tenants.length;
+
+    // Both picked → ready to move on
     if (sourceId && destId) return ['Continue to Map Users', 'Change source tenant', 'Change destination tenant'];
-    if (sourceId && !destId) return ['Grant consent for destination tenant', 'Show me consented tenants'];
-    if (!sourceId && destId) return ['Grant consent for source tenant', 'Show me consented tenants'];
-    return ['Grant consent for source tenant', 'Grant consent for destination tenant', 'Show me consented tenants'];
+
+    // Not enough tenants consented yet — point user back to Step 0 to add more.
+    if (consentedCount < 2) return ['Connect another Microsoft 365 tenant', 'Show me consented tenants'];
+
+    // 2+ consented but selection incomplete. Offer source/dest picks from real
+    // consented emails so the user can click directly. Falls back to a generic
+    // prompt if we don't have enough emails to construct labels.
+    const labelOf = (idx) => tenants[idx]?.email || tenants[idx]?.displayName || `Tenant ${idx + 1}`;
+    if (consentedCount >= 2) {
+      // If exactly one side is picked, ask the user to pick the other.
+      if (sourceId && !destId) return [`Use ${labelOf(0)} as destination`, `Use ${labelOf(1)} as destination`, 'Show me consented tenants'];
+      if (!sourceId && destId) return [`Use ${labelOf(0)} as source`, `Use ${labelOf(1)} as source`, 'Show me consented tenants'];
+      // Neither side picked — offer the two natural orderings of the first two tenants.
+      return [
+        `${labelOf(0)} as source, ${labelOf(1)} as destination`,
+        `${labelOf(1)} as source, ${labelOf(0)} as destination`,
+        'Show me consented tenants',
+      ];
+    }
+    return ['Show me consented tenants', 'Help me pick source and destination'];
   };
 
   /**
@@ -553,8 +579,13 @@ export async function runAgentLoop(req, res, { message, migrationState: _migrati
           migrationState = { ...migrationState, step: toolArgs.step };
         }
 
-        // Feed result back to AI
-        messages.push({ role: 'assistant', tool_calls: aiMsg.tool_calls });
+        // Feed result back to AI. Only include the tool_call we actually executed —
+        // if the LLM returned multiple parallel tool_calls, we'd otherwise push
+        // them ALL into history but only reply to the first, leaving the rest
+        // orphaned, which makes the next OpenAI call fail with a 400
+        // ("tool_call_id without response messages"). The model will retry any
+        // skipped tool calls on the next iteration anyway.
+        messages.push({ role: 'assistant', tool_calls: [call] });
         messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
         continue;
       }

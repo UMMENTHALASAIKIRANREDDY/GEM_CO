@@ -652,21 +652,11 @@ export function createG2CRouter(deps) {
     const { appUserId } = getWorkspaceContext(req);
     const doc = await db().collection('migrationWorkspaces').findOne({ _id: req.params.id, appUserId });
     if (!doc) return res.status(404).json({ error: 'Batch not found' });
-    const users = doc.report?.users || [];
-    // Unified CSV columns across all 6 migration directions (mirrors C2G shape).
-    const header = 'Source Email,Destination Email,Status,Files Uploaded,Conversations,Errors,Error Message';
-    const rows = [header];
-    users.forEach(u => {
-      const dest = u.destEmail || '';
-      if (u.errors?.length > 0) {
-        u.errors.forEach(e => rows.push([u.email, dest, u.status, u.pages_created || 0, u.conversations_processed || 0, u.error_count || 0, e.error_message || ''].map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(',')));
-      } else {
-        rows.push([u.email, dest, u.status, u.pages_created || 0, u.conversations_processed || 0, u.error_count || 0, ''].map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(','));
-      }
-    });
-    res.setHeader('Content-Type', 'text/csv');
+    const { buildBatchCsv } = await import('../_shared/csvExport.js');
+    const csv = buildBatchCsv(doc);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="batch_${req.params.id}.csv"`);
-    res.send(rows.join('\n'));
+    res.send(csv);
   });
 
   router.get('/reports/:id/errors', async (req, res) => {

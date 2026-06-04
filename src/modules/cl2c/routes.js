@@ -382,6 +382,21 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
             dbLog.info(`[CL2C] ${r.sourceDisplayName} → ${pair.destEmail}: ${r.filesUploaded} pages created, ${r.errors.length} error(s)`);
             cl2cLog(status === 'failed' ? 'warn' : 'success', `${r.sourceDisplayName} → ${pair.destEmail}: ${r.filesUploaded} pages, ${r.errors.length} error(s)`);
             cl2cLog('progress', JSON.stringify({ files, errors, users: reportUsers.length, total: pairs.length }));
+
+            // Incremental progress write — Reports polling sees live progress.
+            await db().collection('migrationWorkspaces').updateOne(
+              { _id: batchId },
+              {
+                $set: {
+                  progressUsers: reportUsers.length,
+                  progressPages: files,
+                  progressConversations: reportUsers.reduce((s, u) => s + (u.conversations_processed || 0), 0),
+                  progressErrors: errors,
+                  users: reportUsers,
+                  lastProgressAt: new Date(),
+                },
+              }
+            ).catch(() => {});
           }
 
           const finalStatus = errors > 0 && files === 0 ? 'failed' : 'completed';

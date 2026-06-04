@@ -517,7 +517,7 @@ ${migDir === 'copilot-copilot' && !msAuthed ? `- 📌 **C2C consent is PERSISTEN
 ${isRunning ? `⚠️ Migration is ACTIVELY RUNNING. Stats above may lag behind — read the recent logs below for live progress. Parse log lines like "X files uploaded" or "user → dest: N files" to give an accurate status update.` : ''}
 ${logsSection}
 ## Auth Gate (CRITICAL)
-${buildAuthGateSection({ migDir, googleAuthed, msAuthed, step, live, c2g_live, cl2g_live, g2g_live, cl2c_live, c2c_live, migDone, c2g_done, cl2g_done, g2g_done, cl2c_done, c2c_done, c2c_source_tenant_id, c2c_dest_tenant_id })}
+${buildAuthGateSection({ migDir, googleAuthed, msAuthed, step, live, c2g_live, cl2g_live, g2g_live, cl2c_live, c2c_live, migDone, c2g_done, cl2g_done, g2g_done, cl2c_done, c2c_done, c2c_source_tenant_id, c2c_dest_tenant_id, msAccountsList })}
 
 ## Tool Rules — follow exactly, no exceptions
 
@@ -651,18 +651,37 @@ If the user repeats the same question or you've given the same answer 2+ times, 
 - "I'll" is fine when explaining an action ("I'll run a dry run first"). The "never start with I" rule applies to robotic openers like "I am here to help" — vary your openers, but don't twist sentences awkwardly to avoid "I'll"`;
 }
 
-function buildAuthGateSection({ migDir, googleAuthed, msAuthed, step, live, c2g_live, cl2g_live, g2g_live, cl2c_live, c2c_live, migDone, c2g_done, cl2g_done, g2g_done, cl2c_done, c2c_done, c2c_source_tenant_id, c2c_dest_tenant_id }) {
+function buildAuthGateSection({ migDir, googleAuthed, msAuthed, step, live, c2g_live, cl2g_live, g2g_live, cl2c_live, c2c_live, migDone, c2g_done, cl2g_done, g2g_done, cl2c_done, c2c_done, c2c_source_tenant_id, c2c_dest_tenant_id, msAccountsList = [] }) {
   if (!migDir) return 'No direction selected — auth gate not applicable yet.';
 
-  // C2C uses per-tenant admin consent — no user OAuth required. Its "auth" is
-  // having source AND destination tenants consented (tenant IDs set).
+  // C2C uses per-tenant admin consent — no user OAuth required.
+  // IMPORTANT distinction:
+  //   - CONSENTED tenants = entries in `msAccountsList` (admin signed in via /api/c2c admin-consent flow).
+  //   - SELECTED tenants  = which two of those are picked as source/dest (c2c_source_tenant_id / c2c_dest_tenant_id).
+  // These are different states. Earlier the gate conflated them, which caused
+  // the agent to call `initiate_tenant_consent` when 2 tenants were ALREADY
+  // consented but the user just hadn't picked source vs dest yet.
   if (migDir === 'copilot-copilot') {
-    const haveBoth = !!c2c_source_tenant_id && !!c2c_dest_tenant_id;
-    if (haveBoth) return `✅ Both Copilot tenants consented for cross-tenant migration. Proceed normally. (No user OAuth needed for C2C.)`;
+    const consentedCount = (msAccountsList || []).length;
+    const haveBothSelected = !!c2c_source_tenant_id && !!c2c_dest_tenant_id;
+
+    if (haveBothSelected) {
+      return `✅ Both Copilot tenants consented AND picked as source/dest. Proceed normally. (No user OAuth needed for C2C.)`;
+    }
+
+    if (consentedCount < 2) {
+      // Genuine "need more consents" state
+      const needed = 2 - consentedCount;
+      return `⚠️ C2C needs TWO consented Microsoft tenants. Currently ${consentedCount} consented. Use \`initiate_tenant_consent({role:"source"})\` (or "destination") ${needed} more time${needed === 1 ? '' : 's'} to open the Microsoft admin-consent popup. Do NOT tell the user to "Connect Microsoft 365" — C2C is consent-based, not OAuth-based.`;
+    }
+
+    // consentedCount >= 2 but source/dest not yet picked. This is the case
+    // where the LLM should call `select_c2c_tenants`, NOT `initiate_tenant_consent`.
+    const tenantList = (msAccountsList || []).map(a => `• ${a.email || a.displayName} (tenantId: ${a.tenantId})`).join('\n  ');
     const missing = [];
-    if (!c2c_source_tenant_id) missing.push('source tenant');
-    if (!c2c_dest_tenant_id)   missing.push('destination tenant');
-    return `⚠️ C2C tenant consent missing: ${missing.join(' and ')}. Use \`initiate_tenant_consent({role:"source"|"destination"})\` to open the Microsoft admin-consent popup, then \`select_c2c_tenants({sourceTenantId, destTenantId})\` once both are granted. Do NOT tell the user to "Connect Microsoft 365" — C2C is consent-based, not OAuth-based.`;
+    if (!c2c_source_tenant_id) missing.push('source');
+    if (!c2c_dest_tenant_id)   missing.push('destination');
+    return `✅ ${consentedCount} Microsoft tenants consented. ⚠️ User has not yet picked ${missing.join(' and ')}. Tenants available:\n  ${tenantList}\n\nAsk the user which tenant should be the source and which the destination. When they answer, call \`select_c2c_tenants({sourceTenantId, destTenantId})\` with the literal \`tenantId\` values from the list above — NEVER call \`initiate_tenant_consent\` in this state (consent is already done).`;
   }
 
   const needsMs = migDir === 'gemini-copilot' || migDir === 'copilot-gemini' || migDir === 'claude-copilot';

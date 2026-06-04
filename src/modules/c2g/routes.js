@@ -361,6 +361,23 @@ export function createC2GRouter(deps) {
             errors += (r.errors || []).length;
             c2gLog(r.errors?.length ? 'warn' : 'success', `${r.sourceDisplayName} → ${r.destUserEmail}: ${r.filesUploaded || 0} files uploaded, ${(r.errors||[]).length} error(s)`);
             c2gLog('progress', JSON.stringify({ files, errors, users: results.length, total: migPairs.length }));
+
+            // Incremental progress write so the Reports panel (polling every 3s)
+            // sees how many users + files + conversations have been migrated so
+            // far, instead of staying at 0 until the entire batch finishes.
+            await db().collection('migrationWorkspaces').updateOne(
+              { _id: batchId },
+              {
+                $set: {
+                  progressUsers: reportUsers.length,
+                  progressPages: files,
+                  progressConversations: reportUsers.reduce((s, u) => s + (u.conversations_processed || 0), 0),
+                  progressErrors: errors,
+                  users: reportUsers,
+                  lastProgressAt: new Date(),
+                },
+              }
+            ).catch(() => {});
           }
 
           const reportUpdate = {

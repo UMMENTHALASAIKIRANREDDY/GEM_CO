@@ -975,7 +975,13 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
 
   const allUsers=uploadData?.users||[];
   const users=csvEmails ? allUsers.filter(u=>csvEmails.includes((u.email||'').toLowerCase())) : allUsers;
-  const filtered=users.filter(u=>{const q=search.toLowerCase();return u.email.toLowerCase().includes(q)||(mappings[u.email]||'').toLowerCase().includes(q)}).sort((a,b)=>{const ma=!!mappings[a.email],mb=!!mappings[b.email];if(ma!==mb)return ma?-1:1;return a.email.localeCompare(b.email)});
+  const filtered=users.filter(u=>{const q=search.toLowerCase();return u.email.toLowerCase().includes(q)||(mappings[u.email]||'').toLowerCase().includes(q)}).sort((a,b)=>{
+    // Priority: selected (2) > mapped only (1) > neither (0). Within tier, alphabetical.
+    const aP=(selectedUsers.has(a.email)?2:0)+(mappings[a.email]?1:0);
+    const bP=(selectedUsers.has(b.email)?2:0)+(mappings[b.email]?1:0);
+    if(aP!==bP)return bP-aP;
+    return a.email.localeCompare(b.email);
+  });
   const toggleUser=e=>setSelectedUsers(p=>{const n=new Set(p);n.has(e)?n.delete(e):n.add(e);return n});
   const toggleAll=()=>{if(selectedUsers.size===users.length)setSelectedUsers(new Set());else setSelectedUsers(new Set(users.map(u=>u.email)))};
   const autoMapped=users.filter(u=>!!mappings[u.email]).length;
@@ -1934,7 +1940,14 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
   };
 
   const displayUsers=csvEmails?msUsers.filter(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();return csvEmails.includes(em)}):msUsers;
-  const filtered=displayUsers.filter(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();const q=search.toLowerCase();return em.includes(q)||(c2gMappings[em]||'').toLowerCase().includes(q)}).sort((a,b)=>{const ea=(a.mail||a.userPrincipalName||'').toLowerCase(),eb=(b.mail||b.userPrincipalName||'').toLowerCase();const ma=!!c2gMappings[ea],mb=!!c2gMappings[eb];if(ma!==mb)return ma?-1:1;return ea.localeCompare(eb)});
+  const filtered=displayUsers.filter(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();const q=search.toLowerCase();return em.includes(q)||(c2gMappings[em]||'').toLowerCase().includes(q)}).sort((a,b)=>{
+    const ea=(a.mail||a.userPrincipalName||'').toLowerCase(),eb=(b.mail||b.userPrincipalName||'').toLowerCase();
+    // Priority: selected (2) > mapped only (1) > neither (0).
+    const aP=(c2gSelectedUsers.has(ea)?2:0)+(c2gMappings[ea]?1:0);
+    const bP=(c2gSelectedUsers.has(eb)?2:0)+(c2gMappings[eb]?1:0);
+    if(aP!==bP)return bP-aP;
+    return ea.localeCompare(eb);
+  });
   const toggleUser=e=>setC2gSelectedUsers(p=>{const n=new Set(p);n.has(e)?n.delete(e):n.add(e);return n});
   const autoMapped=displayUsers.filter(u=>!!c2gMappings[u.mail||u.userPrincipalName||'']).length;
   const unmapped=displayUsers.filter(u=>!c2gMappings[u.mail||u.userPrincipalName||'']).length;
@@ -2413,7 +2426,12 @@ const StepCL2GMap=({cl2gUploadData,googleUsers,cl2gMappings,setCl2gMappings,cl2g
   const filtered=displayUsers.filter(u=>{
     const q=search.toLowerCase();
     return (u.full_name||'').toLowerCase().includes(q)||(u.email_address||'').toLowerCase().includes(q)||(cl2gMappings[u.uuid]||'').toLowerCase().includes(q);
-  }).sort((a,b)=>{const ma=!!cl2gMappings[a.uuid],mb=!!cl2gMappings[b.uuid];if(ma!==mb)return ma?-1:1;return (a.email_address||'').localeCompare(b.email_address||'')});
+  }).sort((a,b)=>{
+    const aP=(cl2gSelectedUuids.has(a.uuid)?2:0)+(cl2gMappings[a.uuid]?1:0);
+    const bP=(cl2gSelectedUuids.has(b.uuid)?2:0)+(cl2gMappings[b.uuid]?1:0);
+    if(aP!==bP)return bP-aP;
+    return (a.email_address||'').localeCompare(b.email_address||'');
+  });
 
   const toggleUser=uuid=>setCl2gSelectedUuids(p=>{const n=new Set(p);n.has(uuid)?n.delete(uuid):n.add(uuid);return n});
   const autoMapped=displayUsers.filter(u=>!!cl2gMappings[u.uuid]).length;
@@ -3142,7 +3160,12 @@ const StepCL2CMap=({cl2cUploadData,msUsers,cl2cMappings,setCl2cMappings,cl2cSele
   const filtered=displayUsers.filter(u=>{
     const q=search.toLowerCase();
     return (u.full_name||'').toLowerCase().includes(q)||(u.email_address||'').toLowerCase().includes(q)||(cl2cMappings[u.uuid]||'').toLowerCase().includes(q);
-  }).sort((a,b)=>{const ma=!!cl2cMappings[a.uuid],mb=!!cl2cMappings[b.uuid];if(ma!==mb)return ma?-1:1;return (a.email_address||'').localeCompare(b.email_address||'')});
+  }).sort((a,b)=>{
+    const aP=(cl2cSelectedUuids.has(a.uuid)?2:0)+(cl2cMappings[a.uuid]?1:0);
+    const bP=(cl2cSelectedUuids.has(b.uuid)?2:0)+(cl2cMappings[b.uuid]?1:0);
+    if(aP!==bP)return bP-aP;
+    return (a.email_address||'').localeCompare(b.email_address||'');
+  });
 
   const toggleUser=uuid=>setCl2cSelectedUuids(p=>{const n=new Set(p);n.has(uuid)?n.delete(uuid):n.add(uuid);return n});
   const autoMapped=displayUsers.filter(u=>!!cl2cMappings[u.uuid]).length;
@@ -3725,6 +3748,14 @@ const StepC2CUserMap=({c2cConfig,c2cMappings,setC2cMappings,c2cSelectedUsers,set
     const em=u.mail||u.userPrincipalName||'';
     const q=search.toLowerCase();
     return em.toLowerCase().includes(q)||(u.displayName||'').toLowerCase().includes(q)||(c2cMappings[em.toLowerCase()]||'').toLowerCase().includes(q);
+  }).sort((a,b)=>{
+    // Priority: selected (2) > mapped only (1) > neither (0). Within tier, alphabetical.
+    const ea=(a.mail||a.userPrincipalName||'').toLowerCase();
+    const eb=(b.mail||b.userPrincipalName||'').toLowerCase();
+    const aP=(c2cSelectedUsers.has(a.mail||a.userPrincipalName)?2:0)+(c2cMappings[ea]?1:0);
+    const bP=(c2cSelectedUsers.has(b.mail||b.userPrincipalName)?2:0)+(c2cMappings[eb]?1:0);
+    if(aP!==bP)return bP-aP;
+    return ea.localeCompare(eb);
   });
   const mappedCount=srcUsers.filter(u=>!!c2cMappings[(u.mail||u.userPrincipalName||'').toLowerCase()]).length;
   const unmapped=srcUsers.length-mappedCount;
@@ -3860,20 +3891,28 @@ const StepC2COptions=({c2cConfig,setC2cConfig,c2cOptions,setC2cOptions,onRun,onB
 
 /* Step: Migration progress + completion */
 const StepC2CMigrate=({c2cStats,c2cDone,c2cLive,onRunAnother,onBack,onChangeDirection,lastRunWasDry,onStartLive,c2cTotal})=>{
+  // Monotonic overall-progress ring. Same pattern we use for C2G:
+  //   completed users contribute their full slot (per = 100/total)
+  //   the current user's slot fills based on convIdx/totalConvs
+  // The previous formula capped at 80% for single-user runs because it
+  // estimated partial progress from file count and saturated the
+  // "0.8 * per" cap. With real convIdx/totalConvs we can go up to ~99%
+  // before the done event fires.
   const target=useMemo(()=>{
     if(c2cDone)return 100;
     const users=c2cStats?.users||0;
     const files=c2cStats?.files||0;
+    const convIdx=c2cStats?.convIdx||0;
+    const totalConvs=c2cStats?.totalConvs||0;
     if(c2cTotal>0){
       const per=100/c2cTotal;
-      const done=Math.min(users,c2cTotal)*per;
-      const curFiles=Math.max(0,files-users);
-      const partial=Math.min(curFiles*0.25,0.8)*per;
-      return Math.min(98,Math.round(done+partial));
+      const completedPct=Math.min(users,c2cTotal)*per;
+      const currentFrac=totalConvs>0?Math.min(convIdx/totalConvs,0.95):0;
+      return Math.min(99,Math.round(completedPct+currentFrac*per));
     }
     if(files>0||users>0)return Math.min(70,Math.round(5+files*2));
     return c2cLive?5:0;
-  },[c2cDone,c2cStats?.users,c2cStats?.files,c2cTotal,c2cLive]);
+  },[c2cDone,c2cStats?.users,c2cStats?.files,c2cStats?.convIdx,c2cStats?.totalConvs,c2cTotal,c2cLive]);
 
   const [displayRing,setDisplayRing]=useState(c2cDone?100:0);
   useEffect(()=>{
@@ -4364,7 +4403,12 @@ const StepG2GMap=({g2gUploadData,g2gConfig,g2gMappings,setG2gMappings,g2gSelecte
     showToast(count>0?`Auto-mapped ${count} user(s).`:'No new auto-mappings found.');
   };
 
-  const filtered=users.filter(u=>{const q=search.toLowerCase();return u.email.toLowerCase().includes(q)||(g2gMappings[u.email]||'').toLowerCase().includes(q)||(u.display_name||'').toLowerCase().includes(q)}).sort((a,b)=>{const ma=!!g2gMappings[a.email],mb=!!g2gMappings[b.email];if(ma!==mb)return ma?-1:1;return a.email.localeCompare(b.email)});
+  const filtered=users.filter(u=>{const q=search.toLowerCase();return u.email.toLowerCase().includes(q)||(g2gMappings[u.email]||'').toLowerCase().includes(q)||(u.display_name||'').toLowerCase().includes(q)}).sort((a,b)=>{
+    const aP=(g2gSelectedUsers.has(a.email)?2:0)+(g2gMappings[a.email]?1:0);
+    const bP=(g2gSelectedUsers.has(b.email)?2:0)+(g2gMappings[b.email]?1:0);
+    if(aP!==bP)return bP-aP;
+    return a.email.localeCompare(b.email);
+  });
   const autoMapped=users.filter(u=>!!g2gMappings[u.email]).length;
   const unmapped=users.filter(u=>!g2gMappings[u.email]).length;
   const toggleUser=e=>{const n=new Set(g2gSelectedUsers);n.has(e)?n.delete(e):n.add(e);setG2gSelectedUsers(n);};
@@ -4814,9 +4858,13 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
                       {(r.direction==='c2c'||r.direction==='copilot-copilot'||r.migDir==='copilot-copilot')&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#FEE2E2',color:'#991B1B',fontWeight:600}}>C2C</span>}
                       {(!r.direction||r.direction==='gemini-copilot')&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#F0FDF4',color:'#166534',fontWeight:600}}>G2C</span>}
                     </div>
-                    <div style={{fontSize:12,color:C.muted,display:'flex',gap:12}}>
+                    <div style={{fontSize:12,color:C.muted,display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}}>
                       <span>{fmtDate(r.startTime)}</span>
                       {r.endTime&&<span>⏱ {fmtDur(r.startTime,r.endTime)}</span>}
+                      {r._id&&<span style={{display:'inline-flex',alignItems:'center',gap:4,fontFamily:'monospace',fontSize:10,padding:'1px 6px',borderRadius:4,background:C.bg,color:C.dark}} title="Batch ID — click to copy" onClick={(e)=>{e.stopPropagation();navigator.clipboard?.writeText(String(r._id));}}>
+                        <span style={{fontWeight:600,color:C.muted}}>ID</span>
+                        <span>{String(r._id).length>16?String(r._id).slice(0,8)+'…'+String(r._id).slice(-6):String(r._id)}</span>
+                      </span>}
                     </div>
                   </div>
                   <div style={{display:'flex',gap:6,flexShrink:0,marginLeft:8,alignItems:'center'}}>
@@ -4834,7 +4882,15 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
                       // Sum conversations_processed from per-user reports when available;
                       // fall back to migratedConversations (some legacy batches only set this).
                       const userConvSum=(r.report?.users||r.users||[]).reduce((s,u)=>s+(u.conversations_processed||0),0);
-                      const doneConvs=live?liveStats.pages:(isRunningBatch?r.progressPages:(r.dryRun?r.totalConversations:(userConvSum||r.migratedConversations||0)));
+                      // Conversation count resolution — in priority order:
+                      //   1. liveStats.pages (if user is viewing the migration UI)
+                      //   2. r.progressConversations (mid-run incremental write, if backend writes it)
+                      //   3. dryRun: report.summary.total_conversations OR top-level totalConversations
+                      //   4. completed: sum of per-user conversations_processed OR migratedConversations
+                      const dryRunConvs=r.report?.summary?.total_conversations ?? r.totalConversations ?? 0;
+                      const doneConvs=live?liveStats.pages
+                        :(isRunningBatch?(r.progressConversations ?? r.progressPages ?? userConvSum ?? 0)
+                        :(r.dryRun?dryRunConvs:(userConvSum||r.migratedConversations||0)));
                       const doneErrors=live?liveStats.errors:(isRunningBatch?r.progressErrors:(r.totalErrors??r.report?.summary?.total_errors??0));
                       const totalUsers=r.totalUsers||0;
                       return[
@@ -5835,6 +5891,11 @@ function App(){
           if(p.conversations!=null)cur.conversationCount=p.conversations;
           if(p.errors!=null)cur.errors=p.errors;
           if(p.users!=null)cur.users=p.users;
+          // Within-current-user progress for the ring (convIdx of totalConvs).
+          // If the event omits these (e.g. per-user-complete events), reset
+          // to 0/0 so the ring doesn't carry stale state from the previous user.
+          if(p.convIdx!=null&&p.totalConvs){cur.convIdx=p.convIdx;cur.totalConvs=p.totalConvs;}
+          else{cur.convIdx=0;cur.totalConvs=0;}
         }catch{}}
         if(d.type==='success')cur.files++;
         if(d.type==='error')cur.errors++;

@@ -341,21 +341,8 @@ export function createC2CRouter(deps) {
       const { appUserId } = getWorkspaceContext(req);
       const batch = await db().collection('migrationWorkspaces').findOne({ _id: req.params.id, appUserId, migDir: 'copilot-copilot' });
       if (!batch) return res.status(404).json({ error: 'Batch not found' });
-      const users = batch.users || batch.report?.users || [];
-      // Unified CSV columns across all 6 migration directions (mirrors C2G shape).
-      const rows = [['Source Email', 'Destination Email', 'Status', 'Files Uploaded', 'Conversations', 'Errors', 'Error Message']];
-      for (const u of users) {
-        const sourceEmail = u.email || '';
-        const destEmail = u.destEmail || '';
-        if (u.errors && u.errors.length > 0) {
-          for (const e of u.errors) {
-            rows.push([sourceEmail, destEmail, u.status || '', u.pages_created || 0, u.conversations_processed || 0, u.error_count || 0, e.error_message || e.error || '']);
-          }
-        } else {
-          rows.push([sourceEmail, destEmail, u.status || '', u.pages_created || 0, u.conversations_processed || 0, u.error_count || 0, '']);
-        }
-      }
-      const csv = rows.map(r => r.map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+      const { buildBatchCsv } = await import('../_shared/csvExport.js');
+      const csv = buildBatchCsv(batch);
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="c2c_batch_${batch._id}.csv"`);
       res.send(csv);
@@ -477,15 +464,25 @@ export function createC2CRouter(deps) {
           if (isDryRun) {
             try {
               const { runDryRunValidator } = await import('../dry-run/validator.js');
-              // For C2C we'd ideally pass source/dest tokens. The migration acquires
-              // them internally via tenant consent flow; we pass tenantIds and let
-              // the validator skip token-dependent checks if missing.
+              // Acquire app-only tokens up front so the validator can actually
+              // verify Copilot access in source + OneNote access in dest.
+              // Without these, the validator flags "Could not acquire ... Graph
+              // token" as a hard blocker — even when consent is already granted.
+              let preflightSourceToken = null;
+              let preflightDestToken = null;
+              try { preflightSourceToken = await getTenantAccessToken(sourceTenantId); }
+              catch (e) { dbLog.warn(`[C2C dry-run] source tenant token failed: ${e.message}`); }
+              try { preflightDestToken = await getTenantAccessToken(destTenantId); }
+              catch (e) { dbLog.warn(`[C2C dry-run] dest tenant token failed: ${e.message}`); }
+
               const dryRunReport = await runDryRunValidator({
                 migDir: 'copilot-copilot',
                 pairs: pairs.map(p => ({ sourceEmail: p.sourceEmail, destEmail: p.destEmail, expectedConversationCount: p.expectedConversationCount || 0 })),
                 config: { folderName: c2cFolderName, dryRun: true },
                 appUserId,
                 sourceTenantId, destTenantId,
+                sourceToken: preflightSourceToken,
+                destToken: preflightDestToken,
               });
               await db().collection('migrationWorkspaces').updateOne(
                 { _id: batchId },
@@ -634,6 +631,26 @@ export function createC2CRouter(deps) {
               files: totalPages, pages: totalPages, conversations: totalConversations,
               errors, users: reportUsers.length, total: migPairs.length,
             }));
+
+            // Incremental progress write so the Reports panel (which polls every
+            // 3s) can show how many conversations have been migrated SO FAR — not
+            // just at the end of the run. Without this, the Reports panel shows
+            // 0 conversations for hours while the migration is actually working.
+            // We update conservatively (only the running totals + the users[]
+            // array as it grows) so the final reportUpdate write isn't pre-empted.
+            await db().collection('migrationWorkspaces').updateOne(
+              { _id: batchId },
+              {
+                $set: {
+                  progressUsers: reportUsers.length,
+                  progressPages: totalPages,
+                  progressConversations: totalConversations,
+                  progressErrors: errors,
+                  users: reportUsers,        // partial array; final overwrite happens at end
+                  lastProgressAt: new Date(),
+                },
+              }
+            ).catch(() => {});
           }
 
           // Deploy the "Copilot Conversation Agent" to the destination tenant's

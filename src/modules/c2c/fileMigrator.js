@@ -107,7 +107,13 @@ export async function downloadBinary(url, accessToken) {
       contentType: res.headers.get('content-type') || '',
     };
   } catch (e) {
-    logger.warn(`downloadBinary(${url.slice(0, 60)}…) failed: ${e.message}`);
+    // Silence placeholder URLs (file:///unknown-url, file:///null, empty etc.)
+    // — those aren't real download attempts. Copilot conversations sometimes
+    // reference attachments without resolvable URLs; logging every failure
+    // is noise. Real http(s):// failures still surface.
+    if (url && !url.startsWith('file:///')) {
+      logger.warn(`downloadBinary(${url.slice(0, 60)}…) failed: ${e.message}`);
+    }
     return null;
   }
 }

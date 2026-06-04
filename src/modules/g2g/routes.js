@@ -404,7 +404,12 @@ export function createG2GRouter(deps) {
       const reports = await db().collection('migrationWorkspaces')
         .find({ appUserId, migDir: 'gemini-gemini' }, { projection: { report: 0 } })
         .sort({ startTime: -1 }).toArray();
-      dbLog.info(`g2g/reports: found ${reports.length} batches for ${appUserId}`);
+      // Only log when batches exist — this endpoint is polled every 3s by the
+      // Reports panel while ANY migration is running. Logging empty results
+      // every tick swamps the log file (~25 lines/min per user).
+      if (reports.length > 0) {
+        dbLog.info(`g2g/reports: found ${reports.length} batches for ${appUserId}`);
+      }
       res.json(reports);
     } catch (err) {
       dbLog.error('[g2g/reports]', err.message);
@@ -473,19 +478,8 @@ export function createG2GRouter(deps) {
       const { appUserId } = getWorkspaceContext(req);
       const batch = await db().collection('migrationWorkspaces').findOne({ _id: req.params.id, appUserId, migDir: 'gemini-gemini' });
       if (!batch) return res.status(404).json({ error: 'Batch not found' });
-      const users = batch.users || batch.report?.users || [];
-      // Unified CSV columns across all 6 migration directions (mirrors C2G shape).
-      const rows = [['Source Email', 'Destination Email', 'Status', 'Files Uploaded', 'Conversations', 'Errors', 'Error Message']];
-      for (const u of users) {
-        if (u.errors && u.errors.length > 0) {
-          for (const e of u.errors) {
-            rows.push([u.email, u.destEmail || '', u.status || '', u.pages_created || u.files_created || 0, u.conversations_processed || 0, u.error_count || 0, e.error_message || e.error || '']);
-          }
-        } else {
-          rows.push([u.email, u.destEmail || '', u.status || '', u.pages_created || u.files_created || 0, u.conversations_processed || 0, u.error_count || 0, '']);
-        }
-      }
-      const csv = rows.map(r => r.map(f => `"${String(f ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+      const { buildBatchCsv } = await import('../_shared/csvExport.js');
+      const csv = buildBatchCsv(batch);
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="g2g_batch_${batch._id}.csv"`);
       res.send(csv);
