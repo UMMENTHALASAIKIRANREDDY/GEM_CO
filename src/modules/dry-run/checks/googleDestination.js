@@ -50,11 +50,40 @@ export async function checkDestUserExists(destEmail) {
       { id: r.data.id, name: r.data.name?.fullName }
     )];
   } catch (e) {
-    return [blockerCheck(
-      'dest.google.user.lookup_failed',
+    // Admin SDK often 403s ("Not Authorized to access this resource/api")
+    // when the service account's DWD authorisation is missing the
+    // directory.user.readonly scope. That's a common admin oversight and
+    // shouldn't block migration — fall back to Drive about.get which only
+    // needs the drive scope (already required for the actual migration).
+    // If Drive call also succeeds, the user provably exists & is reachable.
+    try {
+      const driveAuth = getServiceAccountAuth(destEmail, SCOPES_DRIVE);
+      const drive = google.drive({ version: 'v3', auth: driveAuth });
+      const about = await drive.about.get({ fields: 'user(emailAddress,displayName)' });
+      const emailAddr = about.data?.user?.emailAddress;
+      if (emailAddr) {
+        return [passingCheck(
+          'dest.google.user.exists',
+          `Destination user ${destEmail}`,
+          { emailAddress: emailAddr, name: about.data.user.displayName, via: 'drive.about' }
+        )];
+      }
+    } catch (driveErr) {
+      // Both Admin SDK and Drive failed — surface a real blocker.
+      return [blockerCheck(
+        'dest.google.user.lookup_failed',
+        `Destination user ${destEmail}`,
+        `Could not verify user exists: ${driveErr.message}`,
+        `Confirm the email is correct, and that the service account has Drive scope authorised in Domain-Wide Delegation for this Google Workspace.`
+      )];
+    }
+    // Admin SDK failed but we didn't actually need it. Surface as a warning
+    // so admins can still notice & fix DWD if they want directory scope.
+    return [warningCheck(
+      'dest.google.user.admin_sdk_unavailable',
       `Destination user ${destEmail}`,
-      `Could not verify user exists: ${e.message}`,
-      `Confirm the email is correct, and that the service account has admin.directory.user.readonly scope authorised in Domain-Wide Delegation.`
+      `Admin Directory API not authorised for this service account (${e.message}).`,
+      `Optional: grant admin.directory.user.readonly DWD scope to enable suspension/profile checks. Migration will proceed regardless.`
     )];
   }
 }

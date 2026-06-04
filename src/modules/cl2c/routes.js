@@ -7,6 +7,7 @@
 import express  from 'express';
 import multer   from 'multer';
 import fs       from 'node:fs';
+import os       from 'node:os';
 import path     from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EventEmitter }  from 'events';
@@ -21,7 +22,11 @@ const ROOT_DIR  = path.resolve(__dirname, '../../../');
 export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurrentTenantId }) {
   const router = express.Router();
 
-  const uploadsDir = path.join(ROOT_DIR, 'uploads', 'cl2c');
+  // Multer scratch space — OS temp dir. The raw ZIP and the extracted JSONs
+  // live here only for the few seconds it takes to parse them into
+  // conversationStore, then both are deleted. The project's old uploads/
+  // folder is no longer used.
+  const uploadsDir = path.join(os.tmpdir(), 'gemco-cl2c');
   fs.mkdirSync(uploadsDir, { recursive: true });
 
   const upload = multer({
@@ -110,52 +115,57 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
 
       const parsed = parseClaudeExport(extractDir);
 
-      // NEW: Persist all Claude conversations to conversationStore at upload time
+      // Persist all Claude conversations to conversationStore at upload time.
+      // This is FATAL — if it fails we don't keep the upload because the disk
+      // extract is about to be deleted (we're moving to DB-only storage).
       const ingestBatchId = `ingest_${uploadId}`;
       let totalPersisted = 0;
-      try {
-        const { getUserData } = await import('../cl2g/zipParser.js');
-        const { persistSourceConversations, SOURCE_TYPE } = await import('../_shared/conversationStore.js');
-        for (const u of parsed.users) {
-          const { conversations: userConvs } = getUserData(extractDir, u.uuid);
-          if (!userConvs?.length) continue;
-          const r = await persistSourceConversations(
-            {
-              batchId: ingestBatchId,
-              appUserId,
-              migDir: 'claude-copilot',
-              sourceType: SOURCE_TYPE.CLAUDE,
-              sourceEmail: u.email_address,
-              sourceUserId: u.uuid,
-              sourceDisplayName: u.full_name || u.name,
-              uploadId,
-            },
-            userConvs.map(c => ({
-              sessionId: c.uuid || c.id || `${u.uuid}::${c.name || 'untitled'}`,
-              title: c.name || c.title || 'Untitled',
-              createdDateTime: c.created_at || c.createdDateTime,
-              payload: c,
-            }))
-          );
-          totalPersisted += r.inserted;
-        }
-        dbLog.info(`conversationStore.upsert — ${totalPersisted} Claude conversations persisted at upload time for ${req.file.originalname}`);
-      } catch (persistErr) {
-        dbLog.warn(`conversationStore persist failed at CL2C upload (non-fatal): ${persistErr.message}`);
+      const { getUserData } = await import('../cl2g/zipParser.js');
+      const { persistSourceConversations, SOURCE_TYPE } = await import('../_shared/conversationStore.js');
+      for (const u of parsed.users) {
+        const { conversations: userConvs } = getUserData(extractDir, u.uuid);
+        if (!userConvs?.length) continue;
+        const r = await persistSourceConversations(
+          {
+            batchId: ingestBatchId,
+            appUserId,
+            migDir: 'claude-copilot',
+            sourceType: SOURCE_TYPE.CLAUDE,
+            sourceEmail: u.email_address,
+            sourceUserId: u.uuid,
+            sourceDisplayName: u.full_name || u.name,
+            uploadId,
+          },
+          userConvs.map(c => ({
+            sessionId: c.uuid || c.id || `${u.uuid}::${c.name || 'untitled'}`,
+            title: c.name || c.title || 'Untitled',
+            createdDateTime: c.created_at || c.createdDateTime,
+            payload: c,
+          }))
+        );
+        totalPersisted += r.inserted;
       }
+      dbLog.info(`conversationStore.upsert — ${totalPersisted} Claude conversations persisted at upload time for ${req.file.originalname}`);
+
+      // DB now has every conversation. Delete the disk extract so the uploads/
+      // folder doesn't grow indefinitely. Memory + project documents that
+      // existed only on disk are intentionally dropped — see scope decision.
+      fs.rm(extractDir, { recursive: true, force: true }, (err) => {
+        if (err) dbLog.warn(`Failed to clean up extractDir ${extractDir}: ${err.message}`);
+        else dbLog.info(`extractDir cleaned: ${extractDir}`);
+      });
 
       const doc = {
         _id:                uploadId,
         appUserId,
         msEmail,
         fileName:           req.file.originalname,
-        extractPath:        extractDir,    // kept for backward compat
+        // No extractPath — disk content has been deleted; migration reads
+        // exclusively from conversationStore.
         ingestBatchId,
         conversationsPersisted: totalPersisted,
         uploadTime:         new Date(),
         totalConversations: parsed.totalConversations,
-        totalMemories:      parsed.totalMemories,
-        totalProjects:      parsed.totalProjects,
         users:              parsed.users,
         status:             'ready',
       };
@@ -163,7 +173,7 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
       await db().collection('cl2cUploads').insertOne(doc);
       dbLog.info(`cl2cUploads.insert — ${uploadId} (${parsed.users.length} users, ${parsed.totalConversations} convs, ${totalPersisted} in conversationStore)`);
 
-      res.json({ uploadId, users: parsed.users, totalConversations: parsed.totalConversations, totalMemories: parsed.totalMemories, totalProjects: parsed.totalProjects, conversations_persisted: totalPersisted, ingest_batch_id: ingestBatchId });
+      res.json({ uploadId, users: parsed.users, totalConversations: parsed.totalConversations, conversations_persisted: totalPersisted, ingest_batch_id: ingestBatchId });
     } catch (err) {
       fs.rm(extractDir, { recursive: true, force: true }, () => {});
       fs.unlink(req.file.path, () => {});
@@ -172,6 +182,10 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
   });
 
   // ── GET /api/cl2c/uploads ─────────────────────────────────────────────────
+  // After the move to DB-only storage, only purge LEGACY records that still
+  // have an extractPath whose disk dir is gone (no DB conversations either).
+  // New uploads don't have extractPath and are kept indefinitely until the
+  // user explicitly deletes them.
   router.get('/uploads', requireAuth, async (req, res) => {
     try {
       const { appUserId } = getCtx(req);
@@ -181,11 +195,11 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
         .toArray();
 
       const staleIds = uploads
-        .filter(u => u.extractPath && !fs.existsSync(u.extractPath))
+        .filter(u => u.extractPath && !fs.existsSync(u.extractPath) && !u.conversationsPersisted)
         .map(u => u._id);
       if (staleIds.length) {
         await db().collection('cl2cUploads').deleteMany({ _id: { $in: staleIds } });
-        dbLog.info(`cl2cUploads.purge — removed ${staleIds.length} stale record(s)`);
+        dbLog.info(`cl2cUploads.purge — removed ${staleIds.length} legacy record(s) with no disk + no DB content`);
       }
 
       res.json(uploads.filter(u => !staleIds.includes(u._id)));
@@ -381,7 +395,8 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
             errors += r.errors.length;
             dbLog.info(`[CL2C] ${r.sourceDisplayName} → ${pair.destEmail}: ${r.filesUploaded} pages created, ${r.errors.length} error(s)`);
             cl2cLog(status === 'failed' ? 'warn' : 'success', `${r.sourceDisplayName} → ${pair.destEmail}: ${r.filesUploaded} pages, ${r.errors.length} error(s)`);
-            cl2cLog('progress', JSON.stringify({ files, errors, users: reportUsers.length, total: pairs.length }));
+            const cumulativeConvs = reportUsers.reduce((s, u) => s + (u.conversations_processed || 0), 0);
+            cl2cLog('progress', JSON.stringify({ files, convs: cumulativeConvs, errors, users: reportUsers.length, total: pairs.length }));
 
             // Incremental progress write — Reports polling sees live progress.
             await db().collection('migrationWorkspaces').updateOne(
@@ -402,17 +417,14 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
           const finalStatus = errors > 0 && files === 0 ? 'failed' : 'completed';
 
           // Isolated final DB write
+          const totalConvsSum = reportUsers.reduce((s, u) => s + (u.conversations_processed || 0), 0);
+          const finalUpdate = { migDir: 'claude-copilot', status: finalStatus, endTime: new Date(), migratedConversations: totalConvsSum, migratedUsers: reportUsers.filter(u => u.status !== 'failed').length, failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors, report: { summary: { total_users: pairs.length, total_pages_created: files, total_errors: errors, total_conversations: totalConvsSum }, users: reportUsers } };
           try {
-            await db().collection('migrationWorkspaces').updateOne(
-              { _id: batchId },
-              { $set: { migDir: 'claude-copilot', status: finalStatus, endTime: new Date(), migratedConversations: files, migratedUsers: reportUsers.filter(u => u.status !== 'failed').length, failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors, report: { summary: { total_users: pairs.length, total_pages_created: files, total_errors: errors }, users: reportUsers } } }
-            );
+            await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: finalUpdate });
           } catch (dbErr) {
             dbLog.error(`[CL2C] Final report DB write failed: ${dbErr.message}. Retrying...`);
-            await db().collection('migrationWorkspaces').updateOne(
-              { _id: batchId },
-              { $set: { migDir: 'claude-copilot', status: finalStatus, endTime: new Date(), migratedConversations: files, migratedUsers: reportUsers.filter(u => u.status !== 'failed').length, failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors, report: { summary: { total_users: pairs.length, total_pages_created: files, total_errors: errors }, users: reportUsers } } }
-            ).catch(e2 => dbLog.error(`[CL2C] Retry also failed: ${e2.message}`));
+            await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: finalUpdate })
+              .catch(e2 => dbLog.error(`[CL2C] Retry also failed: ${e2.message}`));
           }
 
           // Deploy Claude Conversation Agent (once per tenant)
@@ -504,7 +516,7 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
           cl2cLog('error', e.message || String(e));
           await db().collection('migrationWorkspaces').updateOne(
             { _id: batchId },
-            { $set: { migDir: 'claude-copilot', status: files > 0 ? 'completed' : 'failed', endTime: new Date(), migratedConversations: files, totalErrors: errors + 1, error: e.message } }
+            { $set: { migDir: 'claude-copilot', status: files > 0 ? 'completed' : 'failed', endTime: new Date(), migratedConversations: reportUsers.reduce((s, u) => s + (u.conversations_processed || 0), 0) || files, totalErrors: errors + 1, error: e.message } }
           ).catch(() => {});
           cl2cLog('done', JSON.stringify({ files, errors: errors + 1, users: pairs.length, batchId }));
         } finally {

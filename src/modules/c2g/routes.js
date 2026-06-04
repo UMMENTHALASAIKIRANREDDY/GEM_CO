@@ -277,11 +277,20 @@ export function createC2GRouter(deps) {
               }
             } catch (e) { dbLog.warn(`Backfill actualFiles failed: ${e.message}`); }
 
+            const dryConvsSum = reportUsers.reduce((s, u) => s + (u.conversations_processed || 0), 0);
             await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: {
               migDir: 'copilot-gemini', status: 'completed', endTime: new Date(), dryRun: true, totalUsers: migPairs.length,
-              migratedConversations: files, migratedUsers: reportUsers.filter(u => u.status === 'success').length,
+              migratedConversations: dryConvsSum, migratedUsers: reportUsers.filter(u => u.status === 'success').length,
               failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors,
-              report: { summary: { total_users: migPairs.length, total_pages_created: files, total_errors: errors }, users: reportUsers }
+              report: {
+                summary: {
+                  total_users: migPairs.length,
+                  total_pages_created: files,
+                  total_errors: errors,
+                  total_conversations: dryConvsSum,
+                },
+                users: reportUsers,
+              }
             } }).catch(() => {});
             c2gLog('done', JSON.stringify({ files, errors, users: migPairs.length, batchId }));
             return;
@@ -303,6 +312,11 @@ export function createC2GRouter(deps) {
           c2gLog('info', `Starting C2G migration for ${migPairs.length} user pair(s)...`);
           c2gLog('total', JSON.stringify({ total: migPairs.length }));
 
+          // cumulativeConvs tracks total conversations processed across all
+          // finished users — needed so the live UI card can display
+          // "Conversations" instead of "Files Uploaded" (a single DOCX bundles
+          // many conversations, so file count understates real progress).
+          let cumulativeConvs = 0;
           for (const pair of migPairs) {
             c2gLog('info', `Processing: ${pair.sourceDisplayName} → ${pair.destUserEmail}`);
             const r = await migrateUserPair(
@@ -316,10 +330,11 @@ export function createC2GRouter(deps) {
                 sourceEmail: pair.sourceEmail || pair.sourceDisplayName,
               },
               ({ filesUploaded, convIdx, totalConvs }) => {
-                c2gLog('progress', JSON.stringify({ files: files + filesUploaded, errors, users: results.length, total: migPairs.length, convIdx, totalConvs }));
+                c2gLog('progress', JSON.stringify({ files: files + filesUploaded, convs: cumulativeConvs + (convIdx || 0), errors, users: results.length, total: migPairs.length, convIdx, totalConvs }));
               }
             );
             results.push(r);
+            cumulativeConvs += (r.conversationsCount || 0);
 
             const userReport = {
               email: r.sourceEmail || pair.sourceEmail || pair.sourceDisplayName,
@@ -360,7 +375,7 @@ export function createC2GRouter(deps) {
             files += r.filesUploaded || 0;
             errors += (r.errors || []).length;
             c2gLog(r.errors?.length ? 'warn' : 'success', `${r.sourceDisplayName} → ${r.destUserEmail}: ${r.filesUploaded || 0} files uploaded, ${(r.errors||[]).length} error(s)`);
-            c2gLog('progress', JSON.stringify({ files, errors, users: results.length, total: migPairs.length }));
+            c2gLog('progress', JSON.stringify({ files, convs: cumulativeConvs, errors, users: results.length, total: migPairs.length }));
 
             // Incremental progress write so the Reports panel (polling every 3s)
             // sees how many users + files + conversations have been migrated so
@@ -380,13 +395,18 @@ export function createC2GRouter(deps) {
             ).catch(() => {});
           }
 
+          const totalConvsSum = reportUsers.reduce((s, u) => s + (u.conversations_processed || 0), 0);
           const reportUpdate = {
             status: errors > 0 && files === 0 ? 'failed' : 'completed', endTime: new Date(),
-            totalUsers: migPairs.length, migratedConversations: files,
+            totalUsers: migPairs.length,
+            // migratedConversations is the source of truth for the Reports panel
+            // and CSV exports — it must reflect actual conversation count, not
+            // the file count (a single DOCX may bundle many conversations).
+            migratedConversations: totalConvsSum,
             migratedUsers: reportUsers.filter(u => u.status === 'success' || u.status === 'partial').length,
             failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors,
             report: {
-              summary: { total_users: migPairs.length, total_pages_created: files, total_errors: errors, total_conversations: reportUsers.reduce((s, u) => s + u.conversations_processed, 0) },
+              summary: { total_users: migPairs.length, total_pages_created: files, total_errors: errors, total_conversations: totalConvsSum },
               users: reportUsers,
             },
           };

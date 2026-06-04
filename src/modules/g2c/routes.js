@@ -7,6 +7,7 @@ import { randomUUID } from 'crypto';
 import express from 'express';
 import multer from 'multer';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import AdmZip from 'adm-zip';
@@ -101,10 +102,12 @@ export function createG2CRouter(deps) {
 
   const router = express.Router();
 
-  const uploadsDir = path.join(ROOT_DIR, 'uploads');
-  const reportsDir = path.join(ROOT_DIR, 'uploads', 'reports');
+  // Multer scratch space — OS temp dir. The raw ZIP and the extracted XML
+  // files live here only for the few seconds it takes to parse them into
+  // conversationStore, then both are deleted. The project's old uploads/
+  // folder is no longer used (reportsDir was also unused dead code).
+  const uploadsDir = path.join(os.tmpdir(), 'gemco-g2c');
   fs.mkdirSync(uploadsDir, { recursive: true });
-  fs.mkdirSync(reportsDir, { recursive: true });
 
   const upload = multer({
     dest: uploadsDir,
@@ -503,16 +506,13 @@ export function createG2CRouter(deps) {
   //  1. Multer drops raw ZIP on disk
   //  2. Extract to uploads/extracted_{filename}/
   //  3. Parse all users + all conversations via VaultReader
-  //  4. EVERY conversation is written to `conversationStore` (status='fetched')
-  //  5. uploads metadata saved (includes extractPath for backward compat with
-  //     existing migration code — will be removed once migration reads from DB)
-  //
-  // After Chunk 2 ships (migration reads from DB), this endpoint will also
-  // delete the disk files immediately after persisting to DB.
+  //  4. EVERY conversation is written to `conversationStore` (FATAL if it fails)
+  //  5. Disk extract is deleted — migration reads exclusively from DB
   router.post('/upload', requireGoogleAuth, upload.single('vault_zip'), async (req, res) => {
+    let extractTo = null;
     try {
       const zipPath = req.file.path;
-      const extractTo = path.join(uploadsDir, `extracted_${req.file.filename}`);
+      extractTo = path.join(uploadsDir, `extracted_${req.file.filename}`);
       fs.mkdirSync(extractTo, { recursive: true });
       new AdmZip(zipPath).extractAllTo(extractTo, true);
       const xmlFiles = fs.readdirSync(extractTo).filter(f => f.toLowerCase().endsWith('.xml'));
@@ -523,46 +523,51 @@ export function createG2CRouter(deps) {
       const users = await reader.discoverUsers();
       if (users.length === 0) return res.status(400).json({ error: 'No users found in Vault export XML files.' });
 
-      // NEW: Write all conversations to conversationStore at upload time
+      // Write all conversations to conversationStore. FATAL — disk extract is
+      // about to be deleted so DB is the only copy.
       const { appUserId: _appUserId, googleEmail: _googleEmail, msEmail: _msEmail } = getWorkspaceContext(req);
       const uploadId = req.file.filename;
       const ingestBatchId = `ingest_${uploadId}`;
       let totalPersisted = 0;
-      try {
-        const { persistSourceConversations, SOURCE_TYPE } = await import('../_shared/conversationStore.js');
-        for (const u of users) {
-          const userConvs = await reader.loadUserConversations(u.email, null, null);
-          if (!userConvs?.length) continue;
-          const r = await persistSourceConversations(
-            {
-              batchId: ingestBatchId,
-              appUserId: _appUserId,
-              migDir: 'gemini-copilot',
-              sourceType: SOURCE_TYPE.VAULT,
-              sourceEmail: u.email,
-              sourceDisplayName: u.displayName,
-              uploadId,
-            },
-            userConvs.map(c => ({
-              sessionId: c.id || `${u.email}::${c.title || 'untitled'}::${c.createdDateTime || ''}`,
-              title: c.title,
-              createdDateTime: c.createdDateTime,
-              payload: c,
-            }))
-          );
-          totalPersisted += r.inserted;
-        }
-        dbLog.info(`conversationStore.upsert — ${totalPersisted} conversations persisted at upload time for ${req.file.originalname}`);
-      } catch (persistErr) {
-        // Non-fatal: upload still succeeds even if DB write fails. Migration falls back to disk.
-        dbLog.warn(`conversationStore persist failed at upload (non-fatal): ${persistErr.message}`);
+      const { persistSourceConversations, SOURCE_TYPE } = await import('../_shared/conversationStore.js');
+      for (const u of users) {
+        const userConvs = await reader.loadUserConversations(u.email, null, null);
+        if (!userConvs?.length) continue;
+        const r = await persistSourceConversations(
+          {
+            batchId: ingestBatchId,
+            appUserId: _appUserId,
+            migDir: 'gemini-copilot',
+            sourceType: SOURCE_TYPE.VAULT,
+            sourceEmail: u.email,
+            sourceDisplayName: u.displayName,
+            uploadId,
+          },
+          userConvs.map(c => ({
+            sessionId: c.id || `${u.email}::${c.title || 'untitled'}::${c.createdDateTime || ''}`,
+            title: c.title,
+            createdDateTime: c.createdDateTime,
+            payload: c,
+          }))
+        );
+        totalPersisted += r.inserted;
       }
+      dbLog.info(`conversationStore.upsert — ${totalPersisted} conversations persisted at upload time for ${req.file.originalname}`);
+
+      // DB has every conversation — purge disk extract. Vault attachments
+      // referenced by conversations are dropped (scope decision).
+      fs.rm(extractTo, { recursive: true, force: true }, (err) => {
+        if (err) dbLog.warn(`Failed to clean up extract dir ${extractTo}: ${err.message}`);
+        else dbLog.info(`extract dir cleaned: ${extractTo}`);
+      });
+      // Also remove the raw ZIP — multer left it on disk after extraction.
+      fs.unlink(zipPath, () => {});
 
       const usersArr = users.map(u => ({ email: u.email, displayName: u.displayName, conversationCount: u.conversationCount }));
       const uploadDoc = {
         _id: uploadId, originalName: req.file.originalname || 'vault_export.zip',
         uploadTime: new Date(),
-        extractPath: extractTo,   // kept for backward compat during Chunk 1; removed in Chunk 2
+        // No extractPath — disk is gone; migration reads from conversationStore.
         ingestBatchId,
         conversationsPersisted: totalPersisted,
         totalUsers: users.length,
@@ -573,12 +578,16 @@ export function createG2CRouter(deps) {
       dbLog.info(`uploads.upsert — ${uploadDoc.originalName} (${uploadDoc.totalUsers} users, ${uploadDoc.totalConversations} conversations, ${totalPersisted} in conversationStore)`);
       res.json({
         id: uploadDoc._id, original_name: uploadDoc.originalName, upload_time: uploadDoc.uploadTime.toISOString(),
-        extract_path: extractTo, total_users: uploadDoc.totalUsers, total_conversations: uploadDoc.totalConversations,
+        total_users: uploadDoc.totalUsers, total_conversations: uploadDoc.totalConversations,
         conversations_persisted: totalPersisted,
         ingest_batch_id: ingestBatchId,
         users: usersArr.map(u => ({ email: u.email, display_name: u.displayName, conversation_count: u.conversationCount }))
       });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) {
+      // On failure, clean up the partial extract so it doesn't linger.
+      if (extractTo) fs.rm(extractTo, { recursive: true, force: true }, () => {});
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Upload management
@@ -586,7 +595,7 @@ export function createG2CRouter(deps) {
     const { appUserId, googleEmail } = getWorkspaceContext(req);
     if (!appUserId || !googleEmail) return res.json({ uploads: [] });
     const uploads = await db().collection('uploads').find({ appUserId, $or: [{ googleEmail }, { googleEmail: { $exists: false } }] }).sort({ uploadTime: -1 }).toArray();
-    res.json({ uploads: uploads.map(u => ({ id: u._id, original_name: u.originalName, upload_time: u.uploadTime, extract_path: u.extractPath, total_users: u.totalUsers, total_conversations: u.totalConversations, users: (u.users || []).map(x => ({ email: x.email, display_name: x.displayName, conversation_count: x.conversationCount })) })) });
+    res.json({ uploads: uploads.map(u => ({ id: u._id, original_name: u.originalName, upload_time: u.uploadTime, total_users: u.totalUsers, total_conversations: u.totalConversations, users: (u.users || []).map(x => ({ email: x.email, display_name: x.displayName, conversation_count: x.conversationCount })) })) });
   });
 
   router.delete('/uploads/:id', async (req, res) => {
@@ -790,7 +799,11 @@ export function createG2CRouter(deps) {
       from_date = null, to_date = null, upload_id = null
     } = req.body;
 
-    if (!extract_path || !tenant_id) return res.status(400).json({ error: 'extract_path and tenant_id are required' });
+    // After the move to DB-only storage, `extract_path` is no longer required —
+    // conversations are loaded from conversationStore via upload_id. We still
+    // accept it for legacy callers / backward compat, but tenant_id is all we
+    // actually need.
+    if (!tenant_id) return res.status(400).json({ error: 'tenant_id is required' });
 
     const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
     if (!dry_run && !isAuthenticated(appUserId)) {
@@ -862,8 +875,23 @@ export function createG2CRouter(deps) {
     if (skip_ai_response) emit('info', 'Azure OpenAI disabled — migrating original Gemini responses only');
 
     try {
-      const reader = new VaultReader(extract_path);
-      const allUsers = await reader.discoverUsers();
+      // VaultReader is only used as a disk-fallback for legacy uploads (where
+      // conversationStore wasn't populated at upload time). New uploads have
+      // no extract_path because the disk content was deleted at upload time —
+      // conversations come from conversationStore instead.
+      const reader = (extract_path && fs.existsSync(extract_path)) ? new VaultReader(extract_path) : null;
+      let allUsers;
+      if (reader) {
+        allUsers = await reader.discoverUsers();
+      } else {
+        // DB-only path: get the user list from the upload metadata document.
+        const uploadDoc = upload_id ? await db().collection('uploads').findOne({ _id: upload_id }) : null;
+        if (!uploadDoc) {
+          emit('error', `Upload ${upload_id} not found in DB — cannot determine users to migrate. Re-upload the Vault ZIP.`);
+          throw new Error(`Upload not found: ${upload_id}`);
+        }
+        allUsers = (uploadDoc.users || []).map(u => ({ email: u.email, displayName: u.displayName, conversationCount: u.conversationCount }));
+      }
       const users = Object.keys(user_mappings).length > 0
         ? allUsers.filter(u => Object.prototype.hasOwnProperty.call(user_mappings, u.email))
         : allUsers;
@@ -957,9 +985,14 @@ export function createG2CRouter(deps) {
           if (fromStore && fromStore.length > 0) {
             conversations = fromStore;
             emit('info', `  Loaded ${conversations.length} conversations from conversationStore for ${gEmail}`);
-          } else {
+          } else if (reader) {
+            // Legacy disk-only upload
             conversations = await reader.loadUserConversations(gEmail, from_date, to_date);
             emit('info', `  Loaded ${conversations.length} conversations (disk) for ${gEmail}`);
+          } else {
+            // DB miss + no disk → upload is corrupt or never ingested
+            conversations = [];
+            emit('warn', `  No conversations found in conversationStore for ${gEmail}. Upload may need to be re-done.`);
           }
 
           let googleClient = null;
@@ -1153,9 +1186,12 @@ export function createG2CRouter(deps) {
         }
       });
 
-      const reportPath = path.join(uploadsDir, 'migration_report.json');
+      // ReportWriter writes JSON to disk then re-reads it; use a per-batch
+      // temp file so concurrent migrations don't stomp on each other.
+      const reportPath = path.join(uploadsDir, `migration_report_${batch_id}.json`);
       report.write(reportPath);
       const fullReport = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+      fs.unlink(reportPath, () => {});
 
       const _totalErrors = fullReport.summary?.total_errors || 0;
       // NB: reportWriter writes `users` at the TOP level (not under summary).
@@ -1177,7 +1213,9 @@ export function createG2CRouter(deps) {
         failedUsers: _failedUsers,
         totalErrors: _totalErrors,  // ← was missing; reports panel uses this for Success/Partial/Failed badge
         totalConversations: fullReport.summary?.total_conversations || 0,
-        migratedConversations: fullReport.summary?.total_pages_created || 0,
+        // migratedConversations must reflect conversation count (not OneNote page
+        // count) so the Reports panel and CSV row match the per-user totals.
+        migratedConversations: fullReport.summary?.total_conversations || 0,
         flaggedAssets: fullReport.summary?.total_flagged || Object.values(visualReports || {}).reduce((s, v) => s + (v?.length || 0), 0),
         report: fullReport,
       };

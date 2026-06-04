@@ -418,16 +418,30 @@ export async function runG2GMigration(
       usingTempDir = true;
     }
 
-    if (!readerPath) {
-      result.errors.push('No vault data path provided (extractPath or vaultZipPath required)');
-      onLog({ type: 'error', message: 'No vault data path provided' });
-      return result;
+    // After the move to DB-only storage, the disk extract is deleted at upload
+    // time. VaultReader is now only instantiated when the disk path actually
+    // exists (legacy uploads + dev/test); otherwise we use the upload metadata
+    // document for user discovery and conversationStore for conversation
+    // loading.
+    const diskAvailable = !!readerPath && fs.existsSync(readerPath);
+    const vaultReader = diskAvailable ? new VaultReader(readerPath) : null;
+
+    let allUsers;
+    if (vaultReader) {
+      onLog({ type: 'info', message: 'Reading conversations from Vault export...' });
+      allUsers = await vaultReader.discoverUsers();
+    } else {
+      // DB-only path: look up the upload doc for the user list
+      onLog({ type: 'info', message: 'Reading user list from upload metadata (DB-only mode)...' });
+      const { getDb } = await import('../../../db/mongo.js');
+      const uploadDoc = uploadId ? await getDb().collection('uploads').findOne({ _id: uploadId }) : null;
+      if (!uploadDoc) {
+        result.errors.push(`Upload ${uploadId || '(none)'} not found in DB and disk extract is gone — please re-upload the Vault ZIP.`);
+        onLog({ type: 'error', message: result.errors[0] });
+        return result;
+      }
+      allUsers = (uploadDoc.users || []).map(u => ({ email: u.email, displayName: u.displayName, conversationCount: u.conversationCount }));
     }
-
-    onLog({ type: 'info', message: 'Reading conversations from Vault export...' });
-
-    const vaultReader = new VaultReader(readerPath);
-    const allUsers = await vaultReader.discoverUsers();
 
     if (!allUsers.length) {
       result.errors.push('No users found in Vault export');
@@ -512,13 +526,20 @@ export async function runG2GMigration(
             }
           } catch (_) { /* fall through to disk */ }
         }
-        // Disk fallback (legacy uploads or DB miss) — skip if resume already determined fully-done
+        // Disk fallback only when we actually have a disk reader (legacy uploads).
+        // After the DB-only move, vaultReader is null and the migration is
+        // entirely DB-driven — a 0-length result here means the conversationStore
+        // doesn't have this user's data, and we should fail loudly.
         if (conversations.length === 0 && !userAlreadyFullyMigrated) {
-          conversations = await vaultReader.loadUserConversations(
-            sourceEmail,
-            opts?.fromDate,
-            opts?.toDate
-          );
+          if (vaultReader) {
+            conversations = await vaultReader.loadUserConversations(
+              sourceEmail,
+              opts?.fromDate,
+              opts?.toDate
+            );
+          } else {
+            onLog({ type: 'warn', message: `  No conversations in conversationStore for ${sourceEmail} — upload may need to be re-done.` });
+          }
         }
       } catch (err) {
         const errMsg = `${sourceEmail}: load failed — ${err.message}`;

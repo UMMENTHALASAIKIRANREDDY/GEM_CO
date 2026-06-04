@@ -56,8 +56,8 @@ const C={primary:'#0129AC',primaryH:'#0C18D4',primaryL:'#809EFC',tint:'#E1ECFF',
   border:'#EBEBEB',success:'#0129AC',error:'#FF1F1F',warn:'#809EFC'};
 
 /* ── localStorage — cache keys ── */
-const LS_UPLOAD  = 'gem_upload_cache';   // lightweight upload metadata {uploadId,fileName,size}
-const LS_MAPPING = 'gem_mapping_cache';  // mapping UI snapshot {g2c,c2g} (MongoDB is authoritative)
+// Upload state and user mappings are restored from the DB on mount — no
+// localStorage cache for them anymore.
 const LS_PREFS   = 'gem_ui_prefs';       // cosmetic UI prefs + migration state
 const LS_CHAT    = 'gem_chat_history';   // last 30 agent messages (role, content, ts)
 const lsGet=(k,fb)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb}catch{return fb}};
@@ -894,8 +894,11 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
       body:JSON.stringify({mappings:m,csvEmails:csv??null,customerName:'Gemini'})}).catch(()=>{});
   };
 
-  // Auto-map by email local-part — each M365 email used at most once.
-  // Skip if a CSV is active (CSV is the source of truth for source users).
+  // Auto-map by email local-part. Constraints:
+  //   - Skip if a CSV is active (CSV is the source of truth).
+  //   - Preserve every existing user-set mapping unconditionally (no
+  //     destination dedup) so many-to-one mappings survive a remount.
+  //   - Dedup applies only to fresh auto-suggestions for unmapped sources.
   useEffect(()=>{
     if(!uploadData?.users?.length)return;
     if(csvEmailsRef.current)return;
@@ -904,7 +907,7 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
     const m={};const used=new Set();
     uploadData.users.forEach(u=>{
       const existing=(mappings[u.email]||'').toLowerCase();
-      if(existing&&!used.has(existing)){m[u.email]=existing;used.add(existing);}
+      if(existing){m[u.email]=existing;used.add(existing);}
       else{const loc=u.email.split('@')[0].toLowerCase();const dest=byLocal[loc]||'';
         if(dest&&!used.has(dest)){m[u.email]=dest;used.add(dest);}else m[u.email]='';}
     });
@@ -929,25 +932,33 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
     const r=new FileReader();
     r.onload=e=>{
       const lines=e.target.result.split(/\r?\n/).slice(1);
-      const m={};const used=new Set();const csvKeys=[];
+      // Mirror C2G's upload semantics:
+      //   - skip rows with empty destination (unmapped rows shouldn't pollute the table)
+      //   - skip duplicate source rows (first row wins)
+      //   - many-to-one (two sources → one destination) IS allowed
+      const m={};const csvKeys=[];const seenSrc=new Set();
+      let skippedEmpty=0,skippedDupe=0;
       for(const l of lines){
         if(!l.trim())continue;
         const c=parseCsvLine(l);
-        if(c.length>=2&&c[0]){
-          const src=c[0].trim().toLowerCase();
-          const dst=c[1].trim().toLowerCase();
-          if(dst&&!used.has(dst)){m[src]=dst;used.add(dst);}
-          else if(!dst)m[src]='';
-          csvKeys.push(src);
-        }
+        if(c.length<2||!c[0])continue;
+        const src=c[0].trim().toLowerCase();
+        const dst=c[1].trim().toLowerCase();
+        if(!src)continue;
+        if(!dst){skippedEmpty++;continue;}
+        if(seenSrc.has(src)){skippedDupe++;continue;}
+        seenSrc.add(src);
+        m[src]=dst;
+        csvKeys.push(src);
       }
       setMappings(m);
-      setSelectedUsers(new Set(Object.entries(m).filter(([,v])=>v).map(([k])=>k)));
+      setSelectedUsers(new Set(csvKeys));
       setCsvEmails(csvKeys);
       csvEmailsRef.current=csvKeys;
       persistMappings(m,csvKeys);
       setCsvUploading(false);
-      showToast(`CSV uploaded — ${csvKeys.length} user(s).`);
+      const extra=[skippedEmpty&&`${skippedEmpty} unmapped`,skippedDupe&&`${skippedDupe} duplicate`].filter(Boolean).join(', ');
+      showToast(`CSV uploaded — ${csvKeys.length} user(s)${extra?` (skipped ${extra})`:''}.`);
     };
     r.onerror=()=>setCsvUploading(false);
     r.readAsText(file);
@@ -1832,14 +1843,17 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
       body:JSON.stringify({mappings:m,csvEmails:csv??null})}).catch(()=>{});
   };
 
-  // Dedup: ensure each destination email is used at most once (first source wins)
-  const dedupMappings=(mappings,userList)=>{
-    const used=new Set();const out={};
+  // Normalize restored mappings against the current user list. Many-to-one
+  // (multiple source users mapped to the same destination) is intentionally
+  // allowed — earlier we deduped by destination, which silently dropped a
+  // mapping on every remount when admins legitimately wanted two sources
+  // pointing to one destination. We now keep every non-empty mapping.
+  const normaliseMappings=(mappings,userList)=>{
+    const out={};
     userList.forEach(u=>{
       const em=(u.mail||u.userPrincipalName||'').toLowerCase();
-      const dest=(mappings[em]||'').toLowerCase();
-      if(dest&&!used.has(dest)){out[em]=dest;used.add(dest);}
-      else out[em]='';
+      const dest=(mappings[em]||'').trim();
+      out[em]=dest;
     });
     return out;
   };
@@ -1868,8 +1882,8 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
         setCsvEmails(doc.csvEmails);
         csvEmailsRef.current=doc.csvEmails;
         if(doc.mappings){
-          const deduped=dedupMappings({...c2gMappings,...doc.mappings},msUsers);
-          setC2gMappings(deduped);
+          const restored=normaliseMappings({...c2gMappings,...doc.mappings},msUsers);
+          setC2gMappings(restored);
           // Don't touch selection state on restore — selections are user-driven
           // and must survive navigation.
         }
@@ -1902,25 +1916,38 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
     const r=new FileReader();
     r.onload=e=>{
       const lines=e.target.result.split(/\r?\n/).slice(1);
-      const m={};const csvKeys=[];
+      // Two skip rules requested by the user:
+      //   1. Skip rows with an empty destination — an unmapped row in the CSV
+      //      shouldn't pollute the mapping table or the upload count.
+      //   2. Skip duplicate source rows — if the same source email appears
+      //      twice, keep only the first row (later rows are ignored, not
+      //      allowed to silently overwrite).
+      // Many-to-one (two different sources → one destination) IS allowed and
+      // intentionally not deduped.
+      const m={};const csvKeys=[];const seenSrc=new Set();
+      let skippedEmpty=0,skippedDupe=0;
       for(const l of lines){
         if(!l.trim())continue;
         const c=parseCsvLine(l);
-        if(c.length>=2&&c[0]){
-          const src=c[0].trim().toLowerCase();
-          const dst=c[1].trim();
-          m[src]=dst;
-          csvKeys.push(src);
-        }
+        if(c.length<2||!c[0])continue;
+        const src=c[0].trim().toLowerCase();
+        const dst=c[1].trim();
+        if(!src)continue;
+        if(!dst){skippedEmpty++;continue;}
+        if(seenSrc.has(src)){skippedDupe++;continue;}
+        seenSrc.add(src);
+        m[src]=dst;
+        csvKeys.push(src);
       }
       const merged={...c2gMappings,...m};
       setC2gMappings(merged);
-      setC2gSelectedUsers(new Set(csvKeys.filter(k=>m[k])));
+      setC2gSelectedUsers(new Set(csvKeys));
       setCsvEmails(csvKeys);
       csvEmailsRef.current=csvKeys;
       setCsvUploading(false);
-      persistMappings(m,csvKeys);
-      showToast(`CSV uploaded — ${csvKeys.length} user(s).`);
+      persistMappings(merged,csvKeys);
+      const extra=[skippedEmpty&&`${skippedEmpty} unmapped`,skippedDupe&&`${skippedDupe} duplicate`].filter(Boolean).join(', ');
+      showToast(`CSV uploaded — ${csvKeys.length} user(s)${extra?` (skipped ${extra})`:''}.`);
     };
     r.onerror=()=>{setCsvUploading(false);showToast('Failed to read CSV file.','error')};
     r.readAsText(file);
@@ -2142,7 +2169,7 @@ const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c
           </div>
           {totalConvs>0&&<div style={{textAlign:'center',fontSize:12,color:C.muted,marginBottom:8}}>Conversation {convIdx} of {totalConvs}</div>}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:16}}>
-            {[{label:'Users',val:c2gTotal>0?`${c2gStats.users}/${c2gTotal}`:c2gStats.users,c:'#0129AC'},{label:'Files Uploaded',val:c2gStats.files,c:'#20CC83'},{label:'Errors',val:c2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
+            {[{label:'Users',val:c2gTotal>0?`${c2gStats.users}/${c2gTotal}`:c2gStats.users,c:'#0129AC'},{label:'Conversations',val:c2gStats.convs??c2gStats.files??0,c:'#20CC83'},{label:'Errors',val:c2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
               <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
                 <div style={{fontSize:22,fontWeight:700,color:e.c}}>{e.val}</div>
                 <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
@@ -2159,7 +2186,7 @@ const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c
             <div style={{fontSize:13,color:C.muted}}>{lastRunWasDry?'Preview finished — no files were uploaded.':'Copilot conversations have been uploaded to Google Drive.'}</div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:20}}>
-            {[{label:'Users Processed',val:c2gTotal>0?`${c2gStats.users}/${c2gTotal}`:c2gStats.users,c:'#0129AC'},{label:lastRunWasDry?'Files (preview)':'Files Uploaded',val:c2gStats.files,c:'#20CC83'},{label:'Errors',val:c2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
+            {[{label:'Users Processed',val:c2gTotal>0?`${c2gStats.users}/${c2gTotal}`:c2gStats.users,c:'#0129AC'},{label:lastRunWasDry?'Conversations (preview)':'Conversations',val:c2gStats.convs??c2gStats.files??0,c:'#20CC83'},{label:'Errors',val:c2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
               <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
                 <div style={{fontSize:22,fontWeight:700,color:e.c}}>{e.val}</div>
                 <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
@@ -2330,6 +2357,11 @@ const StepCL2GMap=({cl2gUploadData,googleUsers,cl2gMappings,setCl2gMappings,cl2g
   const [search,setSearch]=useState('');
   const [csvUploading,setCsvUploading]=useState(false);
   const [csvEmails,setCsvEmails]=useState(null); // null = cloud users; array = CSV-sourced emails
+  // csvEmailsRef mirrors csvEmails so the auto-map effect can synchronously
+  // tell whether a CSV is active. Without it, auto-map might fire on a
+  // users/googleUsers refresh while the mount-time fetch is still pending
+  // and overwrite the persisted CSV mappings.
+  const csvEmailsRef=useRef(null);
   const users=cl2gUploadData?.users||[];
 
   // Load saved mappings + CSV from DB on mount
@@ -2338,20 +2370,27 @@ const StepCL2GMap=({cl2gUploadData,googleUsers,cl2gMappings,setCl2gMappings,cl2g
       if(doc?.mappings)setCl2gMappings(prev=>({...prev,...doc.mappings}));
       if(doc?.csvEmails){
         setCsvEmails(doc.csvEmails);
+        csvEmailsRef.current=doc.csvEmails;
         // No auto-selection on restore — user explicitly ticks rows.
       }
     }).catch(()=>{});
   },[]);
 
-  // Auto-map by email local-part — each Google email used at most once
+  // Auto-map by email local-part. Important constraints:
+  //   - Skip entirely when a CSV is the source of truth — CSV is authoritative.
+  //   - Preserve every existing user-set mapping (no destination dedup for
+  //     manually-set rows). Many-to-one mappings must survive remount.
+  //   - Dedup applies ONLY when auto-suggesting destinations for sources
+  //     that don't yet have a mapping.
   useEffect(()=>{
     if(!users.length||!googleUsers.length)return;
+    if(csvEmailsRef.current)return;
     const byLocal={};
     googleUsers.forEach(u=>{const em=(u.email||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
     const m={};const used=new Set();
     users.forEach(u=>{
       const existing=(cl2gMappings[u.uuid]||'').toLowerCase();
-      if(existing&&!used.has(existing)){m[u.uuid]=existing;used.add(existing);}
+      if(existing){m[u.uuid]=existing;used.add(existing);}
       else{const loc=(u.email_address||'').toLowerCase().split('@')[0];const dest=byLocal[loc]||'';
         if(dest&&!used.has(dest)){m[u.uuid]=dest;used.add(dest);}else m[u.uuid]='';}
     });
@@ -2388,30 +2427,41 @@ const StepCL2GMap=({cl2gUploadData,googleUsers,cl2gMappings,setCl2gMappings,cl2g
       const lines=e.target.result.split(/\r?\n/).slice(1);
       const emailToUuid={};
       users.forEach(u=>{if(u.email_address)emailToUuid[u.email_address.toLowerCase()]=u.uuid});
-      const m={...cl2gMappings};const csvUuids=[];const usedDest=new Set();
+      // Same upload semantics as C2G:
+      //   - skip rows with empty destination
+      //   - skip duplicate source rows (first wins)
+      //   - many-to-one allowed (two sources → one destination)
+      //   - unknown source emails (not in the uploaded ZIP) are silently skipped
+      const m={...cl2gMappings};const csvUuids=[];const seenSrc=new Set();
+      let skippedEmpty=0,skippedDupe=0,skippedUnknown=0;
       for(const l of lines){
         if(!l.trim())continue;
         const c=parseCsvLine(l);
-        if(c.length>=2&&c[0]){
-          const srcEmail=c[0].trim().toLowerCase();
-          const dstEmail=c[1].trim().toLowerCase();
-          const uuid=emailToUuid[srcEmail];
-          if(uuid&&dstEmail&&!usedDest.has(dstEmail)){m[uuid]=dstEmail;csvUuids.push(uuid);usedDest.add(dstEmail);}
-          else if(uuid&&!dstEmail){m[uuid]='';csvUuids.push(uuid);}
-        }
+        if(c.length<2||!c[0])continue;
+        const srcEmail=c[0].trim().toLowerCase();
+        const dstEmail=c[1].trim().toLowerCase();
+        if(!srcEmail)continue;
+        const uuid=emailToUuid[srcEmail];
+        if(!uuid){skippedUnknown++;continue;}
+        if(!dstEmail){skippedEmpty++;continue;}
+        if(seenSrc.has(srcEmail)){skippedDupe++;continue;}
+        seenSrc.add(srcEmail);
+        m[uuid]=dstEmail;
+        csvUuids.push(uuid);
       }
-      setCl2gMappings(m);setCsvEmails(csvUuids);
-      setCl2gSelectedUuids(new Set(csvUuids.filter(id=>m[id])));
+      setCl2gMappings(m);setCsvEmails(csvUuids);csvEmailsRef.current=csvUuids;
+      setCl2gSelectedUuids(new Set(csvUuids));
       persistMappings(m,csvUuids);
       setCsvUploading(false);
-      showToast(`CSV uploaded — ${csvUuids.length} user(s) mapped.`);
+      const extra=[skippedEmpty&&`${skippedEmpty} unmapped`,skippedDupe&&`${skippedDupe} duplicate`,skippedUnknown&&`${skippedUnknown} unknown`].filter(Boolean).join(', ');
+      showToast(`CSV uploaded — ${csvUuids.length} user(s) mapped${extra?` (skipped ${extra})`:''}.`);
     };
     r.onerror=()=>{setCsvUploading(false);showToast('Failed to read CSV.','error')};
     r.readAsText(file);
   };
 
   const clearCsv=()=>{
-    setCsvEmails(null);
+    setCsvEmails(null);csvEmailsRef.current=null;
     const byLocal={};
     googleUsers.forEach(u=>{const em=(u.email||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
     const m={};const used=new Set();
@@ -2547,8 +2597,6 @@ const StepCL2GOptions=({cl2gOptions,setCl2gOptions,cl2gConfig,setCl2gConfig,goog
       <Card style={{marginBottom:16}}>
         <div style={{fontSize:13,fontWeight:600,marginBottom:4,color:C.dark}}>Behavior</div>
         <Chk label="Dry run (preview only — no files uploaded)" hint="Shows what would be migrated without uploading to Google Drive" checked={cl2gOptions.dryRun} onChange={e=>setCl2gOptions(p=>({...p,dryRun:e.target.checked}))}/>
-        <Chk label="Include memory" hint="Uploads Claude's memory as a DOCX file" checked={cl2gOptions.includeMemory!==false} onChange={e=>setCl2gOptions(p=>({...p,includeMemory:e.target.checked}))}/>
-        <Chk label="Include projects" hint="Uploads Claude project documents as DOCX files" checked={cl2gOptions.includeProjects!==false} onChange={e=>setCl2gOptions(p=>({...p,includeProjects:e.target.checked}))}/>
       </Card>
       <Card style={{marginBottom:20}}>
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
@@ -2878,7 +2926,7 @@ const StepCL2GMigrate=({cl2gStats,cl2gDone,onRunAnother,onBack,onStart,cl2gLive,
             </div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:16}}>
-            {[{label:'Users',val:cl2gTotal>0?`${cl2gStats.users}/${cl2gTotal}`:cl2gStats.users,c:'#0129AC'},{label:'Files Uploaded',val:cl2gStats.files,c:'#20CC83'},{label:'Errors',val:cl2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
+            {[{label:'Users',val:cl2gTotal>0?`${cl2gStats.users}/${cl2gTotal}`:cl2gStats.users,c:'#0129AC'},{label:'Conversations',val:cl2gStats.convs??cl2gStats.files??0,c:'#20CC83'},{label:'Errors',val:cl2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
               <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
                 <div style={{fontSize:22,fontWeight:700,color:e.c}}>{e.val}</div>
                 <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
@@ -2895,7 +2943,7 @@ const StepCL2GMigrate=({cl2gStats,cl2gDone,onRunAnother,onBack,onStart,cl2gLive,
             <div style={{fontSize:13,color:C.muted}}>{lastRunWasDry?'Preview finished — no files were uploaded.':'Claude conversations have been uploaded to Google Drive.'}</div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:20}}>
-            {[{label:'Users Processed',val:cl2gTotal>0?`${cl2gStats.users}/${cl2gTotal}`:cl2gStats.users,c:'#0129AC'},{label:lastRunWasDry?'Files (preview)':'Files Uploaded',val:cl2gStats.files,c:'#20CC83'},{label:'Errors',val:cl2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
+            {[{label:'Users Processed',val:cl2gTotal>0?`${cl2gStats.users}/${cl2gTotal}`:cl2gStats.users,c:'#0129AC'},{label:lastRunWasDry?'Conversations (preview)':'Conversations',val:cl2gStats.convs??cl2gStats.files??0,c:'#20CC83'},{label:'Errors',val:cl2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
               <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
                 <div style={{fontSize:22,fontWeight:700,color:e.c}}>{e.val}</div>
                 <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
@@ -3065,6 +3113,7 @@ const StepCL2CMap=({cl2cUploadData,msUsers,cl2cMappings,setCl2cMappings,cl2cSele
   const [search,setSearch]=useState('');
   const [csvUploading,setCsvUploading]=useState(false);
   const [csvEmails,setCsvEmails]=useState(null);
+  const csvEmailsRef=useRef(null);
   const users=cl2cUploadData?.users||[];
 
   useEffect(()=>{
@@ -3072,20 +3121,25 @@ const StepCL2CMap=({cl2cUploadData,msUsers,cl2cMappings,setCl2cMappings,cl2cSele
       if(doc?.mappings)setCl2cMappings(prev=>({...prev,...doc.mappings}));
       if(doc?.csvEmails){
         setCsvEmails(doc.csvEmails);
+        csvEmailsRef.current=doc.csvEmails;
         // No auto-selection on restore — user explicitly ticks rows.
       }
     }).catch(()=>{});
   },[]);
 
+  // Auto-map by email local-part. See CL2G for the rules — same here:
+  //   skip if CSV is active, preserve all user-set mappings (no dedup), dedup
+  //   only when auto-suggesting destinations for unmapped sources.
   useEffect(()=>{
     if(!users.length||!msUsers.length)return;
+    if(csvEmailsRef.current)return;
     const byLocal={};
     // Graph returns Microsoft users with `mail` / `userPrincipalName` — NOT `email`.
     msUsers.forEach(u=>{const em=(u.mail||u.userPrincipalName||u.email||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
     const m={};const used=new Set();
     users.forEach(u=>{
       const existing=(cl2cMappings[u.uuid]||'').toLowerCase();
-      if(existing&&!used.has(existing)){m[u.uuid]=existing;used.add(existing);}
+      if(existing){m[u.uuid]=existing;used.add(existing);}
       else{const loc=(u.email_address||'').toLowerCase().split('@')[0];const dest=byLocal[loc]||'';
         if(dest&&!used.has(dest)){m[u.uuid]=dest;used.add(dest);}else m[u.uuid]='';}
     });
@@ -3122,30 +3176,41 @@ const StepCL2CMap=({cl2cUploadData,msUsers,cl2cMappings,setCl2cMappings,cl2cSele
       const lines=e.target.result.split(/\r?\n/).slice(1);
       const emailToUuid={};
       users.forEach(u=>{if(u.email_address)emailToUuid[u.email_address.toLowerCase()]=u.uuid});
-      const m={...cl2cMappings};const csvUuids=[];const usedDest=new Set();
+      // Same upload semantics as C2G:
+      //   - skip rows with empty destination
+      //   - skip duplicate source rows (first wins)
+      //   - many-to-one allowed
+      //   - unknown source emails are silently skipped
+      const m={...cl2cMappings};const csvUuids=[];const seenSrc=new Set();
+      let skippedEmpty=0,skippedDupe=0,skippedUnknown=0;
       for(const l of lines){
         if(!l.trim())continue;
         const c=parseCsvLine(l);
-        if(c.length>=2&&c[0]){
-          const srcEmail=c[0].trim().toLowerCase();
-          const dstEmail=c[1].trim().toLowerCase();
-          const uuid=emailToUuid[srcEmail];
-          if(uuid&&dstEmail&&!usedDest.has(dstEmail)){m[uuid]=dstEmail;csvUuids.push(uuid);usedDest.add(dstEmail);}
-          else if(uuid&&!dstEmail){m[uuid]='';csvUuids.push(uuid);}
-        }
+        if(c.length<2||!c[0])continue;
+        const srcEmail=c[0].trim().toLowerCase();
+        const dstEmail=c[1].trim().toLowerCase();
+        if(!srcEmail)continue;
+        const uuid=emailToUuid[srcEmail];
+        if(!uuid){skippedUnknown++;continue;}
+        if(!dstEmail){skippedEmpty++;continue;}
+        if(seenSrc.has(srcEmail)){skippedDupe++;continue;}
+        seenSrc.add(srcEmail);
+        m[uuid]=dstEmail;
+        csvUuids.push(uuid);
       }
-      setCl2cMappings(m);setCsvEmails(csvUuids);
-      setCl2cSelectedUuids(new Set(csvUuids.filter(id=>m[id])));
+      setCl2cMappings(m);setCsvEmails(csvUuids);csvEmailsRef.current=csvUuids;
+      setCl2cSelectedUuids(new Set(csvUuids));
       persistMappings(m,csvUuids);
       setCsvUploading(false);
-      showToast(`CSV uploaded — ${csvUuids.length} user(s) mapped.`);
+      const extra=[skippedEmpty&&`${skippedEmpty} unmapped`,skippedDupe&&`${skippedDupe} duplicate`,skippedUnknown&&`${skippedUnknown} unknown`].filter(Boolean).join(', ');
+      showToast(`CSV uploaded — ${csvUuids.length} user(s) mapped${extra?` (skipped ${extra})`:''}.`);
     };
     r.onerror=()=>{setCsvUploading(false);showToast('Failed to read CSV.','error')};
     r.readAsText(file);
   };
 
   const clearCsv=()=>{
-    setCsvEmails(null);
+    setCsvEmails(null);csvEmailsRef.current=null;
     const byLocal={};
     msUsers.forEach(u=>{const em=(u.mail||u.userPrincipalName||u.email||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
     const m={};const used=new Set();
@@ -3280,8 +3345,6 @@ const StepCL2COptions=({cl2cOptions,setCl2cOptions,cl2cConfig,setCl2cConfig,msAu
       <Card style={{marginBottom:16}}>
         <div style={{fontSize:13,fontWeight:600,marginBottom:4,color:C.dark}}>Behavior</div>
         <Chk label="Dry run (preview only — no files uploaded)" hint="Shows what would be migrated without uploading to Microsoft 365" checked={cl2cOptions.dryRun} onChange={e=>setCl2cOptions(p=>({...p,dryRun:e.target.checked}))}/>
-        <Chk label="Include memory" hint="Uploads Claude's memory as a DOCX file" checked={cl2cOptions.includeMemory!==false} onChange={e=>setCl2cOptions(p=>({...p,includeMemory:e.target.checked}))}/>
-        <Chk label="Include projects" hint="Uploads Claude project documents as DOCX files" checked={cl2cOptions.includeProjects!==false} onChange={e=>setCl2cOptions(p=>({...p,includeProjects:e.target.checked}))}/>
       </Card>
       <Card style={{marginBottom:20}}>
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
@@ -3341,7 +3404,7 @@ const StepCL2CMigrate=({cl2cStats,cl2cDone,onRunAnother,onBack,onStart,cl2cLive,
             </div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:16}}>
-            {[{label:'Users',val:cl2cTotal>0?`${cl2cStats.users}/${cl2cTotal}`:cl2cStats.users,c:'#0129AC'},{label:'Files Uploaded',val:cl2cStats.files,c:'#20CC83'},{label:'Errors',val:cl2cStats.errors,c:'#FF1F1F'}].map((e,i)=>(
+            {[{label:'Users',val:cl2cTotal>0?`${cl2cStats.users}/${cl2cTotal}`:cl2cStats.users,c:'#0129AC'},{label:'Conversations',val:cl2cStats.convs??cl2cStats.files??0,c:'#20CC83'},{label:'Errors',val:cl2cStats.errors,c:'#FF1F1F'}].map((e,i)=>(
               <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
                 <div style={{fontSize:22,fontWeight:700,color:e.c}}>{e.val}</div>
                 <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
@@ -3358,7 +3421,7 @@ const StepCL2CMigrate=({cl2cStats,cl2cDone,onRunAnother,onBack,onStart,cl2cLive,
             <div style={{fontSize:13,color:C.muted}}>{lastRunWasDry?'Preview finished — no files were uploaded.':'Claude conversations have been uploaded to Microsoft 365 Copilot.'}</div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:20}}>
-            {[{label:'Users Processed',val:cl2cTotal>0?`${cl2cStats.users}/${cl2cTotal}`:cl2cStats.users,c:'#0129AC'},{label:lastRunWasDry?'Files (preview)':'Files Uploaded',val:cl2cStats.files,c:'#20CC83'},{label:'Errors',val:cl2cStats.errors,c:'#FF1F1F'}].map((e,i)=>(
+            {[{label:'Users Processed',val:cl2cTotal>0?`${cl2cStats.users}/${cl2cTotal}`:cl2cStats.users,c:'#0129AC'},{label:lastRunWasDry?'Conversations (preview)':'Conversations',val:cl2cStats.convs??cl2cStats.files??0,c:'#20CC83'},{label:'Errors',val:cl2cStats.errors,c:'#FF1F1F'}].map((e,i)=>(
               <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
                 <div style={{fontSize:22,fontWeight:700,color:e.c}}>{e.val}</div>
                 <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
@@ -3693,45 +3756,63 @@ const StepC2CUserMap=({c2cConfig,c2cMappings,setC2cMappings,c2cSelectedUsers,set
     showToast?.(n>0?`Auto-mapped ${n} user(s).`:'No new auto-mappings found.');
   };
 
+  // CSV format matches C2G (and the other directions): two columns —
+  // "Source User","Destination User". Source rows show mapped destination (may
+  // be blank); after sources, every unused destination email gets a row with an
+  // empty source so the admin can see who's still available.
   const downloadCsv=()=>{
-    const rows=[['SECTION','Source User','Destination User','Mapped'].map(v=>`"${v}"`).join(',')];
-    srcUsers.forEach(u=>{
-      const em=u.mail||u.userPrincipalName||'';
-      const d=c2cMappings[em.toLowerCase()]||'';
-      rows.push(['source',em,d,d?'yes':'no'].map(v=>`"${String(v||'').replace(/"/g,'""')}"`).join(','));
+    const sorted=[...srcUsers].sort((a,b)=>{
+      const ea=(a.mail||a.userPrincipalName||'').toLowerCase();
+      const eb=(b.mail||b.userPrincipalName||'').toLowerCase();
+      const ma=!!c2cMappings[ea],mb=!!c2cMappings[eb];
+      if(ma!==mb)return ma?-1:1;
+      return ea.localeCompare(eb);
     });
-    const used=new Set(Object.values(c2cMappings).filter(Boolean).map(v=>v.toLowerCase()));
-    destUsers.forEach(u=>{
-      const em=u.mail||u.userPrincipalName||'';
-      rows.push(['destination','',em,used.has(em.toLowerCase())?'used':'available'].map(v=>`"${String(v||'').replace(/"/g,'""')}"`).join(','));
-    });
-    const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(rows.join('\n'));a.download='c2c-user-mappings.csv';a.click();
-    showToast?.(`Downloaded ${srcUsers.length} source + ${destUsers.length} destination users.`);
+    const rows=sorted.map(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();return`"${em}","${c2cMappings[em]||''}"`;});
+    const usedDest=new Set(Object.values(c2cMappings).filter(Boolean).map(v=>v.toLowerCase()));
+    const destSorted=[...destUsers].map(u=>(u.mail||u.userPrincipalName||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b));
+    for(const em of destSorted){if(!usedDest.has(em.toLowerCase()))rows.push(`"","${em}"`);}
+    const csv='Source User,Destination User\n'+rows.join('\n');
+    const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='c2c-user-mappings.csv';a.click();
+    showToast?.(`Downloaded ${sorted.length} source + ${destSorted.length} destination users.`);
   };
 
   const uploadCsv=file=>{
     setCsvUploading(true);
     const r=new FileReader();
     r.onload=e=>{
-      const lines=e.target.result.split(/\r?\n/);
-      const m={...c2cMappings};let n=0;
-      const csvKeys=[];
+      const lines=e.target.result.split(/\r?\n/).slice(1);
+      // Same upload semantics as C2G:
+      //   - skip rows with empty destination (unmapped rows shouldn't pollute the table)
+      //   - skip duplicate source rows (first wins)
+      //   - many-to-one (two sources → one destination) IS allowed
+      // For backward compatibility we still recognise the old 4-column
+      // "section,source,dest,mapped" rows where the first cell is "source".
+      const m={...c2cMappings};const csvKeys=[];const seenSrc=new Set();
+      let skippedEmpty=0,skippedDupe=0;
       for(const l of lines){
         if(!l.trim())continue;
         const c=parseCsvLine(l);
         if(c.length<2)continue;
         const first=(c[0]||'').trim().toLowerCase();
-        if(first==='section'||first==='source user'||first==='destination')continue;
-        const src=first==='source'?(c[1]||'').trim().toLowerCase():(c[0]||'').trim().toLowerCase();
-        const dst=first==='source'?(c[2]||'').trim().toLowerCase():(c[1]||'').trim().toLowerCase();
-        if(src){m[src]=dst;n++;csvKeys.push(src);}
+        if(first==='destination')continue;
+        const isOldFmt=first==='source';
+        const src=isOldFmt?(c[1]||'').trim().toLowerCase():first;
+        const dst=isOldFmt?(c[2]||'').trim().toLowerCase():(c[1]||'').trim().toLowerCase();
+        if(!src)continue;
+        if(!dst){skippedEmpty++;continue;}
+        if(seenSrc.has(src)){skippedDupe++;continue;}
+        seenSrc.add(src);
+        m[src]=dst;
+        csvKeys.push(src);
       }
       setC2cMappings(m);
       setCsvEmails(csvKeys);
-      setC2cSelectedUsers(new Set(csvKeys.filter(k=>m[k])));
+      setC2cSelectedUsers(new Set(csvKeys));
       persistMappings(m,csvKeys);
       setCsvUploading(false);
-      showToast?.(`Imported ${n} mapping(s).`);
+      const extra=[skippedEmpty&&`${skippedEmpty} unmapped`,skippedDupe&&`${skippedDupe} duplicate`].filter(Boolean).join(', ');
+      showToast?.(`CSV uploaded — ${csvKeys.length} user(s)${extra?` (skipped ${extra})`:''}.`);
     };
     r.onerror=()=>setCsvUploading(false);
     r.readAsText(file);
@@ -4324,53 +4405,56 @@ const StepG2GMap=({g2gUploadData,g2gConfig,g2gMappings,setG2gMappings,g2gSelecte
       body:JSON.stringify({mappings:m,csvEmails:csv??null})}).catch(()=>{});
   };
 
-  // CSV includes ALL source AND destination users (mapped or not) so the client knows totals
+  // CSV format matches C2G (uniform across all directions): two columns —
+  // "Source User","Destination User". Source rows show their current mapping
+  // (may be blank), followed by every unused destination email on its own row.
   const downloadCsv=()=>{
     const sortedSrc=[...users].sort((a,b)=>{const ma=!!g2gMappings[a.email],mb=!!g2gMappings[b.email];if(ma!==mb)return ma?-1:1;return a.email.localeCompare(b.email)});
-    const mappedDestSet=new Set(Object.values(g2gMappings).filter(Boolean).map(e=>e.toLowerCase()));
-    const escape=v=>`"${String(v??'').replace(/"/g,'""')}"`;
-    const rows=[];
-    rows.push(['SECTION','Source User','Destination User','Mapped','Chats'].map(escape).join(','));
-    // All source users (with their current mapping)
-    for(const u of sortedSrc){
-      const dest=g2gMappings[u.email]||'';
-      rows.push(['source',u.email,dest,dest?'yes':'no',u.conversation_count||0].map(escape).join(','));
-    }
-    // All destination users (so client sees full destination roster)
-    const sortedDest=[...destUsers].sort((a,b)=>(a.email||'').localeCompare(b.email||''));
-    for(const d of sortedDest){
-      const isUsed=mappedDestSet.has((d.email||'').toLowerCase());
-      rows.push(['destination','',d.email,isUsed?'used':'available',''].map(escape).join(','));
-    }
-    const csv=rows.join('\n');
-    const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='user-mappings.csv';a.click();
-    showToast(`Downloaded ${sortedSrc.length} source + ${sortedDest.length} destination users.`);
+    const rows=sortedSrc.map(u=>`"${u.email}","${g2gMappings[u.email]||''}"`);
+    const usedDest=new Set(Object.values(g2gMappings).filter(Boolean).map(v=>v.toLowerCase()));
+    const destSorted=[...destUsers].map(u=>(u.email||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b));
+    for(const em of destSorted){if(!usedDest.has(em.toLowerCase()))rows.push(`"","${em}"`);}
+    const csv='Source User,Destination User\n'+rows.join('\n');
+    const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='g2g-user-mappings.csv';a.click();
+    showToast(`Downloaded ${sortedSrc.length} source + ${destSorted.length} destination users.`);
   };
 
   const uploadCsv=file=>{
     setCsvUploading(true);
     const r=new FileReader();
     r.onload=e=>{
-      const lines=e.target.result.split(/\r?\n/);
-      const m={...g2gMappings};
-      let imported=0;
-      const csvKeys=[];
+      const lines=e.target.result.split(/\r?\n/).slice(1);
+      // Same upload semantics as C2G:
+      //   - skip rows with empty destination
+      //   - skip duplicate source rows (first wins)
+      //   - many-to-one allowed
+      // Backward-compatible with the old 4/5-column "section,source,dest,…" rows
+      // where the first cell is "source".
+      const m={...g2gMappings};const csvKeys=[];const seenSrc=new Set();
+      let skippedEmpty=0,skippedDupe=0;
       for(const l of lines){
         if(!l.trim())continue;
         const c=parseCsvLine(l);
         if(c.length<2)continue;
         const first=(c[0]||'').trim().toLowerCase();
-        if(first==='section'||first==='source user'||first==='destination')continue;
-        const src=(first==='source'?(c[1]||'').trim():(c[0]||'').trim()).toLowerCase();
-        const dst=first==='source'?(c[2]||'').trim():(c[1]||'').trim();
-        if(src){m[src]=dst;imported++;csvKeys.push(src);}
+        if(first==='destination')continue;
+        const isOldFmt=first==='source';
+        const src=isOldFmt?(c[1]||'').trim().toLowerCase():first;
+        const dst=isOldFmt?(c[2]||'').trim().toLowerCase():(c[1]||'').trim().toLowerCase();
+        if(!src)continue;
+        if(!dst){skippedEmpty++;continue;}
+        if(seenSrc.has(src)){skippedDupe++;continue;}
+        seenSrc.add(src);
+        m[src]=dst;
+        csvKeys.push(src);
       }
       setG2gMappings(m);
       setCsvEmails(csvKeys);
-      setG2gSelectedUsers(new Set(csvKeys.filter(k=>m[k])));
+      setG2gSelectedUsers(new Set(csvKeys));
       persistMappings(m,csvKeys);
       setCsvUploading(false);
-      showToast(`Imported ${imported} mapping(s).`);
+      const extra=[skippedEmpty&&`${skippedEmpty} unmapped`,skippedDupe&&`${skippedDupe} duplicate`].filter(Boolean).join(', ');
+      showToast(`CSV uploaded — ${csvKeys.length} user(s)${extra?` (skipped ${extra})`:''}.`);
     };
     r.onerror=()=>setCsvUploading(false);
     r.readAsText(file);
@@ -4882,14 +4966,17 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
                       // Sum conversations_processed from per-user reports when available;
                       // fall back to migratedConversations (some legacy batches only set this).
                       const userConvSum=(r.report?.users||r.users||[]).reduce((s,u)=>s+(u.conversations_processed||0),0);
-                      // Conversation count resolution — in priority order:
-                      //   1. liveStats.pages (if user is viewing the migration UI)
-                      //   2. r.progressConversations (mid-run incremental write, if backend writes it)
-                      //   3. dryRun: report.summary.total_conversations OR top-level totalConversations
-                      //   4. completed: sum of per-user conversations_processed OR migratedConversations
-                      const dryRunConvs=r.report?.summary?.total_conversations ?? r.totalConversations ?? 0;
+                      // The /reports endpoint strips the `report` field (projection:
+                      // {report:0}) to keep payloads small, so report.summary.* and
+                      // report.users are typically absent here — we rely on the
+                      // top-level migratedConversations/totalConversations fields
+                      // the backend writes alongside the report. Use || (not ??)
+                      // so zero values (e.g. userConvSum=0 because users[] is
+                      // stripped) fall through to migratedConversations instead
+                      // of pinning the display at 0.
+                      const dryRunConvs=r.report?.summary?.total_conversations||r.totalConversations||userConvSum||r.migratedConversations||0;
                       const doneConvs=live?liveStats.pages
-                        :(isRunningBatch?(r.progressConversations ?? r.progressPages ?? userConvSum ?? 0)
+                        :(isRunningBatch?(r.progressConversations||r.progressPages||userConvSum||0)
                         :(r.dryRun?dryRunConvs:(userConvSum||r.migratedConversations||0)));
                       const doneErrors=live?liveStats.errors:(isRunningBatch?r.progressErrors:(r.totalErrors??r.report?.summary?.total_errors??0));
                       const totalUsers=r.totalUsers||0;
@@ -4944,13 +5031,13 @@ function App(){
   // Track initial values so DB restore doesn't clobber navigation the user made before init fetch returned
   const initStepRef=useRef(lsGet(LS_PREFS,{}).step||0);
   const initMigDirRef=useRef(lsGet(LS_PREFS,{}).migDir||null);
-  const [uploadData,setUploadData]=useState(()=>{const c=lsGet(LS_UPLOAD,null);return c?.uploadId?c:null});
+  const [uploadData,setUploadData]=useState(null);
   // Signal to drive the G2C Import Data tab from the agent (e.g. "I want to upload a ZIP")
   const [importTabSignal,setImportTabSignal]=useState(null);
   // Signal to drive the Vault export from the agent ("Export Vault for ALL users")
   const [exportTrigger,setExportTrigger]=useState(null);
   const [config,setConfig]=useState(()=>({filePath:'GeminiChats',tenantId:'807d6772-847c-40e2-9bec-e2c930b3a42e',...(lsGet(LS_PREFS,{}).config||{})}));
-  const [mappings,setMappings]=useState(()=>lsGet(LS_MAPPING,{}).g2c||{});
+  const [mappings,setMappings]=useState({});
   const [selectedUsers,setSelectedUsers]=useState(()=>new Set());
   const [options,setOptions]=useState(()=>({dryRun:true,skipFollowups:false,skipAiResponse:false,fromDate:'',toDate:'',...(lsGet(LS_PREFS,{}).options||{})}));
   const [googleAuthed,setGoogleAuthed]=useState(false);
@@ -4986,7 +5073,7 @@ function App(){
   const [agentMode,setAgentMode]=useState('guide');
   const [leftMode,setLeftMode]=useState(()=>lsGet(LS_PREFS,{}).leftMode||'viz'); // 'viz' | 'mapping'
   const [migDir,setMigDir]=useState(()=>lsGet(LS_PREFS,{}).migDir||null); // 'gemini-copilot' | 'copilot-gemini' | 'claude-gemini' | null
-  const [c2gMappings,setC2gMappings]=useState(()=>lsGet(LS_MAPPING,{}).c2g||{});
+  const [c2gMappings,setC2gMappings]=useState({});
   const [c2gSelectedUsers,setC2gSelectedUsers]=useState(()=>new Set());
   const [c2gStats,setC2gStats]=useState(()=>lsGet(LS_PREFS,{}).c2gStats||{users:0,files:0,errors:0});
   const [c2gTotal,setC2gTotal]=useState(0);
@@ -4997,8 +5084,8 @@ function App(){
   const [c2gConfig,setC2gConfig]=useState(()=>({folderName:'CopilotChats',...(lsGet(LS_PREFS,{}).c2gConfig||{})}));
   const [c2gLastDry,setC2gLastDry]=useState(()=>lsGet(LS_PREFS,{}).c2gLastDry||false);
   // CL2G (Claude → Gemini) state
-  const [cl2gUploadData,setCl2gUploadData]=useState(()=>lsGet(LS_UPLOAD,{}).cl2g||null);
-  const [cl2gMappings,setCl2gMappings]=useState(()=>lsGet(LS_MAPPING,{}).cl2g||{});
+  const [cl2gUploadData,setCl2gUploadData]=useState(null);
+  const [cl2gMappings,setCl2gMappings]=useState({});
   const [cl2gSelectedUuids,setCl2gSelectedUuids]=useState(new Set());
   const [cl2gOptions,setCl2gOptions]=useState(()=>({dryRun:true,fromDate:'',toDate:'',includeMemory:true,includeProjects:true,...(lsGet(LS_PREFS,{}).cl2gOptions||{})}));
   const [cl2gConfig,setCl2gConfig]=useState(()=>({folderName:'ClaudeChats',...(lsGet(LS_PREFS,{}).cl2gConfig||{})}));
@@ -5084,6 +5171,29 @@ function App(){
         setG2gSelectedUsers(new Set(session.g2gSelectedUsers||[]));
         setG2gOptions(session.g2gOptions||{dryRun:true,fromDate:'',toDate:''});
       }
+    }).catch(()=>{});
+  },[]);
+
+  // Restore the latest ZIP upload for G2C / CL2G / CL2C from the DB on mount.
+  // The Step{Dir}Upload components already do this when they mount, but they
+  // only run on the upload step. If the user refreshes while on the mapping
+  // step (or any later step), those components aren't mounted, so the upload
+  // state would otherwise stay null until the user navigates back. Loading at
+  // App-level ensures uploadData/cl2gUploadData/cl2cUploadData are populated
+  // regardless of which step the user lands on. We pick the most recent upload
+  // (the /uploads endpoints already sort by uploadTime DESC).
+  useEffect(()=>{
+    fetch('/api/uploads').then(r=>r.ok?r.json():null).then(d=>{
+      const u=d?.uploads?.[0];
+      if(u&&!uploadData)setUploadData({uploadId:u.id,fileName:u.original_name,users:u.users||[],total_users:u.total_users,total_conversations:u.total_conversations,extract_path:u.extract_path});
+    }).catch(()=>{});
+    fetch('/api/cl2g/uploads').then(r=>r.ok?r.json():null).then(list=>{
+      const u=Array.isArray(list)?list[0]:null;
+      if(u&&!cl2gUploadData)setCl2gUploadData({uploadId:u._id,users:u.users||[],totalConversations:u.totalConversations||0,totalMemories:u.totalMemories||0,totalProjects:u.totalProjects||0,fileName:u.fileName});
+    }).catch(()=>{});
+    fetch('/api/cl2c/uploads').then(r=>r.ok?r.json():null).then(list=>{
+      const u=Array.isArray(list)?list[0]:null;
+      if(u&&!cl2cUploadData)setCl2cUploadData({uploadId:u._id,users:u.users||[],totalConversations:u.totalConversations||0,totalMemories:u.totalMemories||0,totalProjects:u.totalProjects||0,fileName:u.fileName});
     }).catch(()=>{});
   },[]);
 
@@ -5225,7 +5335,7 @@ function App(){
             if(c2gWs&&c2gWs.status==='completed'){
               const r=c2gWs.report?.summary||{};
               setC2gDone(true);setC2gLive(false);
-              setC2gStats({users:r.total_users||c2gWs.migratedUsers||0,files:r.total_pages_created||0,errors:r.total_errors||0});
+              setC2gStats({users:r.total_users||c2gWs.migratedUsers||0,files:r.total_pages_created||0,convs:r.total_conversations||c2gWs.migratedConversations||0,errors:r.total_errors||0});
               setC2gLastDry(!!c2gWs.dryRun);
               setStep(prev=>prev>=4?Math.max(prev,5):prev);
             } else if(c2gWs&&c2gWs.status==='running'){
@@ -5237,7 +5347,7 @@ function App(){
             if(cl2gWs&&cl2gWs.status==='completed'){
               const r=cl2gWs.report?.summary||{};
               setCl2gDone(true);setCl2gLive(false);cl2gLiveRef.current=false;
-              setCl2gStats({users:r.total_users||cl2gWs.migratedUsers||0,files:r.total_pages_created||0,errors:r.total_errors||0});
+              setCl2gStats({users:r.total_users||cl2gWs.migratedUsers||0,files:r.total_pages_created||0,convs:r.total_conversations||cl2gWs.migratedConversations||0,errors:r.total_errors||0});
               setCl2gLastDry(!!cl2gWs.dryRun);
               setStep(prev=>prev>=5&&prev<7?6:prev);
             } else if(cl2gWs&&cl2gWs.status==='running'){
@@ -5266,7 +5376,7 @@ function App(){
             if(cl2cWs&&cl2cWs.status==='completed'){
               const r=cl2cWs.report?.summary||{};
               setCl2cDone(true);setCl2cLive(false);cl2cLiveRef.current=false;
-              setCl2cStats({users:r.total_users||cl2cWs.migratedUsers||0,files:r.total_pages_created||0,errors:r.total_errors||0});
+              setCl2cStats({users:r.total_users||cl2cWs.migratedUsers||0,files:r.total_pages_created||0,convs:r.total_conversations||cl2cWs.migratedConversations||0,errors:r.total_errors||0});
               setCl2cLastDry(!!cl2cWs.dryRun);
               setStep(prev=>prev>=5&&prev<7?6:prev);
             } else if(cl2cWs&&cl2cWs.status==='running'){
@@ -5312,17 +5422,13 @@ function App(){
   },[agentMsgs,step,migDir,migDone,c2gDone,cl2gDone,g2gDone,cl2cDone,c2cDone,stats,c2gStats,cl2gStats,g2gStats,cl2cStats,c2cStats,lastRunWasDry,c2gLastDry,cl2gLastDry,g2gLastDry,cl2cLastDry,c2cLastDry,currentBatchId,options,c2gOptions,cl2gOptions,cl2cOptions,c2cOptions]);
 
   // Persist mapping cache to localStorage
-  useEffect(()=>{lsSet(LS_MAPPING,{...lsGet(LS_MAPPING,{}),g2c:mappings})},[mappings]);
-  useEffect(()=>{lsSet(LS_MAPPING,{...lsGet(LS_MAPPING,{}),c2g:c2gMappings})},[c2gMappings]);
-  useEffect(()=>{lsSet(LS_MAPPING,{...lsGet(LS_MAPPING,{}),cl2g:cl2gMappings})},[cl2gMappings]);
+  // Mappings are persisted server-side via /api/{dir}/user-mappings; each
+  // Step*Map component fetches them on mount. No localStorage cache.
 
-  // Persist upload metadata cache
-  useEffect(()=>{
-    if(uploadData) lsSet(LS_UPLOAD,{...lsGet(LS_UPLOAD,{}),uploadId:uploadData.uploadId,fileName:uploadData.fileName,size:uploadData.size});
-  },[uploadData]);
-  useEffect(()=>{
-    lsSet(LS_UPLOAD,{...lsGet(LS_UPLOAD,{}),cl2g:cl2gUploadData?{uploadId:cl2gUploadData.uploadId,fileName:cl2gUploadData.fileName,users:cl2gUploadData.users}:null});
-  },[cl2gUploadData]);
+  // Upload state is restored from the DB on mount (see effect below) — no
+  // localStorage cache is needed. Server-side records are the source of truth
+  // and survive browser refreshes, cross-device sign-ins, and back-navigation
+  // from any step.
 
   // Persist all migration state to LS_PREFS for instant restore on refresh
   useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),splitPct})},[splitPct]);
@@ -5617,11 +5723,11 @@ function App(){
         // sends `users` (completed-user count) on every progress event. Local incrementing
         // caused the ring to jitter back and forth between progress events.
         if(d.type==='total'){try{const p=JSON.parse(d.message);if(p.total)setC2gTotal(p.total);}catch{}}
-        if(d.type==='progress'){try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;if(p.total)setC2gTotal(p.total);if(p.convIdx!=null&&p.totalConvs)setC2gConvProgress({convIdx:p.convIdx,totalConvs:p.totalConvs});else setC2gConvProgress({convIdx:0,totalConvs:0});}catch{}}
+        if(d.type==='progress'){try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.convs!=null)curStats.convs=p.convs;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;if(p.total)setC2gTotal(p.total);if(p.convIdx!=null&&p.totalConvs)setC2gConvProgress({convIdx:p.convIdx,totalConvs:p.totalConvs});else setC2gConvProgress({convIdx:0,totalConvs:0});}catch{}}
         setC2gStats({...curStats});addLog(d.type,d.message||'');
         // Proactive milestone messages
         if(d.type==='done'){
-          try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;}catch{}
+          try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.convs!=null)curStats.convs=p.convs;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;}catch{}
           setC2gStats({...curStats});
           sseRef.current.close();setC2gLive(false);setC2gDone(true);setStep(5);
           setReportRefreshKey(p=>p+1);
@@ -5685,7 +5791,7 @@ function App(){
         if(d.type==='error'||d.type==='warn')curStats.errors++;
         if(d.type==='info'&&d.message?.includes('Processing:'))curStats.users++;
         if(d.type==='total'){try{const p=JSON.parse(d.message);if(p.total)setCl2gTotal(p.total);}catch{}}
-        if(d.type==='progress'){try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;if(p.total)setCl2gTotal(p.total);}catch{}}
+        if(d.type==='progress'){try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.convs!=null)curStats.convs=p.convs;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;if(p.total)setCl2gTotal(p.total);}catch{}}
         setCl2gStats({...curStats});addLog(d.type,d.message||'');
         // Reset silence watchdog on every event
         if(silenceTimer.current){clearTimeout(silenceTimer.current);}
@@ -5703,7 +5809,7 @@ function App(){
         }
         if(d.type==='done'){
           if(silenceTimer.current){clearTimeout(silenceTimer.current);}
-          try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;}catch{}
+          try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.convs!=null)curStats.convs=p.convs;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;}catch{}
           setCl2gStats({...curStats});
           sseRef.current.close();setCl2gLive(false);cl2gLiveRef.current=false;setCl2gDone(true);setStep(6);
           // Delay report refresh to allow DB write to complete
@@ -5822,7 +5928,7 @@ function App(){
         if(d.type==='error'||d.type==='warn')curStats.errors++;
         if(d.type==='info'&&d.message?.includes('Processing:'))curStats.users++;
         if(d.type==='total'){try{const p=JSON.parse(d.message);if(p.total)setCl2cTotal(p.total);}catch{}}
-        if(d.type==='progress'){try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;if(p.total)setCl2cTotal(p.total);}catch{}}
+        if(d.type==='progress'){try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.convs!=null)curStats.convs=p.convs;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;if(p.total)setCl2cTotal(p.total);}catch{}}
         setCl2cStats({...curStats});addLog(d.type,d.message||'');
         if(silenceTimer.current){clearTimeout(silenceTimer.current);}
         if(cl2cLiveRef.current&&d.type!=='done'){
@@ -5837,7 +5943,7 @@ function App(){
         }
         if(d.type==='done'){
           if(silenceTimer.current){clearTimeout(silenceTimer.current);}
-          try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;}catch{}
+          try{const p=JSON.parse(d.message);if(p.files!=null)curStats.files=p.files;if(p.convs!=null)curStats.convs=p.convs;if(p.errors!=null)curStats.errors=p.errors;if(p.users!=null)curStats.users=p.users;}catch{}
           setCl2cStats({...curStats});
           sseRef.current.close();setCl2cLive(false);cl2cLiveRef.current=false;setCl2cDone(true);setStep(6);
           setTimeout(()=>setReportRefreshKey(p=>p+1),3000);
