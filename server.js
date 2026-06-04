@@ -28,6 +28,7 @@ import { createCL2CRouter } from './src/modules/cl2c/routes.js';
 import { createG2GRouter } from './src/modules/g2g/routes.js';
 import { createCopilotRouter, handleCopilotCallback } from './src/modules/copilot/routes.js';
 import { createC2CRouter, createTenantConsentCallback } from './src/modules/c2c/routes.js';
+import { createGeminiInsertRouter } from './src/modules/gemini-insert/routes.js';
 import { runAgentLoop } from './src/agent/agentLoop.js';
 import { auditEmitter } from './src/agent/auditLogger.js';
 
@@ -186,6 +187,8 @@ app.post('/api/logout', (req, res) => {
 const PUBLIC_PATHS = ['/api/login', '/api/me', '/api/logout'];
 app.use('/api', (req, res, next) => {
   if (PUBLIC_PATHS.includes(req.path)) return next();
+  // Gemini-insert is a self-service flow — no portal login required
+  if (req.path.startsWith('/gemini-insert')) return next();
   if (!req.session?.appUser) return res.status(401).json({ error: 'Not logged in' });
   next();
 });
@@ -818,6 +821,15 @@ try {
   if (typeof cl2gRouter.executeCL2GMigration === 'function') registerResumeHandler('cl2g', cl2gRouter.executeCL2GMigration);
   if (typeof cl2cRouter.executeCL2CMigration === 'function') registerResumeHandler('cl2c', cl2cRouter.executeCL2CMigration);
 } catch (e) { console.warn('[startup] Resume handler registration failed:', e.message); }
+
+// Gemini Insert router — mounted at /api/gemini-insert (any source → Gemini chat sidebar)
+const geminiInsertRouter = createGeminiInsertRouter({ db });
+app.use('/api/gemini-insert', geminiInsertRouter);
+
+// Self-service Gemini migration start page
+app.get('/gemini/start', (req, res) => {
+  res.sendFile(path.join(__dirname, 'ui', 'gemini-start.html'));
+});
 
 // ─── Index bootstrap ──────────────────────────────────────────────────────────
 
