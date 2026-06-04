@@ -66,7 +66,7 @@ async function _fetchWithRetry(url, init, providerLabel) {
   throw new Error(`${providerLabel} error ${lastStatus}: ${lastErrorText}`);
 }
 
-export async function callAI(messages, tools) {
+export async function callAI(messages, tools, { model, maxTokens } = {}) {
   const azureEndpoint = process.env.AZURE_OPENAI_ENDPOINT;
   const azureKey = process.env.AZURE_OPENAI_API_KEY;
   const azureDeployment = process.env.AZURE_OPENAI_DEPLOYMENT || 'gpt-4o';
@@ -79,7 +79,8 @@ export async function callAI(messages, tools) {
 
   // OPENAI_API_KEY takes priority — use OpenAI directly even if Azure vars are set
   if (openaiKey) {
-    const body = { model: process.env.OPENAI_MODEL || 'gpt-4o', messages: safeMessages, max_tokens: 1800, temperature: 0.15 };
+    const resolvedModel = model || process.env.OPENAI_MODEL || 'gpt-4.1-mini';
+    const body = { model: resolvedModel, messages: safeMessages, max_tokens: maxTokens || 1800, temperature: 0.15 };
     if (tools) { body.tools = tools; body.tool_choice = 'auto'; }
     const r = await _fetchWithRetry(
       'https://api.openai.com/v1/chat/completions',
