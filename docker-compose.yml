@@ -6,12 +6,14 @@ services:
     container_name: gem-co-migration
     ports:
       - "127.0.0.1:4000:4000"
+      - "127.0.0.1:6080:6080"
     env_file:
       - .env
     volumes:
       - ./uploads:/app/uploads
       - ./customers:/app/customers
       - ./service_account.json:/app/service_account.json:ro
+      - copilot_sessions:/app/sessions
     depends_on:
       mongodb:
         condition: service_healthy
@@ -47,4 +49,6 @@ volumes:
   mongodb_data:
     driver: local
   mongodb_config:
+    driver: local
+  copilot_sessions:
     driver: local

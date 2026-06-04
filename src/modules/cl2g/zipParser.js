@@ -13,26 +13,30 @@ import { createReadStream, createWriteStream } from 'node:fs';
 // ── Unzip ────────────────────────────────────────────────────────────────────
 
 export async function extractZip(zipPath, destDir) {
-  // Use the 'unzipper' package if available, otherwise fall back to adm-zip
-  let unzipper;
-  try {
-    unzipper = await import('unzipper');
-  } catch {
-    try {
-      const AdmZip = (await import('adm-zip')).default;
-      const zip = new AdmZip(zipPath);
-      zip.extractAllTo(destDir, true);
-      return;
-    } catch {
-      throw new Error('No ZIP extraction library found. Run: npm install unzipper');
-    }
-  }
-
   await fs.promises.mkdir(destDir, { recursive: true });
-  await pipeline(
-    createReadStream(zipPath),
-    unzipper.Extract({ path: destDir })
-  );
+
+  // adm-zip is fully synchronous — all bytes are on disk before it returns.
+  // unzipper's stream-based Extract resolves before fs writes are flushed,
+  // causing silent parse failures on large files (e.g. 40+ MB conversations.json).
+  try {
+    const AdmZip = (await import('adm-zip')).default;
+    const zip = new AdmZip(zipPath);
+    zip.extractAllTo(destDir, true);
+    return;
+  } catch {}
+
+  // Fallback: unzipper (stream-based, may have flush lag on large files)
+  try {
+    const unzipper = await import('unzipper');
+    await pipeline(
+      createReadStream(zipPath),
+      unzipper.Extract({ path: destDir })
+    );
+    // Give the OS a tick to flush any buffered writes before the caller reads
+    await new Promise(r => setTimeout(r, 200));
+  } catch {
+    throw new Error('No ZIP extraction library found. Run: npm install adm-zip');
+  }
 }
 
 // ── JSON file reader ─────────────────────────────────────────────────────────
@@ -42,7 +46,8 @@ function readJson(dir, filename) {
   if (!fs.existsSync(filePath)) return null;
   try {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  } catch {
+  } catch (e) {
+    console.error(`[CL2G zipParser] Failed to parse ${filename}:`, e.message);
     return null;
   }
 }

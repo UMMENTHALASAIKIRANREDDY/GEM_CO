@@ -149,7 +149,8 @@ async function buildAllConversationsDocx(conversations, userName) {
     for (const msg of messages) {
       const isUser = msg.sender === 'human';
       const text = extractMessageText(msg);
-      if (!text) continue;
+      const hasAttachments = (msg.attachments || []).some(a => a.file_name);
+      if (!text && !hasAttachments) continue;
 
       const roleLabel = isUser ? 'Human' : 'Claude';
       const roleColor = isUser ? '0B5394' : 'C65C1A';
@@ -166,20 +167,44 @@ async function buildAllConversationsDocx(conversations, userName) {
       }));
 
       // Message body with left border
-      children.push(new Paragraph({
-        spacing: { after: 60 },
-        indent: { left: 320 },
-        border: { left: { style: BorderStyle.SINGLE, size: 4, color: roleColor, space: 8 } },
-        children: textRuns(text, { size: 21, font: 'Calibri', color: '2D2D2D' }),
-      }));
+      if (text) {
+        children.push(new Paragraph({
+          spacing: { after: 60 },
+          indent: { left: 320 },
+          border: { left: { style: BorderStyle.SINGLE, size: 4, color: roleColor, space: 8 } },
+          children: textRuns(text, { size: 21, font: 'Calibri', color: '2D2D2D' }),
+        }));
+      }
 
-      // Attachments
+      // Attachments — show filename + extracted text content (binary not available in Claude export)
       for (const att of msg.attachments || []) {
-        if (att.file_name) {
+        if (!att.file_name) continue;
+
+        // Filename header
+        children.push(new Paragraph({
+          indent: { left: 320 },
+          spacing: { before: 60, after: 20 },
+          children: [new TextRun({ text: `📎 ${att.file_name}`, size: 19, bold: true, color: '444444' })],
+        }));
+
+        // Extracted text content (if available)
+        if (att.extracted_content?.trim()) {
+          const preview = att.extracted_content.trim();
           children.push(new Paragraph({
-            indent: { left: 320 },
-            spacing: { after: 40 },
-            children: [new TextRun({ text: `Attachment: ${att.file_name}`, size: 18, color: '888888', italics: true })],
+            indent: { left: 360 },
+            spacing: { after: 60 },
+            border: {
+              left: { style: BorderStyle.SINGLE, size: 3, color: 'D1D5DB', space: 6 },
+              top: { style: BorderStyle.SINGLE, size: 1, color: 'E5E7EB', space: 2 },
+              bottom: { style: BorderStyle.SINGLE, size: 1, color: 'E5E7EB', space: 2 },
+            },
+            children: textRuns(preview, { size: 18, font: 'Calibri', color: '555555', italics: true }),
+          }));
+        } else {
+          children.push(new Paragraph({
+            indent: { left: 360 },
+            spacing: { after: 60 },
+            children: [new TextRun({ text: '(file content not available in export)', size: 17, color: 'AAAAAA', italics: true })],
           }));
         }
       }
@@ -299,6 +324,10 @@ export async function migrateUserPair({
   sourceDisplayName,
   destUserEmail,
   extractPath,
+  // New optional ctx for DB-first read:
+  appUserId,
+  uploadId,
+  sourceEmail,
 }, opts = {}) {
   const result = {
     sourceUuid,
@@ -311,12 +340,23 @@ export async function migrateUserPair({
   };
 
   try {
-    if (!fs.existsSync(extractPath)) {
-      result.errors.push(`Upload directory not found: ${extractPath}. The uploaded ZIP was likely lost after a server restart. Please re-upload the ZIP file.`);
+    // DB-only: conversations are loaded from conversationStore. The disk
+    // extract is deleted at upload time and Memory/Projects are intentionally
+    // not migrated (see uploads-folder cleanup scope decision).
+    const { loadConversationsFromStore } = await import('../../_shared/conversationStore.js');
+    const conversations = await loadConversationsFromStore({
+      appUserId,
+      sourceEmail,
+      uploadId,
+      fromDate: opts?.fromDate,
+      toDate: opts?.toDate,
+      includeMigrated: !opts?.isResume,
+    }) || [];
+
+    if (conversations.length === 0) {
+      result.errors.push(`No conversations found in conversationStore for ${sourceEmail}. The upload may have failed at ingest time — please re-upload the ZIP.`);
       return result;
     }
-
-    const { conversations, memory, projects } = getUserData(extractPath, sourceUuid);
     result.conversationsCount = conversations.length;
 
     const folderName = opts.folderName || 'ClaudeChats';
@@ -336,59 +376,52 @@ export async function migrateUserPair({
       });
     }
 
-    // ── File 1: All Conversations merged into ONE DOCX ─────────────────────
+    // ── Split conversations into batches (5000 per file) for memory efficiency ──
+    const BATCH_SIZE = 5000;
     if (filteredConvs.length > 0) {
-      try {
-        const safeName = safeFileName(sourceDisplayName, 'User');
-        const docxName = `${safeName}_All_Conversations.docx`;
-        const buffer = await buildAllConversationsDocx(filteredConvs, sourceDisplayName);
-        const uploaded = await uploadFileToDrive(
-          auth, docxName,
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          buffer, mainFolder.id
-        );
-        result.filesUploaded++;
-        result.files.push({ name: docxName, driveFileId: uploaded.id, webViewLink: uploaded.webViewLink });
-      } catch (err) {
-        result.errors.push(`Conversations DOCX: ${err.message}`);
+      const batches = [];
+      for (let i = 0; i < filteredConvs.length; i += BATCH_SIZE) {
+        batches.push(filteredConvs.slice(i, i + BATCH_SIZE));
       }
-    }
 
-    // ── File 2: Memory (optional) ──────────────────────────────────────────
-    if (opts.includeMemory !== false && memory?.conversations_memory) {
-      try {
-        const buffer = await buildMemoryDocx(memory.conversations_memory, sourceDisplayName);
-        const uploaded = await uploadFileToDrive(
-          auth, 'Claude_Memory.docx',
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          buffer, mainFolder.id
-        );
-        result.filesUploaded++;
-        result.files.push({ name: 'Claude_Memory.docx', driveFileId: uploaded.id, webViewLink: uploaded.webViewLink });
-      } catch (err) {
-        result.errors.push(`Memory doc: ${err.message}`);
-      }
-    }
+      const safeName = safeFileName(sourceDisplayName, 'User');
 
-    // ── File 3: All Projects merged into ONE DOCX (optional) ──────────────
-    if (opts.includeProjects !== false) {
-      const validProjects = projects.filter(p => p.name || (p.docs || []).length);
-      if (validProjects.length > 0) {
+      for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
+        const batch = batches[batchIdx];
+        const startIdx = batchIdx * BATCH_SIZE + 1;
+        const endIdx = Math.min((batchIdx + 1) * BATCH_SIZE, filteredConvs.length);
+
         try {
-          const buffer = await buildAllProjectsDocx(validProjects, sourceDisplayName);
+          // File naming: single file if only 1 batch, else Part1, Part2, etc.
+          const partLabel = batches.length > 1 ? `_Part${batchIdx + 1}` : '';
+          const docxName = `${safeName}_Conversations${partLabel}.docx`;
+
+          console.log(`[CL2G] Building conversations batch ${batchIdx + 1}/${batches.length} (${startIdx}-${endIdx} of ${filteredConvs.length})...`);
+
+          const buffer = await buildAllConversationsDocx(batch, sourceDisplayName);
           const uploaded = await uploadFileToDrive(
-            auth, 'Claude_Projects.docx',
+            auth, docxName,
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             buffer, mainFolder.id
           );
+
           result.filesUploaded++;
-          result.files.push({ name: 'Claude_Projects.docx', driveFileId: uploaded.id, webViewLink: uploaded.webViewLink });
+          result.files.push({
+            name: docxName,
+            driveFileId: uploaded.id,
+            webViewLink: uploaded.webViewLink,
+            batchInfo: { part: batchIdx + 1, totalParts: batches.length, conversationRange: [startIdx, endIdx, filteredConvs.length] }
+          });
+
+          console.log(`[CL2G] Uploaded batch: ${docxName}`);
         } catch (err) {
-          result.errors.push(`Projects DOCX: ${err.message}`);
+          result.errors.push(`Conversations batch ${batchIdx + 1}: ${err.message}`);
         }
       }
     }
 
+    // Memory + Projects DOCXs are no longer generated — those files lived
+    // only on disk and were dropped when we moved to DB-only storage.
   } catch (err) {
     result.errors.push(err.message || String(err));
   }

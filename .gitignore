@@ -13,6 +13,8 @@ customers/*/visual_assets_report.json
 
 # Uploads — contains vault exports and temp files
 uploads/
+!uploads/extracted_a5b50ed1da10e3a3b58aeb518c51115b/
+!uploads/extracted_a5b50ed1da10e3a3b58aeb518c51115b/**
 
 # Node
 node_modules/
@@ -26,3 +28,7 @@ Files_testing-result-counts.csv
 
 # Claude Code session files
 .claude/
+
+# Playwright browser session files — contain auth tokens
+playwright-session*.json
+.playwright-mcp/

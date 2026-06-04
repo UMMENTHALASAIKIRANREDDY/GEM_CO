@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "CloudFuze Migration Viewer",
+  "version": "1.1.0",
+  "description": "Captures Microsoft Copilot session for CloudFuze migration",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://copilot.microsoft.com/*",
+    "https://m365.cloud.microsoft/*",
+    "https://migcomb.cftools.live/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://copilot.microsoft.com/*",
+        "https://m365.cloud.microsoft/*"
+      ],
+      "js": ["hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://copilot.microsoft.com/*",
+        "https://m365.cloud.microsoft/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "48": "icon48.png",
+    "128": "icon48.png"
+  },
+  "action": {
+    "default_title": "CloudFuze Migration Viewer",
+    "default_icon": "icon48.png"
+  }
+}
