@@ -122,7 +122,7 @@ export function createC2GRouter(deps) {
         try {
           await db().collection('migrationWorkspaces').updateOne(
             { _id: batchId },
-            { $set: { migDir: 'copilot-gemini', customerName: c2gFolderName, tenantId: process.env.SOURCE_AZURE_TENANT_ID || process.env.C2G_AZURE_TENANT_ID || '', startTime, status: 'running', dryRun: isDryRun, direction: 'c2g', appUserId, googleEmail, msEmail, lastHeartbeat: new Date(), resumeContext, ...(isResume ? { resumedAt: new Date() } : {}) } },
+            { $set: { migDir: 'copilot-gemini', customerName: c2gFolderName, tenantId: process.env.SOURCE_AZURE_TENANT_ID || process.env.C2G_AZURE_TENANT_ID || '', startTime, status: 'running', dryRun: isDryRun, direction: 'c2g', appUserId, googleEmail, msEmail, fromDate: fromDate || null, toDate: toDate || null, lastHeartbeat: new Date(), resumeContext, ...(isResume ? { resumedAt: new Date() } : {}) } },
             { upsert: true }
           );
           dbLog.info(`migrationWorkspaces.${isResume ? 'resume' : 'insert'} — C2G batch ${batchId} status=running (${isResume ? 'AUTO-RESUMED' : `dryRun=${isDryRun}`})`);

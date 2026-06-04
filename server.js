@@ -654,36 +654,6 @@ app.get('/api/workspaces', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Jobs for a specific workspace
-app.get('/api/jobs/:workspaceId', requireAuth, async (req, res) => {
-  try {
-    const { appUserId } = getWorkspaceContext(req);
-    if (!appUserId) return res.status(401).json({ error: 'Session missing user id' });
-    const jobs = await db().collection('migrationJobs')
-      .find({ workspaceId: req.params.workspaceId, appUserId })
-      .sort({ startTime: 1 })
-      .toArray();
-    res.json(jobs);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Retry a single failed job (marks it retried; actual re-run done by agent)
-app.post('/api/jobs/:jobId/retry', requireAuth, async (req, res) => {
-  try {
-    const { appUserId } = getWorkspaceContext(req);
-    if (!appUserId) return res.status(401).json({ error: 'Session missing user id' });
-    const job = await db().collection('migrationJobs')
-      .findOne({ jobId: req.params.jobId, appUserId });
-    if (!job) return res.status(404).json({ error: 'Job not found' });
-    if (job.status !== 'failed') return res.status(400).json({ error: 'Job is not failed' });
-    await db().collection('migrationJobs').updateOne(
-      { jobId: job.jobId },
-      { $set: { status: 'retried', retriedAt: new Date() } }
-    );
-    res.json({ ok: true, jobId: job.jobId });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
 // Admin: manage app users
 app.get('/api/users', requireAuth, async (req, res) => {
   if (req.session.appUser.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
@@ -817,8 +787,6 @@ async function ensureIndexes(database) {
 
   await Promise.all([
     idx('migrationWorkspaces', { appUserId: 1, startTime: -1 }),
-    idx('migrationJobs',       { workspaceId: 1, appUserId: 1 }),
-    idx('migrationJobs',       { jobId: 1 }, { unique: true }),
     idx('userMappings',        { appUserId: 1, migDir: 1 }, { unique: true }),
     idx('uploads',             { appUserId: 1, uploadTime: -1 }),
     idx('userConfig',          { appUserId: 1 }, { unique: true }),

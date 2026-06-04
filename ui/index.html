@@ -734,6 +734,9 @@ const Step1=({googleUsers,googleAuthed,onComplete,onBack,showToast,uploadData:ac
 
   const loadSavedUpload=(entry)=>{
     setShowMenu(false);
+    // Mark this upload as the user's active selection so it's restored after
+    // a server restart / browser refresh.
+    fetch(`/api/uploads/${entry.id}/activate`,{method:'POST'}).catch(()=>{});
     onComplete({
       id:entry.id, original_name:entry.original_name,
       extract_path:entry.extract_path,
@@ -905,26 +908,33 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
     const byLocal={};
     msUsers.forEach(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
     const m={};const used=new Set();
+    let changed=false;
     uploadData.users.forEach(u=>{
       const existing=(mappings[u.email]||'').toLowerCase();
       if(existing){m[u.email]=existing;used.add(existing);}
       else{const loc=u.email.split('@')[0].toLowerCase();const dest=byLocal[loc]||'';
-        if(dest&&!used.has(dest)){m[u.email]=dest;used.add(dest);}else m[u.email]='';}
+        if(dest&&!used.has(dest)){m[u.email]=dest;used.add(dest);changed=true;}else m[u.email]='';}
     });
     setMappings(m);
-    // Don't touch selection state — selections are user-driven and must survive
-    // navigation (forward → back). Initial state is already an empty Set.
+    // Persist whenever auto-map produced new pairs — otherwise the DB sees
+    // an empty mappings object and the user has to re-do their mapping after
+    // a refresh. Don't touch selection state — selections are user-driven.
+    if(changed)persistMappings(m,csvEmailsRef.current);
   },[uploadData,msUsers]);
 
+  // Download matches the UI: when CSV is active, only the rows in the table
+  // (filtered to csvEmails) are exported. The unused-destinations roster is
+  // omitted in that mode — the admin is editing a focused set, not the
+  // master list.
   const downloadCsv=()=>{
     const sorted=[...users].sort((a,b)=>{const ma=!!mappings[a.email],mb=!!mappings[b.email];if(ma!==mb)return ma?-1:1;return a.email.localeCompare(b.email)});
     const rows=sorted.map(u=>`"${u.email}","${mappings[u.email]||''}"`);
     const usedDest=new Set(Object.values(mappings).filter(Boolean).map(v=>v.toLowerCase()));
-    const destSorted=[...msUsers].map(u=>(u.mail||u.userPrincipalName||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b));
+    const destSorted=csvEmails?[]:[...msUsers].map(u=>(u.mail||u.userPrincipalName||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b));
     for(const em of destSorted){if(!usedDest.has(em.toLowerCase()))rows.push(`"","${em}"`);}
     const csv='Source User,Destination User\n'+rows.join('\n');
     const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='user-mappings.csv';a.click();
-    showToast(`Downloaded ${sorted.length} source + ${destSorted.length} destination users.`);
+    showToast(`Downloaded ${sorted.length} source${destSorted.length?` + ${destSorted.length} destination`:''} users.`);
   };
 
   const uploadCsv=file=>{
@@ -1045,14 +1055,15 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
                   <>
                     <Avatar name={mappings[u.email]} email={mappings[u.email]} size={22}/>
                     <span style={{fontSize:12,color:C.dark,fontFamily:'monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>{mappings[u.email]}</span>
-                    <button onClick={e=>{e.stopPropagation();setMappings(p=>({...p,[u.email]:''}))} } title="Clear mapping" style={{flexShrink:0,background:'none',border:'none',cursor:'pointer',color:C.muted,fontSize:14,lineHeight:1,padding:'0 2px'}} onMouseEnter={e=>e.currentTarget.style.color='#ef4444'} onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
+                    <button disabled={!!csvEmails} onClick={e=>{e.stopPropagation();if(csvEmails)return;const m={...mappings,[u.email]:''};setMappings(m);persistMappings(m,csvEmailsRef.current);}} title={csvEmails?'Locked — CSV active. Clear the CSV to edit mappings.':'Clear mapping'} style={{flexShrink:0,background:'none',border:'none',cursor:csvEmails?'not-allowed':'pointer',color:csvEmails?C.border:C.muted,fontSize:14,lineHeight:1,padding:'0 2px',opacity:csvEmails?0.5:1}} onMouseEnter={e=>{if(!csvEmails)e.currentTarget.style.color='#ef4444'}} onMouseLeave={e=>{if(!csvEmails)e.currentTarget.style.color=C.muted}}>✕</button>
                   </>
                 ):(
                   msUsers.length>0?(
-                    <select value="" onChange={e=>{e.stopPropagation();const val=e.target.value;if(val){setMappings(p=>({...p,[u.email]:val}));setSelectedUsers(p=>{const n=new Set(p);n.add(u.email);return n});}}}
+                    <select value="" disabled={!!csvEmails} onChange={e=>{e.stopPropagation();const val=e.target.value;if(val){const m={...mappings,[u.email]:val};setMappings(m);setSelectedUsers(p=>{const n=new Set(p);n.add(u.email);return n});persistMappings(m,csvEmailsRef.current);}}}
                       onClick={e=>e.stopPropagation()}
-                      style={{border:'none',background:'transparent',fontSize:12,fontFamily:'inherit',color:C.muted,cursor:'pointer',outline:'none',width:'100%',padding:'2px 0'}}>
-                      <option value="" disabled>— assign —</option>
+                      title={csvEmails?'Locked — CSV active. Clear the CSV to edit mappings.':''}
+                      style={{border:'none',background:'transparent',fontSize:12,fontFamily:'inherit',color:csvEmails?C.border:C.muted,cursor:csvEmails?'not-allowed':'pointer',outline:'none',width:'100%',padding:'2px 0',opacity:csvEmails?0.6:1}}>
+                      <option value="" disabled>{csvEmails?'— CSV active —':'— assign —'}</option>
                       {msUsers.map(m=>{const em=(m.mail||m.userPrincipalName||'').toLowerCase();return<option key={em} value={em}>{em}</option>})}
                     </select>
                   ):(
@@ -1069,7 +1080,7 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
 
       <div style={{flexShrink:0,display:'flex',gap:10,paddingTop:12}}>
         <Btn variant="ghost" onClick={onBack}>← Back</Btn>
-        <Btn onClick={onNext} style={{flex:1,justifyContent:'center'}}>Continue →</Btn>
+        <Btn onClick={onNext} disabled={selectedUsers.size===0} style={{flex:1,justifyContent:'center'}}>Continue →</Btn>
       </div>
     </div>
   );
@@ -1432,16 +1443,16 @@ const STEP_GUIDE={
   },
   'gemini-copilot':{
     2:"Import your Gemini data — upload a Vault ZIP file or export directly from Google Drive.",
-    3:"Map each Google user to their Microsoft 365 destination. Use Auto-map to fill matches by email, then review.",
+    3:"Map each Google user to their Microsoft 365 destination. Same-named users are auto-mapped; review and adjust as needed.",
     4:"All set. Start with a dry run first to preview — no data changes until you go live.",
   },
   'copilot-gemini':{
-    2:"Map each Microsoft 365 user to their Google Drive destination. Use Auto-map to fill matches by email, then review.",
+    2:"Map each Microsoft 365 user to their Google Drive destination. Same-named users are auto-mapped; review and adjust as needed.",
     3:"Set the folder name and date range. Starting with a dry run is strongly recommended.",
   },
   'claude-gemini':{
     2:"Upload your Claude export ZIP. You can export it from Claude.ai → Settings → Data Export.",
-    3:"Map each Claude user to their Google destination email. Auto-map fills matches by email.",
+    3:"Map each Claude user to their Google destination email. Same-named users are auto-mapped.",
     4:"Set the Google Drive folder name where files will land. Start with a dry run to preview first.",
   },
   'gemini-gemini':{
@@ -1864,14 +1875,17 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
     const byLocal={};
     googleUsers.forEach(u=>{const em=(u.email||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
     const m={};const used=new Set();
+    let changed=false;
     msUsers.forEach(u=>{
       const em=(u.mail||u.userPrincipalName||'').toLowerCase();
       const existing=(currentMappings[em]||'').toLowerCase();
       if(existing&&!used.has(existing)){m[em]=existing;used.add(existing);}
       else{const loc=em.split('@')[0];const dest=byLocal[loc]||'';
-        if(dest&&!used.has(dest)){m[em]=dest;used.add(dest);}else m[em]='';}
+        if(dest&&!used.has(dest)){m[em]=dest;used.add(dest);changed=true;}else m[em]='';}
     });
     setC2gMappings(m);
+    // Persist any new auto-suggested pairs so the DB matches the UI.
+    if(changed)persistMappings(m,csvEmailsRef.current);
     // Don't touch selection state — selections are user-driven and survive nav.
   };
 
@@ -1900,15 +1914,22 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
     persistMappings(m,csvEmailsRef.current);
   };
 
+  // Download matches the UI: when CSV is active, only the rows in the table
+  // (filtered to csvEmails) are exported. When no CSV, every source user is
+  // included. The unused-destinations section follows the same rule.
   const downloadCsv=()=>{
-    const sorted=[...msUsers].sort((a,b)=>{const ea=(a.mail||a.userPrincipalName||'').toLowerCase(),eb=(b.mail||b.userPrincipalName||'').toLowerCase();const ma=!!c2gMappings[ea],mb=!!c2gMappings[eb];if(ma!==mb)return ma?-1:1;return ea.localeCompare(eb)});
+    const srcList=displayUsers;
+    const sorted=[...srcList].sort((a,b)=>{const ea=(a.mail||a.userPrincipalName||'').toLowerCase(),eb=(b.mail||b.userPrincipalName||'').toLowerCase();const ma=!!c2gMappings[ea],mb=!!c2gMappings[eb];if(ma!==mb)return ma?-1:1;return ea.localeCompare(eb)});
     const rows=sorted.map(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();return`"${em}","${c2gMappings[em]||''}"`;});
     const usedDest=new Set(Object.values(c2gMappings).filter(Boolean).map(v=>v.toLowerCase()));
-    const destSorted=[...googleUsers].map(u=>(u.email||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b));
+    // When CSV active, omit the unused-destination roster — the admin is
+    // editing a focused set, not the master list. When no CSV, include all
+    // unused destinations so the admin sees who's still available.
+    const destSorted=csvEmails?[]:[...googleUsers].map(u=>(u.email||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b));
     for(const em of destSorted){if(!usedDest.has(em.toLowerCase()))rows.push(`"","${em}"`);}
     const csv='Source User,Destination User\n'+rows.join('\n');
     const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='c2g-user-mappings.csv';a.click();
-    showToast(`Downloaded ${sorted.length} source + ${destSorted.length} destination users.`);
+    showToast(`Downloaded ${sorted.length} source${destSorted.length?` + ${destSorted.length} destination`:''} users.`);
   };
 
   const uploadCsv=file=>{
@@ -1939,13 +1960,14 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
         m[src]=dst;
         csvKeys.push(src);
       }
-      const merged={...c2gMappings,...m};
-      setC2gMappings(merged);
+      // Strict mode: CSV replaces all existing mappings — `m` already contains
+      // only the CSV rows. Any prior auto-mapping outside the CSV is dropped.
+      setC2gMappings(m);
       setC2gSelectedUsers(new Set(csvKeys));
       setCsvEmails(csvKeys);
       csvEmailsRef.current=csvKeys;
       setCsvUploading(false);
-      persistMappings(merged,csvKeys);
+      persistMappings(m,csvKeys);
       const extra=[skippedEmpty&&`${skippedEmpty} unmapped`,skippedDupe&&`${skippedDupe} duplicate`].filter(Boolean).join(', ');
       showToast(`CSV uploaded — ${csvKeys.length} user(s)${extra?` (skipped ${extra})`:''}.`);
     };
@@ -2026,14 +2048,15 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
                   <>
                     <Avatar name={c2gMappings[em]} email={c2gMappings[em]} size={22}/>
                     <span style={{fontSize:12,color:C.dark,fontFamily:'monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>{c2gMappings[em]}</span>
-                    <button onClick={e=>{e.stopPropagation();handleMappingChange(em,'')}} title="Clear mapping" style={{flexShrink:0,background:'none',border:'none',cursor:'pointer',color:C.muted,fontSize:14,lineHeight:1,padding:'0 2px'}} onMouseEnter={e=>e.currentTarget.style.color='#ef4444'} onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
+                    <button disabled={!!csvEmails} onClick={e=>{e.stopPropagation();if(csvEmails)return;handleMappingChange(em,'')}} title={csvEmails?'Locked — CSV active. Clear the CSV to edit mappings.':'Clear mapping'} style={{flexShrink:0,background:'none',border:'none',cursor:csvEmails?'not-allowed':'pointer',color:csvEmails?C.border:C.muted,fontSize:14,lineHeight:1,padding:'0 2px',opacity:csvEmails?0.5:1}} onMouseEnter={e=>{if(!csvEmails)e.currentTarget.style.color='#ef4444'}} onMouseLeave={e=>{if(!csvEmails)e.currentTarget.style.color=C.muted}}>✕</button>
                   </>
                 ):(
                   googleUsers.length>0?(
-                    <select defaultValue="" onChange={e=>{e.stopPropagation();if(e.target.value)handleMappingChange(em,e.target.value);e.target.value=''}}
+                    <select defaultValue="" disabled={!!csvEmails} onChange={e=>{e.stopPropagation();if(e.target.value)handleMappingChange(em,e.target.value);e.target.value=''}}
                       onClick={e=>e.stopPropagation()}
-                      style={{border:'none',background:'transparent',fontSize:12,fontFamily:'inherit',color:C.muted,cursor:'pointer',outline:'none',width:'100%',padding:'2px 0'}}>
-                      <option value="" disabled>— assign —</option>
+                      title={csvEmails?'Locked — CSV active. Clear the CSV to edit mappings.':''}
+                      style={{border:'none',background:'transparent',fontSize:12,fontFamily:'inherit',color:csvEmails?C.border:C.muted,cursor:csvEmails?'not-allowed':'pointer',outline:'none',width:'100%',padding:'2px 0',opacity:csvEmails?0.6:1}}>
+                      <option value="" disabled>{csvEmails?'— CSV active —':'— assign —'}</option>
                       {googleUsers.map(g=><option key={g.email||g.id} value={g.email||''}>{g.email||g.name}</option>)}
                     </select>
                   ):(
@@ -2048,7 +2071,7 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
       </div>
       <div style={{flexShrink:0,display:'flex',gap:10,paddingTop:12}}>
         <Btn variant="ghost" onClick={onBack}>← Back</Btn>
-        <Btn onClick={onNext} style={{flex:1,justifyContent:'center'}}>Continue →</Btn>
+        <Btn onClick={onNext} disabled={c2gSelectedUsers.size===0} style={{flex:1,justifyContent:'center'}}>Continue →</Btn>
       </div>
     </div>
   );
@@ -2266,6 +2289,7 @@ const StepCL2GUpload=({cl2gUploadData,setCl2gUploadData,onNext,onBack,showToast,
   };
 
   const selectUpload=doc=>{
+    fetch(`/api/cl2g/uploads/${doc._id}/activate`,{method:'POST'}).catch(()=>{});
     setCl2gUploadData({uploadId:doc._id,users:doc.users||[],totalConversations:doc.totalConversations||0,totalMemories:doc.totalMemories||0,totalProjects:doc.totalProjects||0,fileName:doc.fileName});
     setShowMenu(false);
   };
@@ -2388,13 +2412,15 @@ const StepCL2GMap=({cl2gUploadData,googleUsers,cl2gMappings,setCl2gMappings,cl2g
     const byLocal={};
     googleUsers.forEach(u=>{const em=(u.email||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
     const m={};const used=new Set();
+    let changed=false;
     users.forEach(u=>{
       const existing=(cl2gMappings[u.uuid]||'').toLowerCase();
       if(existing){m[u.uuid]=existing;used.add(existing);}
       else{const loc=(u.email_address||'').toLowerCase().split('@')[0];const dest=byLocal[loc]||'';
-        if(dest&&!used.has(dest)){m[u.uuid]=dest;used.add(dest);}else m[u.uuid]='';}
+        if(dest&&!used.has(dest)){m[u.uuid]=dest;used.add(dest);changed=true;}else m[u.uuid]='';}
     });
     setCl2gMappings(m);
+    if(changed)persistMappings(m,csvEmailsRef.current);
     // Don't touch selection state — selections are user-driven and survive nav.
   },[users,googleUsers]);
 
@@ -2409,15 +2435,19 @@ const StepCL2GMap=({cl2gUploadData,googleUsers,cl2gMappings,setCl2gMappings,cl2g
     persistMappings(m,csvEmails);
   };
 
+  // Download matches the UI: when CSV is active, only the rows in the table
+  // (filtered to csvEmails) are exported. Unused-destination roster omitted
+  // in CSV mode — admin is editing a focused set.
   const downloadCsv=()=>{
-    const sorted=[...users].sort((a,b)=>{const ma=!!cl2gMappings[a.uuid],mb=!!cl2gMappings[b.uuid];if(ma!==mb)return ma?-1:1;return(a.email_address||'').localeCompare(b.email_address||'')});
+    const srcList=displayUsers;
+    const sorted=[...srcList].sort((a,b)=>{const ma=!!cl2gMappings[a.uuid],mb=!!cl2gMappings[b.uuid];if(ma!==mb)return ma?-1:1;return(a.email_address||'').localeCompare(b.email_address||'')});
     const rows=sorted.map(u=>`"${u.email_address||''}","${cl2gMappings[u.uuid]||''}"`);
     const usedDest=new Set(Object.values(cl2gMappings).filter(Boolean).map(v=>v.toLowerCase()));
-    const destSorted=[...googleUsers].map(u=>(u.email||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b));
+    const destSorted=csvEmails?[]:[...googleUsers].map(u=>(u.email||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b));
     for(const em of destSorted){if(!usedDest.has(em.toLowerCase()))rows.push(`"","${em}"`);}
     const csv='Source User,Destination User\n'+rows.join('\n');
     const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='cl2g-user-mappings.csv';a.click();
-    showToast(`Downloaded ${sorted.length} source + ${destSorted.length} destination users.`);
+    showToast(`Downloaded ${sorted.length} source${destSorted.length?` + ${destSorted.length} destination`:''} users.`);
   };
 
   const uploadCsv=file=>{
@@ -2432,7 +2462,10 @@ const StepCL2GMap=({cl2gUploadData,googleUsers,cl2gMappings,setCl2gMappings,cl2g
       //   - skip duplicate source rows (first wins)
       //   - many-to-one allowed (two sources → one destination)
       //   - unknown source emails (not in the uploaded ZIP) are silently skipped
-      const m={...cl2gMappings};const csvUuids=[];const seenSrc=new Set();
+      // Strict mode: CSV replaces all existing mappings so the DB always
+      // matches exactly the CSV. Any auto-mapped entry not in the CSV is
+      // dropped — Clear CSV will re-run auto-map from scratch.
+      const m={};const csvUuids=[];const seenSrc=new Set();
       let skippedEmpty=0,skippedDupe=0,skippedUnknown=0;
       for(const l of lines){
         if(!l.trim())continue;
@@ -2546,14 +2579,15 @@ const StepCL2GMap=({cl2gUploadData,googleUsers,cl2gMappings,setCl2gMappings,cl2g
                   <>
                     <Avatar name={cl2gMappings[u.uuid]} email={cl2gMappings[u.uuid]} size={22}/>
                     <span style={{fontSize:12,color:C.dark,fontFamily:'monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>{cl2gMappings[u.uuid]}</span>
-                    <button onClick={e=>{e.stopPropagation();handleMappingChange(u.uuid,'')}} title="Clear mapping" style={{flexShrink:0,background:'none',border:'none',cursor:'pointer',color:C.muted,fontSize:14,lineHeight:1,padding:'0 2px'}} onMouseEnter={e=>e.currentTarget.style.color='#ef4444'} onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
+                    <button disabled={!!csvEmails} onClick={e=>{e.stopPropagation();if(csvEmails)return;handleMappingChange(u.uuid,'')}} title={csvEmails?'Locked — CSV active. Clear the CSV to edit mappings.':'Clear mapping'} style={{flexShrink:0,background:'none',border:'none',cursor:csvEmails?'not-allowed':'pointer',color:csvEmails?C.border:C.muted,fontSize:14,lineHeight:1,padding:'0 2px',opacity:csvEmails?0.5:1}} onMouseEnter={e=>{if(!csvEmails)e.currentTarget.style.color='#ef4444'}} onMouseLeave={e=>{if(!csvEmails)e.currentTarget.style.color=C.muted}}>✕</button>
                   </>
                 ):(
                   googleUsers.length>0?(
-                    <select defaultValue="" onChange={e=>{e.stopPropagation();if(e.target.value)handleMappingChange(u.uuid,e.target.value);e.target.value=''}}
+                    <select defaultValue="" disabled={!!csvEmails} onChange={e=>{e.stopPropagation();if(e.target.value)handleMappingChange(u.uuid,e.target.value);e.target.value=''}}
                       onClick={e=>e.stopPropagation()}
-                      style={{border:'none',background:'transparent',fontSize:12,fontFamily:'inherit',color:C.muted,cursor:'pointer',outline:'none',width:'100%',padding:'2px 0'}}>
-                      <option value="" disabled>— assign —</option>
+                      title={csvEmails?'Locked — CSV active. Clear the CSV to edit mappings.':''}
+                      style={{border:'none',background:'transparent',fontSize:12,fontFamily:'inherit',color:csvEmails?C.border:C.muted,cursor:csvEmails?'not-allowed':'pointer',outline:'none',width:'100%',padding:'2px 0',opacity:csvEmails?0.6:1}}>
+                      <option value="" disabled>{csvEmails?'— CSV active —':'— assign —'}</option>
                       {googleUsers.map(g=><option key={g.email||g.id} value={g.email||''}>{g.email||g.name}</option>)}
                     </select>
                   ):(
@@ -3023,6 +3057,7 @@ const StepCL2CUpload=({cl2cUploadData,setCl2cUploadData,onNext,onBack,showToast,
   };
 
   const selectUpload=doc=>{
+    fetch(`/api/cl2c/uploads/${doc._id}/activate`,{method:'POST'}).catch(()=>{});
     setCl2cUploadData({uploadId:doc._id,users:doc.users||[],totalConversations:doc.totalConversations||0,totalMemories:doc.totalMemories||0,totalProjects:doc.totalProjects||0,fileName:doc.fileName});
     setShowMenu(false);
   };
@@ -3130,6 +3165,11 @@ const StepCL2CMap=({cl2cUploadData,msUsers,cl2cMappings,setCl2cMappings,cl2cSele
   // Auto-map by email local-part. See CL2G for the rules — same here:
   //   skip if CSV is active, preserve all user-set mappings (no dedup), dedup
   //   only when auto-suggesting destinations for unmapped sources.
+  const persistMappings=(mappings,csv)=>{
+    fetch('/api/cl2c/user-mappings',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({mappings,csvEmails:csv||null})}).catch(()=>{});
+  };
+
   useEffect(()=>{
     if(!users.length||!msUsers.length)return;
     if(csvEmailsRef.current)return;
@@ -3137,20 +3177,17 @@ const StepCL2CMap=({cl2cUploadData,msUsers,cl2cMappings,setCl2cMappings,cl2cSele
     // Graph returns Microsoft users with `mail` / `userPrincipalName` — NOT `email`.
     msUsers.forEach(u=>{const em=(u.mail||u.userPrincipalName||u.email||'').toLowerCase();const loc=em.split('@')[0];if(loc)byLocal[loc]=em});
     const m={};const used=new Set();
+    let changed=false;
     users.forEach(u=>{
       const existing=(cl2cMappings[u.uuid]||'').toLowerCase();
       if(existing){m[u.uuid]=existing;used.add(existing);}
       else{const loc=(u.email_address||'').toLowerCase().split('@')[0];const dest=byLocal[loc]||'';
-        if(dest&&!used.has(dest)){m[u.uuid]=dest;used.add(dest);}else m[u.uuid]='';}
+        if(dest&&!used.has(dest)){m[u.uuid]=dest;used.add(dest);changed=true;}else m[u.uuid]='';}
     });
     setCl2cMappings(m);
+    if(changed)persistMappings(m,csvEmailsRef.current);
     // Don't touch selection state — selections are user-driven and survive nav.
   },[users,msUsers]);
-
-  const persistMappings=(mappings,csv)=>{
-    fetch('/api/cl2c/user-mappings',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({mappings,csvEmails:csv||null})}).catch(()=>{});
-  };
 
   const handleMappingChange=(uuid,val)=>{
     const m={...cl2cMappings,[uuid]:val};
@@ -3158,15 +3195,19 @@ const StepCL2CMap=({cl2cUploadData,msUsers,cl2cMappings,setCl2cMappings,cl2cSele
     persistMappings(m,csvEmails);
   };
 
+  // Download matches the UI: when CSV is active, only the rows in the table
+  // (filtered to csvEmails) are exported. Unused-destination roster omitted
+  // in CSV mode.
   const downloadCsv=()=>{
-    const sorted=[...users].sort((a,b)=>{const ma=!!cl2cMappings[a.uuid],mb=!!cl2cMappings[b.uuid];if(ma!==mb)return ma?-1:1;return(a.email_address||'').localeCompare(b.email_address||'')});
+    const srcList=displayUsers;
+    const sorted=[...srcList].sort((a,b)=>{const ma=!!cl2cMappings[a.uuid],mb=!!cl2cMappings[b.uuid];if(ma!==mb)return ma?-1:1;return(a.email_address||'').localeCompare(b.email_address||'')});
     const rows=sorted.map(u=>`"${u.email_address||''}","${cl2cMappings[u.uuid]||''}"`);
     const usedDest=new Set(Object.values(cl2cMappings).filter(Boolean).map(v=>v.toLowerCase()));
-    const destSorted=[...msUsers].map(u=>(u.mail||u.userPrincipalName||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b));
+    const destSorted=csvEmails?[]:[...msUsers].map(u=>(u.mail||u.userPrincipalName||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b));
     for(const em of destSorted){if(!usedDest.has(em.toLowerCase()))rows.push(`"","${em}"`);}
     const csv='Source User,Destination User\n'+rows.join('\n');
     const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='cl2c-user-mappings.csv';a.click();
-    showToast(`Downloaded ${sorted.length} source + ${destSorted.length} destination users.`);
+    showToast(`Downloaded ${sorted.length} source${destSorted.length?` + ${destSorted.length} destination`:''} users.`);
   };
 
   const uploadCsv=file=>{
@@ -3181,7 +3222,8 @@ const StepCL2CMap=({cl2cUploadData,msUsers,cl2cMappings,setCl2cMappings,cl2cSele
       //   - skip duplicate source rows (first wins)
       //   - many-to-one allowed
       //   - unknown source emails are silently skipped
-      const m={...cl2cMappings};const csvUuids=[];const seenSrc=new Set();
+      // Strict mode: CSV replaces all existing mappings.
+      const m={};const csvUuids=[];const seenSrc=new Set();
       let skippedEmpty=0,skippedDupe=0,skippedUnknown=0;
       for(const l of lines){
         if(!l.trim())continue;
@@ -3294,14 +3336,15 @@ const StepCL2CMap=({cl2cUploadData,msUsers,cl2cMappings,setCl2cMappings,cl2cSele
                   <>
                     <Avatar name={cl2cMappings[u.uuid]} email={cl2cMappings[u.uuid]} size={22}/>
                     <span style={{fontSize:12,color:C.dark,fontFamily:'monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>{cl2cMappings[u.uuid]}</span>
-                    <button onClick={e=>{e.stopPropagation();handleMappingChange(u.uuid,'')}} title="Clear mapping" style={{flexShrink:0,background:'none',border:'none',cursor:'pointer',color:C.muted,fontSize:14,lineHeight:1,padding:'0 2px'}} onMouseEnter={e=>e.currentTarget.style.color='#ef4444'} onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
+                    <button disabled={!!csvEmails} onClick={e=>{e.stopPropagation();if(csvEmails)return;handleMappingChange(u.uuid,'')}} title={csvEmails?'Locked — CSV active. Clear the CSV to edit mappings.':'Clear mapping'} style={{flexShrink:0,background:'none',border:'none',cursor:csvEmails?'not-allowed':'pointer',color:csvEmails?C.border:C.muted,fontSize:14,lineHeight:1,padding:'0 2px',opacity:csvEmails?0.5:1}} onMouseEnter={e=>{if(!csvEmails)e.currentTarget.style.color='#ef4444'}} onMouseLeave={e=>{if(!csvEmails)e.currentTarget.style.color=C.muted}}>✕</button>
                   </>
                 ):(
                   msUsers.length>0?(
-                    <select defaultValue="" onChange={e=>{e.stopPropagation();if(e.target.value)handleMappingChange(u.uuid,e.target.value);e.target.value=''}}
+                    <select defaultValue="" disabled={!!csvEmails} onChange={e=>{e.stopPropagation();if(e.target.value)handleMappingChange(u.uuid,e.target.value);e.target.value=''}}
                       onClick={e=>e.stopPropagation()}
-                      style={{border:'none',background:'transparent',fontSize:12,fontFamily:'inherit',color:C.muted,cursor:'pointer',outline:'none',width:'100%',padding:'2px 0'}}>
-                      <option value="" disabled>— assign —</option>
+                      title={csvEmails?'Locked — CSV active. Clear the CSV to edit mappings.':''}
+                      style={{border:'none',background:'transparent',fontSize:12,fontFamily:'inherit',color:csvEmails?C.border:C.muted,cursor:csvEmails?'not-allowed':'pointer',outline:'none',width:'100%',padding:'2px 0',opacity:csvEmails?0.6:1}}>
+                      <option value="" disabled>{csvEmails?'— CSV active —':'— assign —'}</option>
                       {msUsers.map(m=>{const em=(m.mail||m.userPrincipalName||m.email||'').toLowerCase();return em?<option key={em} value={em}>{em}</option>:null})}
                     </select>
                   ):(
@@ -3704,6 +3747,7 @@ const StepC2CUserMap=({c2cConfig,c2cMappings,setC2cMappings,c2cSelectedUsers,set
   const [csvUploading,setCsvUploading]=useState(false);
   // csvEmails persists in DB — survives server restart and user logout / login
   const [csvEmails,setCsvEmails]=useState(null);
+  const csvEmailsRef=useRef(null);
   const srcUsers=csvEmails?allSrcUsers.filter(u=>csvEmails.includes((u.mail||u.userPrincipalName||'').toLowerCase())):allSrcUsers;
 
   // On mount: load persisted mappings + csvEmails
@@ -3711,6 +3755,7 @@ const StepC2CUserMap=({c2cConfig,c2cMappings,setC2cMappings,c2cSelectedUsers,set
     fetch('/api/c2c/user-mappings').then(r=>r.ok?r.json():null).then(doc=>{
       if(doc?.csvEmails&&doc.csvEmails.length>0){
         setCsvEmails(doc.csvEmails);
+        csvEmailsRef.current=doc.csvEmails;
         if(doc.mappings)setC2cMappings(doc.mappings);
       }
     }).catch(()=>{});
@@ -3733,28 +3778,37 @@ const StepC2CUserMap=({c2cConfig,c2cMappings,setC2cMappings,c2cSelectedUsers,set
     }).finally(()=>setLoading(false));
   },[c2cConfig?.sourceTenantId,c2cConfig?.destTenantId]);
 
+  // Auto-map by email local-part when the user lists finish loading. Matches
+  // the pattern used by every other direction (CL2G/CL2C/G2C/G2G/C2G):
+  //   - Skip if CSV is active (CSV is the source of truth).
+  //   - Preserve every existing user-set mapping unconditionally — many-to-one
+  //     mappings must survive remount.
+  //   - Dedup applies only when auto-suggesting destinations for sources that
+  //     don't yet have a mapping.
+  useEffect(()=>{
+    if(!allSrcUsers.length||!destUsers.length)return;
+    if(csvEmailsRef.current)return;
+    const destByLocal={};
+    destUsers.forEach(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();const loc=em.split('@')[0];if(loc&&!destByLocal[loc])destByLocal[loc]=em});
+    const m={...c2cMappings};
+    const used=new Set(Object.values(m).filter(Boolean).map(v=>v.toLowerCase()));
+    let n=0;
+    allSrcUsers.forEach(u=>{
+      const em=(u.mail||u.userPrincipalName||'').toLowerCase();
+      if(m[em])return;   // preserve existing mapping unconditionally
+      const cand=destByLocal[em.split('@')[0]];
+      if(cand&&!used.has(cand)){m[em]=cand;used.add(cand);n++;}
+    });
+    if(n>0){setC2cMappings(m);persistMappings(m,csvEmailsRef.current);}
+    // Don't touch selection state — selections are user-driven and survive nav.
+  },[allSrcUsers,destUsers]);
+
   const toggleUser=(em)=>setC2cSelectedUsers(p=>{const n=new Set(p);n.has(em)?n.delete(em):n.add(em);return n;});
   const toggleAll=()=>{if(c2cSelectedUsers.size===srcUsers.length)setC2cSelectedUsers(new Set());else setC2cSelectedUsers(new Set(srcUsers.map(u=>u.mail||u.userPrincipalName)))};
 
-  const autoMap=()=>{
-    const m={...c2cMappings};
-    const destByLocal={};
-    destUsers.forEach(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();const loc=em.split('@')[0];if(loc&&!destByLocal[loc])destByLocal[loc]=em});
-    const used=new Set(Object.values(m).filter(Boolean).map(v=>v.toLowerCase()));
-    let n=0;
-    srcUsers.forEach(u=>{
-      const em=(u.mail||u.userPrincipalName||'').toLowerCase();
-      if(m[em])return;
-      const loc=em.split('@')[0];
-      const cand=destByLocal[loc];
-      if(cand&&!used.has(cand)){m[em]=cand;used.add(cand);n++;}
-    });
-    setC2cMappings(m);
-    const sel=new Set(c2cSelectedUsers);
-    Object.entries(m).forEach(([s,d])=>{if(d)sel.add(s)});
-    setC2cSelectedUsers(sel);
-    showToast?.(n>0?`Auto-mapped ${n} user(s).`:'No new auto-mappings found.');
-  };
+  // Manual autoMap removed — the useEffect above runs auto-mapping automatically
+  // when the source + destination user lists arrive, matching every other
+  // direction's UX.
 
   // CSV format matches C2G (and the other directions): two columns —
   // "Source User","Destination User". Source rows show mapped destination (may
@@ -3770,11 +3824,11 @@ const StepC2CUserMap=({c2cConfig,c2cMappings,setC2cMappings,c2cSelectedUsers,set
     });
     const rows=sorted.map(u=>{const em=(u.mail||u.userPrincipalName||'').toLowerCase();return`"${em}","${c2cMappings[em]||''}"`;});
     const usedDest=new Set(Object.values(c2cMappings).filter(Boolean).map(v=>v.toLowerCase()));
-    const destSorted=[...destUsers].map(u=>(u.mail||u.userPrincipalName||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b));
+    const destSorted=csvEmails?[]:[...destUsers].map(u=>(u.mail||u.userPrincipalName||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b));
     for(const em of destSorted){if(!usedDest.has(em.toLowerCase()))rows.push(`"","${em}"`);}
     const csv='Source User,Destination User\n'+rows.join('\n');
     const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='c2c-user-mappings.csv';a.click();
-    showToast?.(`Downloaded ${sorted.length} source + ${destSorted.length} destination users.`);
+    showToast?.(`Downloaded ${sorted.length} source${destSorted.length?` + ${destSorted.length} destination`:''} users.`);
   };
 
   const uploadCsv=file=>{
@@ -3788,7 +3842,8 @@ const StepC2CUserMap=({c2cConfig,c2cMappings,setC2cMappings,c2cSelectedUsers,set
       //   - many-to-one (two sources → one destination) IS allowed
       // For backward compatibility we still recognise the old 4-column
       // "section,source,dest,mapped" rows where the first cell is "source".
-      const m={...c2cMappings};const csvKeys=[];const seenSrc=new Set();
+      // Strict mode: CSV replaces all existing mappings.
+      const m={};const csvKeys=[];const seenSrc=new Set();
       let skippedEmpty=0,skippedDupe=0;
       for(const l of lines){
         if(!l.trim())continue;
@@ -3807,7 +3862,7 @@ const StepC2CUserMap=({c2cConfig,c2cMappings,setC2cMappings,c2cSelectedUsers,set
         csvKeys.push(src);
       }
       setC2cMappings(m);
-      setCsvEmails(csvKeys);
+      setCsvEmails(csvKeys);csvEmailsRef.current=csvKeys;
       setC2cSelectedUsers(new Set(csvKeys));
       persistMappings(m,csvKeys);
       setCsvUploading(false);
@@ -3819,7 +3874,7 @@ const StepC2CUserMap=({c2cConfig,c2cMappings,setC2cMappings,c2cSelectedUsers,set
   };
 
   const clearCsv=()=>{
-    setCsvEmails(null);
+    setCsvEmails(null);csvEmailsRef.current=null;
     fetch('/api/c2c/user-mappings',{method:'DELETE'}).catch(()=>{});
     setC2cSelectedUsers(new Set());
     showToast?.('CSV cleared — restored cloud auto-mapping.');
@@ -3894,11 +3949,11 @@ const StepC2CUserMap=({c2cConfig,c2cMappings,setC2cMappings,c2cSelectedUsers,set
                   <div style={{display:'flex',alignItems:'center',gap:6}}>
                     <Avatar name={c2cMappings[em]} email={c2cMappings[em]} size={22}/>
                     <span style={{fontSize:12,fontFamily:'monospace',flex:1,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{c2cMappings[em]}</span>
-                    <button onClick={()=>setC2cMappings(p=>{const n={...p};delete n[em];return n;})} style={{background:'none',border:'none',cursor:'pointer',color:C.muted,padding:'0 2px'}}>✕</button>
+                    <button disabled={!!csvEmails} onClick={()=>{if(csvEmails)return;const m={...c2cMappings};delete m[em];setC2cMappings(m);persistMappings(m,csvEmailsRef.current);}} title={csvEmails?'Locked — CSV active. Clear the CSV to edit mappings.':'Clear mapping'} style={{background:'none',border:'none',cursor:csvEmails?'not-allowed':'pointer',color:csvEmails?C.border:C.muted,padding:'0 2px',opacity:csvEmails?0.5:1}}>✕</button>
                   </div>
                 ):destUsers.length>0?(
-                  <select value="" onChange={e=>{const v=e.target.value;if(v){setC2cMappings(p=>({...p,[em]:v}));setC2cSelectedUsers(p=>{const n=new Set(p);n.add(em);return n;});}}} style={{border:'none',background:'transparent',fontSize:12,fontFamily:'inherit',color:C.muted,cursor:'pointer',width:'100%',padding:'2px 0'}}>
-                    <option value="" disabled>— assign —</option>
+                  <select value="" disabled={!!csvEmails} onChange={e=>{const v=e.target.value;if(v){const m={...c2cMappings,[em]:v};setC2cMappings(m);setC2cSelectedUsers(p=>{const n=new Set(p);n.add(em);return n;});persistMappings(m,csvEmailsRef.current);}}} title={csvEmails?'Locked — CSV active. Clear the CSV to edit mappings.':''} style={{border:'none',background:'transparent',fontSize:12,fontFamily:'inherit',color:csvEmails?C.border:C.muted,cursor:csvEmails?'not-allowed':'pointer',width:'100%',padding:'2px 0',opacity:csvEmails?0.6:1}}>
+                    <option value="" disabled>{csvEmails?'— CSV active —':'— assign —'}</option>
                     {destUsers.map(d=>{const dem=(d.mail||d.userPrincipalName||'').toLowerCase();return<option key={dem} value={dem}>{dem}</option>})}
                   </select>
                 ):(<span style={{color:C.muted,fontSize:12}}>Loading…</span>)}
@@ -3910,7 +3965,6 @@ const StepC2CUserMap=({c2cConfig,c2cMappings,setC2cMappings,c2cSelectedUsers,set
       </div>
 
       <div style={{flexShrink:0,display:'flex',gap:10,paddingTop:12}}>
-        <Btn variant="ghost" onClick={autoMap}>↻ Auto-map</Btn>
         <Btn variant="ghost" onClick={onBack}>← Back</Btn>
         <Btn onClick={onNext} disabled={c2cSelectedUsers.size===0} style={{flex:1,justifyContent:'center'}}>Continue →</Btn>
       </div>
@@ -3957,6 +4011,7 @@ const StepC2COptions=({c2cConfig,setC2cConfig,c2cOptions,setC2cOptions,onRun,onB
             <Input type="date" value={c2cOptions.toDate||''} onChange={e=>setC2cOptions(p=>({...p,toDate:e.target.value}))} style={{fontSize:12,width:'100%'}}/>
           </div>
         </div>
+        {(c2cOptions.fromDate||c2cOptions.toDate)&&<TextBtn onClick={()=>setC2cOptions(p=>({...p,fromDate:'',toDate:''}))} style={{fontSize:11,marginTop:8,color:C.muted}}>Clear date range</TextBtn>}
         <div style={{fontSize:10,color:C.muted,marginTop:8,textAlign:'right'}}>Optional — blank = migrate all data</div>
       </Card>
 
@@ -4187,6 +4242,7 @@ const StepG2GUploadData=({g2gUploadData,setG2gUploadData,g2gSelectedUsers,setG2g
 
   const loadSavedUpload=(entry)=>{
     setShowMenu(false);
+    fetch(`/api/uploads/${entry.id}/activate`,{method:'POST'}).catch(()=>{});
     setG2gUploadData({id:entry.id,original_name:entry.original_name,extract_path:entry.extract_path,total_users:entry.total_users,total_conversations:entry.total_conversations,users:(entry.users||[]).map(u=>({email:u.email,display_name:u.display_name,conversation_count:u.conversation_count}))});
     setG2gSelectedUsers(new Set(entry.users.map(u=>u.email)));
   };
@@ -4377,6 +4433,7 @@ const StepG2GMap=({g2gUploadData,g2gConfig,g2gMappings,setG2gMappings,g2gSelecte
   const [loadingDest,setLoadingDest]=useState(false);
   // csvEmails persists in DB — survives server restart and user logout / login
   const [csvEmails,setCsvEmails]=useState(null);
+  const csvEmailsRef=useRef(null);
   const users=csvEmails?allUsers.filter(u=>csvEmails.includes((u.email||'').toLowerCase())):allUsers;
 
   // Load destination users from selected destination account
@@ -4395,10 +4452,32 @@ const StepG2GMap=({g2gUploadData,g2gConfig,g2gMappings,setG2gMappings,g2gSelecte
     fetch('/api/g2g/user-mappings').then(r=>r.ok?r.json():null).then(doc=>{
       if(doc?.csvEmails&&doc.csvEmails.length>0){
         setCsvEmails(doc.csvEmails);
+        csvEmailsRef.current=doc.csvEmails;
         if(doc.mappings)setG2gMappings(doc.mappings);
       }
     }).catch(()=>{});
   },[]);
+
+  // Auto-map by email local-part when source + destination user lists arrive.
+  // Same pattern as every other direction (C2G/G2C/CL2G/CL2C/C2C). Skips
+  // when a CSV is active; preserves existing mappings unconditionally;
+  // dedup applies only when auto-suggesting destinations for unmapped sources.
+  useEffect(()=>{
+    if(!allUsers.length||!destUsers.length)return;
+    if(csvEmailsRef.current)return;
+    const byLocal={};
+    destUsers.forEach(d=>{const em=(d.email||'').toLowerCase();const loc=em.split('@')[0];if(loc&&!byLocal[loc])byLocal[loc]=em});
+    const m={...g2gMappings};
+    const used=new Set(Object.values(m).filter(Boolean).map(v=>v.toLowerCase()));
+    let n=0;
+    allUsers.forEach(u=>{
+      if(m[u.email])return;
+      const cand=byLocal[(u.email||'').split('@')[0].toLowerCase()];
+      if(cand&&!used.has(cand)){m[u.email]=cand;used.add(cand);n++;}
+    });
+    if(n>0){setG2gMappings(m);persistMappings(m,csvEmailsRef.current);}
+    // Don't touch selection state — selections are user-driven and survive nav.
+  },[allUsers,destUsers]);
 
   const persistMappings=(m,csv)=>{
     fetch('/api/g2g/user-mappings',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -4408,15 +4487,18 @@ const StepG2GMap=({g2gUploadData,g2gConfig,g2gMappings,setG2gMappings,g2gSelecte
   // CSV format matches C2G (uniform across all directions): two columns —
   // "Source User","Destination User". Source rows show their current mapping
   // (may be blank), followed by every unused destination email on its own row.
+  // Download matches the UI: when CSV is active, only the rows in the table
+  // (filtered to csvEmails) are exported. Unused-destination roster omitted
+  // in CSV mode.
   const downloadCsv=()=>{
     const sortedSrc=[...users].sort((a,b)=>{const ma=!!g2gMappings[a.email],mb=!!g2gMappings[b.email];if(ma!==mb)return ma?-1:1;return a.email.localeCompare(b.email)});
     const rows=sortedSrc.map(u=>`"${u.email}","${g2gMappings[u.email]||''}"`);
     const usedDest=new Set(Object.values(g2gMappings).filter(Boolean).map(v=>v.toLowerCase()));
-    const destSorted=[...destUsers].map(u=>(u.email||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b));
+    const destSorted=csvEmails?[]:[...destUsers].map(u=>(u.email||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b));
     for(const em of destSorted){if(!usedDest.has(em.toLowerCase()))rows.push(`"","${em}"`);}
     const csv='Source User,Destination User\n'+rows.join('\n');
     const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='g2g-user-mappings.csv';a.click();
-    showToast(`Downloaded ${sortedSrc.length} source + ${destSorted.length} destination users.`);
+    showToast(`Downloaded ${sortedSrc.length} source${destSorted.length?` + ${destSorted.length} destination`:''} users.`);
   };
 
   const uploadCsv=file=>{
@@ -4430,7 +4512,8 @@ const StepG2GMap=({g2gUploadData,g2gConfig,g2gMappings,setG2gMappings,g2gSelecte
       //   - many-to-one allowed
       // Backward-compatible with the old 4/5-column "section,source,dest,…" rows
       // where the first cell is "source".
-      const m={...g2gMappings};const csvKeys=[];const seenSrc=new Set();
+      // Strict mode: CSV replaces all existing mappings.
+      const m={};const csvKeys=[];const seenSrc=new Set();
       let skippedEmpty=0,skippedDupe=0;
       for(const l of lines){
         if(!l.trim())continue;
@@ -4449,7 +4532,7 @@ const StepG2GMap=({g2gUploadData,g2gConfig,g2gMappings,setG2gMappings,g2gSelecte
         csvKeys.push(src);
       }
       setG2gMappings(m);
-      setCsvEmails(csvKeys);
+      setCsvEmails(csvKeys);csvEmailsRef.current=csvKeys;
       setG2gSelectedUsers(new Set(csvKeys));
       persistMappings(m,csvKeys);
       setCsvUploading(false);
@@ -4461,31 +4544,13 @@ const StepG2GMap=({g2gUploadData,g2gConfig,g2gMappings,setG2gMappings,g2gSelecte
   };
 
   const clearCsv=()=>{
-    setCsvEmails(null);
+    setCsvEmails(null);csvEmailsRef.current=null;
     fetch('/api/g2g/user-mappings',{method:'DELETE'}).catch(()=>{});
     setG2gSelectedUsers(new Set());
     showToast?.('CSV cleared — restored cloud auto-mapping.');
   };
-
-  // Auto-map: each source email matched to dest user with same local-part (no double-use)
-  const autoMap=()=>{
-    const byLocal={};
-    destUsers.forEach(d=>{const em=(d.email||'').toLowerCase();const loc=em.split('@')[0];if(loc&&!byLocal[loc])byLocal[loc]=em});
-    const m={...g2gMappings};const used=new Set(Object.values(m).filter(Boolean).map(e=>e.toLowerCase()));
-    let count=0;
-    users.forEach(u=>{
-      if(m[u.email])return;
-      const loc=(u.email||'').split('@')[0].toLowerCase();
-      const candidate=byLocal[loc];
-      if(candidate&&!used.has(candidate)){m[u.email]=candidate;used.add(candidate);count++;}
-    });
-    setG2gMappings(m);
-    // Auto-select mapped users
-    const sel=new Set(g2gSelectedUsers);
-    Object.entries(m).forEach(([src,dst])=>{if(dst)sel.add(src)});
-    setG2gSelectedUsers(sel);
-    showToast(count>0?`Auto-mapped ${count} user(s).`:'No new auto-mappings found.');
-  };
+  // Auto-map now runs automatically via the useEffect above — manual button
+  // and function removed to match the UX of every other direction.
 
   const filtered=users.filter(u=>{const q=search.toLowerCase();return u.email.toLowerCase().includes(q)||(g2gMappings[u.email]||'').toLowerCase().includes(q)||(u.display_name||'').toLowerCase().includes(q)}).sort((a,b)=>{
     const aP=(g2gSelectedUsers.has(a.email)?2:0)+(g2gMappings[a.email]?1:0);
@@ -4545,20 +4610,21 @@ const StepG2GMap=({g2gUploadData,g2gConfig,g2gMappings,setG2gMappings,g2gSelecte
                     <>
                       <Avatar name={g2gMappings[u.email]} email={g2gMappings[u.email]} size={22}/>
                       <span style={{fontSize:12,color:C.dark,fontFamily:'monospace',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>{g2gMappings[u.email]}</span>
-                      <button onClick={e=>{e.stopPropagation();setG2gMappings(p=>({...p,[u.email]:''}))}} title="Clear mapping" style={{flexShrink:0,background:'none',border:'none',cursor:'pointer',color:C.muted,fontSize:14,lineHeight:1,padding:'0 2px'}} onMouseEnter={e=>e.currentTarget.style.color='#ef4444'} onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
+                      <button disabled={!!csvEmails} onClick={e=>{e.stopPropagation();if(csvEmails)return;const m={...g2gMappings,[u.email]:''};setG2gMappings(m);persistMappings(m,csvEmailsRef.current);}} title={csvEmails?'Locked — CSV active. Clear the CSV to edit mappings.':'Clear mapping'} style={{flexShrink:0,background:'none',border:'none',cursor:csvEmails?'not-allowed':'pointer',color:csvEmails?C.border:C.muted,fontSize:14,lineHeight:1,padding:'0 2px',opacity:csvEmails?0.5:1}} onMouseEnter={e=>{if(!csvEmails)e.currentTarget.style.color='#ef4444'}} onMouseLeave={e=>{if(!csvEmails)e.currentTarget.style.color=C.muted}}>✕</button>
                     </>
                   ):(
                     destUsers.length>0?(
-                      <select value="" onChange={e=>{e.stopPropagation();const val=e.target.value;if(val){setG2gMappings(p=>({...p,[u.email]:val}));setG2gSelectedUsers(p=>{const n=new Set(p);n.add(u.email);return n});}}}
+                      <select value="" disabled={!!csvEmails} onChange={e=>{e.stopPropagation();const val=e.target.value;if(val){const m={...g2gMappings,[u.email]:val};setG2gMappings(m);setG2gSelectedUsers(p=>{const n=new Set(p);n.add(u.email);return n});persistMappings(m,csvEmailsRef.current);}}}
                         onClick={e=>e.stopPropagation()}
-                        style={{border:'none',background:'transparent',fontSize:12,fontFamily:'inherit',color:C.muted,cursor:'pointer',outline:'none',width:'100%',padding:'2px 0'}}>
-                        <option value="" disabled>— assign —</option>
+                        title={csvEmails?'Locked — CSV active. Clear the CSV to edit mappings.':''}
+                        style={{border:'none',background:'transparent',fontSize:12,fontFamily:'inherit',color:csvEmails?C.border:C.muted,cursor:csvEmails?'not-allowed':'pointer',outline:'none',width:'100%',padding:'2px 0',opacity:csvEmails?0.6:1}}>
+                        <option value="" disabled>{csvEmails?'— CSV active —':'— assign —'}</option>
                         {destUsers.map(d=>{const em=(d.email||'').toLowerCase();return<option key={em} value={em}>{em}</option>})}
                       </select>
                     ):loadingDest?(
                       <span style={{color:C.muted,fontSize:12,display:'inline-flex',alignItems:'center',gap:6}}><Spinner s={12}/> Loading destination users...</span>
                     ):(
-                      <Input value={g2gMappings[u.email]||''} onChange={e=>setG2gMappings(p=>({...p,[u.email]:e.target.value}))} placeholder="— assign —" style={{fontSize:12,width:'100%'}}/>
+                      <Input value={g2gMappings[u.email]||''} disabled={!!csvEmails} onChange={e=>setG2gMappings(p=>({...p,[u.email]:e.target.value}))} onBlur={e=>{if(!csvEmails)persistMappings({...g2gMappings,[u.email]:e.target.value},csvEmailsRef.current);}} placeholder={csvEmails?'— CSV active —':'— assign —'} style={{fontSize:12,width:'100%',opacity:csvEmails?0.6:1}}/>
                     )
                   )}
                 </div>
@@ -4571,7 +4637,6 @@ const StepG2GMap=({g2gUploadData,g2gConfig,g2gMappings,setG2gMappings,g2gSelecte
       </div>
 
       <div style={{flexShrink:0,display:'flex',gap:10,paddingTop:12}}>
-        <Btn variant="ghost" onClick={autoMap} style={{justifyContent:'center'}}>↻ Auto-map</Btn>
         <Btn variant="ghost" onClick={onBack}>← Back</Btn>
         <Btn onClick={onNext} disabled={g2gSelectedUsers.size===0} style={{flex:1,justifyContent:'center'}}>Continue →</Btn>
       </div>
@@ -4617,6 +4682,7 @@ const StepG2GOptions=({g2gConfig,setG2gConfig,g2gOptions,setG2gOptions,onRun,onB
             <Input type="date" value={g2gOptions.toDate||''} onChange={e=>setG2gOptions(p=>({...p,toDate:e.target.value}))} style={{fontSize:12,width:'100%'}}/>
           </div>
         </div>
+        {(g2gOptions.fromDate||g2gOptions.toDate)&&<TextBtn onClick={()=>setG2gOptions(p=>({...p,fromDate:'',toDate:''}))} style={{fontSize:11,marginTop:8,color:C.muted}}>Clear date range</TextBtn>}
         <div style={{fontSize:10,color:C.muted,marginTop:8,textAlign:'right'}}>Optional — blank = migrate all data</div>
       </Card>
 
@@ -4945,6 +5011,7 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
                     <div style={{fontSize:12,color:C.muted,display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}}>
                       <span>{fmtDate(r.startTime)}</span>
                       {r.endTime&&<span>⏱ {fmtDur(r.startTime,r.endTime)}</span>}
+                      {(r.fromDate||r.toDate)&&<span style={{fontSize:10,padding:'1px 6px',borderRadius:4,background:'#FEF3C7',color:'#92400E',fontWeight:600}} title="Date range used for this migration">📅 {r.fromDate||'…'} → {r.toDate||'…'}</span>}
                       {r._id&&<span style={{display:'inline-flex',alignItems:'center',gap:4,fontFamily:'monospace',fontSize:10,padding:'1px 6px',borderRadius:4,background:C.bg,color:C.dark}} title="Batch ID — click to copy" onClick={(e)=>{e.stopPropagation();navigator.clipboard?.writeText(String(r._id));}}>
                         <span style={{fontWeight:600,color:C.muted}}>ID</span>
                         <span>{String(r._id).length>16?String(r._id).slice(0,8)+'…'+String(r._id).slice(-6):String(r._id)}</span>
@@ -5036,7 +5103,10 @@ function App(){
   const [importTabSignal,setImportTabSignal]=useState(null);
   // Signal to drive the Vault export from the agent ("Export Vault for ALL users")
   const [exportTrigger,setExportTrigger]=useState(null);
-  const [config,setConfig]=useState(()=>({filePath:'GeminiChats',tenantId:'807d6772-847c-40e2-9bec-e2c930b3a42e',...(lsGet(LS_PREFS,{}).config||{})}));
+  // No hardcoded tenantId and no localStorage cache. Hydrated from the
+  // userConfig collection via /api/init on mount, and saved back via
+  // PUT /api/config whenever the user edits it.
+  const [config,setConfig]=useState({filePath:'GeminiChats',tenantId:''});
   const [mappings,setMappings]=useState({});
   const [selectedUsers,setSelectedUsers]=useState(()=>new Set());
   const [options,setOptions]=useState(()=>({dryRun:true,skipFollowups:false,skipAiResponse:false,fromDate:'',toDate:'',...(lsGet(LS_PREFS,{}).options||{})}));
@@ -5185,7 +5255,7 @@ function App(){
   useEffect(()=>{
     fetch('/api/uploads').then(r=>r.ok?r.json():null).then(d=>{
       const u=d?.uploads?.[0];
-      if(u&&!uploadData)setUploadData({uploadId:u.id,fileName:u.original_name,users:u.users||[],total_users:u.total_users,total_conversations:u.total_conversations,extract_path:u.extract_path});
+      if(u&&!uploadData)setUploadData({id:u.id,original_name:u.original_name,users:u.users||[],total_users:u.total_users,total_conversations:u.total_conversations,extract_path:u.extract_path});
     }).catch(()=>{});
     fetch('/api/cl2g/uploads').then(r=>r.ok?r.json():null).then(list=>{
       const u=Array.isArray(list)?list[0]:null;
@@ -5258,6 +5328,16 @@ function App(){
         }
 
         if(initData){
+          // Hydrate G2C config from the userConfig collection — DB is the
+          // source of truth for tenantId + customerName. No localStorage,
+          // no hardcoded values.
+          if(initData.config){
+            setConfig({
+              tenantId: initData.config.tenantId || '',
+              filePath: initData.config.customerName || 'GeminiChats',
+            });
+          }
+
           // Restore chat history from DB (cross-device) — DB wins over localStorage
           if(initData.chatMessages?.length>0){
             setAgentMsgs(initData.chatMessages);
@@ -5407,6 +5487,21 @@ function App(){
       setStep(4);
     }
   },[wsLoaded]);
+
+  // Persist G2C config (tenantId + customerName) to the userConfig collection
+  // whenever the user edits either field. Debounced so we don't fire on every
+  // keystroke. wsLoaded gate prevents the initial empty state from overwriting
+  // the DB value before /api/init has had a chance to hydrate.
+  useEffect(()=>{
+    if(!wsLoaded)return;
+    if(!config.tenantId&&!config.filePath)return;
+    clearTimeout(window._configSaveTimer);
+    window._configSaveTimer=setTimeout(()=>{
+      fetch('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({tenantId:config.tenantId||'',customerName:config.filePath||''})
+      }).catch(()=>{});
+    },500);
+  },[config.tenantId,config.filePath,wsLoaded]);
 
   // Persist chat history — localStorage for instant restore, MongoDB for cross-device
   useEffect(()=>{
@@ -5611,7 +5706,7 @@ function App(){
     } else if(migDir==='copilot-copilot'){
       // C2C: source users live in the StepC2CUserMap component; can't auto-map
       // from App scope without their list. Tell user to use the in-UI button.
-      addAgentMsg('bot','For Copilot → Copilot, click the "Auto-map" button at the top of the user mapping table — the in-UI auto-map matches across both tenants directly.');
+      addAgentMsg('bot','For Copilot → Copilot, same-named users across the two tenants are auto-mapped as soon as both tenant user lists finish loading. Just review the mapping table and adjust any rows that need a different destination.');
     }
   },[migDir,mappings,uploadData,msUsers,googleUsers,c2gMappings,cl2gMappings,cl2gUploadData,setMappings,setC2gMappings,setCl2gMappings,cl2cMappings,cl2cUploadData,setCl2cMappings,g2gMappings,g2gUploadData,setG2gMappings,addAgentMsg]);
 

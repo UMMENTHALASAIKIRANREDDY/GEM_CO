@@ -155,6 +155,7 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
         else dbLog.info(`extractDir cleaned: ${extractDir}`);
       });
 
+      const now = new Date();
       const doc = {
         _id:                uploadId,
         appUserId,
@@ -164,14 +165,15 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
         // exclusively from conversationStore.
         ingestBatchId,
         conversationsPersisted: totalPersisted,
-        uploadTime:         new Date(),
+        uploadTime:         now,
+        lastActiveAt:       now,
         totalConversations: parsed.totalConversations,
         users:              parsed.users,
         status:             'ready',
       };
 
-      await db().collection('cl2cUploads').insertOne(doc);
-      dbLog.info(`cl2cUploads.insert — ${uploadId} (${parsed.users.length} users, ${parsed.totalConversations} convs, ${totalPersisted} in conversationStore)`);
+      await db().collection('claudeUploads').insertOne(doc);
+      dbLog.info(`claudeUploads.insert — ${uploadId} (${parsed.users.length} users, ${parsed.totalConversations} convs, ${totalPersisted} in conversationStore)`);
 
       res.json({ uploadId, users: parsed.users, totalConversations: parsed.totalConversations, conversations_persisted: totalPersisted, ingest_batch_id: ingestBatchId });
     } catch (err) {
@@ -182,27 +184,39 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
   });
 
   // ── GET /api/cl2c/uploads ─────────────────────────────────────────────────
-  // After the move to DB-only storage, only purge LEGACY records that still
-  // have an extractPath whose disk dir is gone (no DB conversations either).
-  // New uploads don't have extractPath and are kept indefinitely until the
-  // user explicitly deletes them.
+  // Sorted by lastActiveAt DESC so the user's last-selected (or last-uploaded)
+  // ZIP is index 0 — that's what the App-level mount restore picks. Falls
+  // back to uploadTime for legacy rows without lastActiveAt.
   router.get('/uploads', requireAuth, async (req, res) => {
     try {
       const { appUserId } = getCtx(req);
-      const uploads = await db().collection('cl2cUploads')
+      const uploads = await db().collection('claudeUploads')
         .find({ appUserId })
-        .sort({ uploadTime: -1 })
+        .sort({ lastActiveAt: -1, uploadTime: -1 })
         .toArray();
 
       const staleIds = uploads
         .filter(u => u.extractPath && !fs.existsSync(u.extractPath) && !u.conversationsPersisted)
         .map(u => u._id);
       if (staleIds.length) {
-        await db().collection('cl2cUploads').deleteMany({ _id: { $in: staleIds } });
-        dbLog.info(`cl2cUploads.purge — removed ${staleIds.length} legacy record(s) with no disk + no DB content`);
+        await db().collection('claudeUploads').deleteMany({ _id: { $in: staleIds } });
+        dbLog.info(`claudeUploads.purge — removed ${staleIds.length} legacy record(s) with no disk + no DB content`);
       }
 
       res.json(uploads.filter(u => !staleIds.includes(u._id)));
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── POST /api/cl2c/uploads/:id/activate ────────────────────────────────────
+  router.post('/uploads/:id/activate', requireAuth, async (req, res) => {
+    try {
+      const { appUserId } = getCtx(req);
+      const r = await db().collection('claudeUploads').updateOne(
+        { _id: req.params.id, appUserId },
+        { $set: { lastActiveAt: new Date() } }
+      );
+      if (r.matchedCount === 0) return res.status(404).json({ error: 'Upload not found' });
+      res.json({ ok: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
@@ -210,10 +224,10 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
   router.delete('/uploads/:id', requireAuth, async (req, res) => {
     try {
       const { appUserId } = getCtx(req);
-      const doc = await db().collection('cl2cUploads').findOne({ _id: req.params.id, appUserId });
+      const doc = await db().collection('claudeUploads').findOne({ _id: req.params.id, appUserId });
       if (!doc) return res.status(404).json({ error: 'Upload not found' });
       if (doc.extractPath) fs.rm(doc.extractPath, { recursive: true, force: true }, () => {});
-      await db().collection('cl2cUploads').deleteOne({ _id: req.params.id, appUserId });
+      await db().collection('claudeUploads').deleteOne({ _id: req.params.id, appUserId });
       res.json({ ok: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
@@ -260,7 +274,7 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
       if (!pairs?.length)  return res.status(400).json({ error: 'No user pairs provided' });
       if (!uploadId)       return res.status(400).json({ error: 'No uploadId provided' });
 
-      const uploadDoc = await db().collection('cl2cUploads').findOne({ _id: uploadId, appUserId });
+      const uploadDoc = await db().collection('claudeUploads').findOne({ _id: uploadId, appUserId });
       if (!uploadDoc) return res.status(404).json({ error: 'Upload not found' });
 
       const batchId    = `cl2c_${Date.now()}`;
@@ -284,7 +298,7 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
     const isDryRun   = dryRun === true;
     const cl2cFolder = folderName || 'ClaudeChats';
 
-    const uploadDoc = await db().collection('cl2cUploads').findOne({ _id: uploadId, appUserId });
+    const uploadDoc = await db().collection('claudeUploads').findOne({ _id: uploadId, appUserId });
     if (!uploadDoc) {
       dbLog.error(`[CL2C] Upload ${uploadId} not found on ${isResume ? 'resume' : 'start'} — aborting batch ${batchId}`);
       await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { status: 'failed', endTime: new Date(), error: 'Upload doc missing' } }).catch(() => {});
@@ -299,7 +313,7 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
         try {
           await db().collection('migrationWorkspaces').updateOne(
             { _id: batchId },
-            { $set: { migDir: 'claude-copilot', customerName: cl2cFolder, startTime, status: 'running', dryRun: isDryRun, appUserId, msEmail, totalUsers: pairs.length, lastHeartbeat: new Date(), resumeContext, ...(isResume ? { resumedAt: new Date() } : {}) } },
+            { $set: { migDir: 'claude-copilot', customerName: cl2cFolder, startTime, status: 'running', dryRun: isDryRun, appUserId, msEmail, fromDate: fromDate || null, toDate: toDate || null, totalUsers: pairs.length, lastHeartbeat: new Date(), resumeContext, ...(isResume ? { resumedAt: new Date() } : {}) } },
             { upsert: true }
           );
           _heartbeatId = startHeartbeat(batchId);

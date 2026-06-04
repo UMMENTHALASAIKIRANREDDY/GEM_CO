@@ -10,14 +10,27 @@ import path from 'node:path';
 import { passingCheck, warningCheck, blockerCheck } from '../reportBuilder.js';
 
 /**
- * Verify the extracted vault export folder exists and has XML files.
+ * Verify the Vault export is migratable. After the move to DB-only storage,
+ * a valid upload is one where conversations exist in conversationStore — the
+ * disk extract is deleted right after upload. We accept either:
+ *   1. uploadData.conversationsPersisted > 0  → DB-only flow (new uploads)
+ *   2. extractPath still on disk with XML files → legacy upload (pre-fix)
+ * A blocker only fires when BOTH are missing.
  */
-export function checkVaultExtractValid(extractPath) {
+export function checkVaultExtractValid(extractPath, uploadData) {
+  const persisted = uploadData?.conversationsPersisted ?? 0;
+  if (persisted > 0) {
+    return [passingCheck(
+      'source.vault.db_ready',
+      'Vault export',
+      { conversationsInDB: persisted }
+    )];
+  }
   if (!extractPath) {
     return [blockerCheck(
       'source.vault.no_extract',
       'Vault export',
-      'No Vault export extracted yet.',
+      'No Vault export found in DB and no disk extract.',
       'Upload a Google Vault ZIP file in the previous step.'
     )];
   }
@@ -26,8 +39,8 @@ export function checkVaultExtractValid(extractPath) {
       return [blockerCheck(
         'source.vault.extract_missing',
         'Vault export files',
-        `Extracted Vault folder no longer exists at ${extractPath}.`,
-        'The server may have been restarted and cleared the upload — re-upload the ZIP.'
+        `Extracted Vault folder no longer exists at ${extractPath} and no DB rows found.`,
+        'Re-upload the ZIP — it will be persisted to the database.'
       )];
     }
     const xmls = fs.readdirSync(extractPath).filter(f => f.toLowerCase().endsWith('.xml'));

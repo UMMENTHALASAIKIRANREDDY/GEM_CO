@@ -476,18 +476,63 @@ export function createG2CRouter(deps) {
         dbLog.info(`vaultExports.update — export ${exportId} COMPLETED`);
         const uploadId = path.basename(destDir);
         const usersArr = users.map(u => ({ email: u.email, displayName: u.displayName, conversationCount: u.conversationCount }));
+
+        // Persist every conversation to conversationStore. FATAL — disk extract
+        // is about to be deleted, so DB is the only copy. Mirrors the manual
+        // ZIP upload path.
+        const ingestBatchId = `ingest_${uploadId}`;
+        let totalPersisted = 0;
+        const { persistSourceConversations, SOURCE_TYPE } = await import('../_shared/conversationStore.js');
+        for (const u of users) {
+          const userConvs = await reader.loadUserConversations(u.email, null, null);
+          if (!userConvs?.length) continue;
+          const r = await persistSourceConversations(
+            {
+              batchId: ingestBatchId,
+              appUserId: activeExport.appUserId,
+              migDir: 'gemini-copilot',
+              sourceType: SOURCE_TYPE.VAULT,
+              sourceEmail: u.email,
+              sourceDisplayName: u.displayName,
+              uploadId,
+            },
+            userConvs.map(c => ({
+              sessionId: c.id || `${u.email}::${c.title || 'untitled'}::${c.createdDateTime || ''}`,
+              title: c.title,
+              createdDateTime: c.createdDateTime,
+              payload: c,
+            }))
+          );
+          totalPersisted += r.inserted;
+        }
+        dbLog.info(`conversationStore.upsert (vault export) — ${totalPersisted} conversations persisted`);
+
+        // DB has every conversation — purge the disk extract.
+        fs.rm(destDir, { recursive: true, force: true }, (err) => {
+          if (err) dbLog.warn(`Failed to clean vault export dir ${destDir}: ${err.message}`);
+          else dbLog.info(`vault export dir cleaned: ${destDir}`);
+        });
+
+        const now = new Date();
         const uploadDoc = {
-          _id: uploadId, originalName: `vault_export_${new Date().toISOString().slice(0, 10)}.zip`,
-          uploadTime: new Date(), extractPath: destDir, totalUsers: users.length,
+          _id: uploadId, originalName: `vault_export_${now.toISOString().slice(0, 10)}.zip`,
+          uploadTime: now,
+          lastActiveAt: now,
+          // No extractPath — disk gone; migration reads from conversationStore.
+          ingestBatchId,
+          conversationsPersisted: totalPersisted,
+          totalUsers: users.length,
           totalConversations: users.reduce((s, u) => s + u.conversationCount, 0), users: usersArr,
           appUserId: activeExport.appUserId, googleEmail: activeExport.googleEmail, msEmail: activeExport.msEmail,
         };
-        await db().collection('uploads').updateOne({ _id: uploadId }, { $set: uploadDoc }, { upsert: true });
-        dbLog.info(`uploads.upsert (vault export) — ${uploadDoc.totalUsers} users`);
+        await db().collection('geminiUploads').updateOne({ _id: uploadId }, { $set: uploadDoc }, { upsert: true });
+        dbLog.info(`uploads.upsert (vault export) — ${uploadDoc.totalUsers} users, ${totalPersisted} in conversationStore`);
         activeExport = null;
         return res.json({
-          status, id: uploadId, original_name: uploadDoc.originalName, extract_path: destDir,
+          status, id: uploadId, original_name: uploadDoc.originalName,
           total_users: users.length, total_conversations: uploadDoc.totalConversations,
+          conversations_persisted: totalPersisted,
+          ingest_batch_id: ingestBatchId,
           users: users.map(u => ({ email: u.email, display_name: u.displayName, conversation_count: u.conversationCount })),
         });
       }
@@ -564,9 +609,11 @@ export function createG2CRouter(deps) {
       fs.unlink(zipPath, () => {});
 
       const usersArr = users.map(u => ({ email: u.email, displayName: u.displayName, conversationCount: u.conversationCount }));
+      const now = new Date();
       const uploadDoc = {
         _id: uploadId, originalName: req.file.originalname || 'vault_export.zip',
-        uploadTime: new Date(),
+        uploadTime: now,
+        lastActiveAt: now,
         // No extractPath — disk is gone; migration reads from conversationStore.
         ingestBatchId,
         conversationsPersisted: totalPersisted,
@@ -574,7 +621,7 @@ export function createG2CRouter(deps) {
         totalConversations: users.reduce((s, u) => s + u.conversationCount, 0), users: usersArr,
         appUserId: _appUserId, googleEmail: _googleEmail, msEmail: _msEmail,
       };
-      await db().collection('uploads').updateOne({ _id: uploadDoc._id }, { $set: uploadDoc }, { upsert: true });
+      await db().collection('geminiUploads').updateOne({ _id: uploadDoc._id }, { $set: uploadDoc }, { upsert: true });
       dbLog.info(`uploads.upsert — ${uploadDoc.originalName} (${uploadDoc.totalUsers} users, ${uploadDoc.totalConversations} conversations, ${totalPersisted} in conversationStore)`);
       res.json({
         id: uploadDoc._id, original_name: uploadDoc.originalName, upload_time: uploadDoc.uploadTime.toISOString(),
@@ -591,21 +638,37 @@ export function createG2CRouter(deps) {
   });
 
   // Upload management
+  // Sorted by lastActiveAt DESC so the most-recently-selected upload is
+  // index 0 — the one App-level mount restore picks on refresh / restart.
   router.get('/uploads', async (req, res) => {
     const { appUserId, googleEmail } = getWorkspaceContext(req);
     if (!appUserId || !googleEmail) return res.json({ uploads: [] });
-    const uploads = await db().collection('uploads').find({ appUserId, $or: [{ googleEmail }, { googleEmail: { $exists: false } }] }).sort({ uploadTime: -1 }).toArray();
+    const uploads = await db().collection('geminiUploads').find({ appUserId, $or: [{ googleEmail }, { googleEmail: { $exists: false } }] }).sort({ lastActiveAt: -1, uploadTime: -1 }).toArray();
     res.json({ uploads: uploads.map(u => ({ id: u._id, original_name: u.originalName, upload_time: u.uploadTime, total_users: u.totalUsers, total_conversations: u.totalConversations, users: (u.users || []).map(x => ({ email: x.email, display_name: x.displayName, conversation_count: x.conversationCount })) })) });
   });
 
   router.delete('/uploads/:id', async (req, res) => {
     const { id } = req.params;
     const { appUserId } = getWorkspaceContext(req);
-    const entry = await db().collection('uploads').findOne({ _id: id, appUserId });
+    const entry = await db().collection('geminiUploads').findOne({ _id: id, appUserId });
     if (!entry) return res.status(404).json({ error: 'Upload not found' });
     try { fs.rmSync(entry.extractPath, { recursive: true, force: true }); } catch {}
-    await db().collection('uploads').deleteOne({ _id: id, appUserId });
+    await db().collection('geminiUploads').deleteOne({ _id: id, appUserId });
     dbLog.info(`uploads.delete — ${id}`);
+    res.json({ ok: true });
+  });
+
+  // Bump lastActiveAt so this upload becomes the user's active selection.
+  // Called from the UI when the user picks a different ZIP from the "Saved
+  // Uploads" menu. Survives server restart and browser refresh.
+  router.post('/uploads/:id/activate', async (req, res) => {
+    const { id } = req.params;
+    const { appUserId } = getWorkspaceContext(req);
+    const r = await db().collection('geminiUploads').updateOne(
+      { _id: id, appUserId },
+      { $set: { lastActiveAt: new Date() } }
+    );
+    if (r.matchedCount === 0) return res.status(404).json({ error: 'Upload not found' });
     res.json({ ok: true });
   });
 
@@ -846,7 +909,7 @@ export function createG2CRouter(deps) {
 
     await db().collection('migrationWorkspaces').updateOne(
       { _id: batchId },
-      { $set: { migDir: 'gemini-copilot', customerName: customer_name, tenantId: tenant_id, startTime, status: 'running', dryRun: dry_run, uploadId: upload_id, appUserId, googleEmail, msEmail, lastHeartbeat: new Date(), ...(resumeContext ? { resumeContext } : {}), ...(isResume ? { resumedAt: new Date() } : {}) } },
+      { $set: { migDir: 'gemini-copilot', customerName: customer_name, tenantId: tenant_id, startTime, status: 'running', dryRun: dry_run, uploadId: upload_id, appUserId, googleEmail, msEmail, fromDate: from_date || null, toDate: to_date || null, lastHeartbeat: new Date(), ...(resumeContext ? { resumeContext } : {}), ...(isResume ? { resumedAt: new Date() } : {}) } },
       { upsert: true }
     );
     dbLog.info(`migrationWorkspaces.${isResume ? 'resume' : 'insert'} — batch ${batchId} status=running${isResume ? ' (AUTO-RESUMED)' : ''}`);
@@ -855,20 +918,9 @@ export function createG2CRouter(deps) {
     const { startHeartbeat, stopHeartbeat, loadConversationsFromStore, markUserPairMigrated, markUserPairFailed } = await import('../_shared/conversationStore.js');
     const _heartbeatId = startHeartbeat(batchId);
 
-    const jobIds = {};
-    if (!dry_run && Object.keys(user_mappings).length > 0) {
-      await Promise.all(Object.entries(user_mappings).map(async ([sourceEmail, destEmail]) => {
-        const jobId = randomUUID();
-        try {
-          await db().collection('migrationJobs').insertOne({
-            jobId, workspaceId: batchId, appUserId, migDir: 'gemini-copilot',
-            sourceEmail, destEmail, status: 'pending', pages: 0, errors: [],
-            startTime: null, endTime: null,
-          });
-          jobIds[sourceEmail] = jobId;
-        } catch (e) { dbLog.warn(`migrationJobs.insert failed for ${sourceEmail}: ${e.message}`); }
-      }));
-    }
+    // Per-user status tracking lives in conversationStore now (status field
+    // on each conversation row, keyed by sourceEmail). The legacy migrationJobs
+    // collection has been removed.
 
     await new Promise(r => setTimeout(r, 200));
     emit('info', '━━━ Migration started ━━━');
@@ -885,7 +937,7 @@ export function createG2CRouter(deps) {
         allUsers = await reader.discoverUsers();
       } else {
         // DB-only path: get the user list from the upload metadata document.
-        const uploadDoc = upload_id ? await db().collection('uploads').findOne({ _id: upload_id }) : null;
+        const uploadDoc = upload_id ? await db().collection('geminiUploads').findOne({ _id: upload_id }) : null;
         if (!uploadDoc) {
           emit('error', `Upload ${upload_id} not found in DB — cannot determine users to migrate. Re-upload the Vault ZIP.`);
           throw new Error(`Upload not found: ${upload_id}`);
@@ -907,7 +959,7 @@ export function createG2CRouter(deps) {
             destEmail: user_mappings[u.email] || u.email,
             expectedConversationCount: u.conversationCount || 0,
           }));
-          const uploadDoc = await db().collection('uploads').findOne({ _id: upload_id });
+          const uploadDoc = await db().collection('geminiUploads').findOne({ _id: upload_id });
           const dryRunReport = await runDryRunValidator({
             migDir: 'gemini-copilot',
             pairs: validatorPairs,
@@ -961,12 +1013,6 @@ export function createG2CRouter(deps) {
         const m365Email = user_mappings[gEmail] || gEmail;
 
         emit('info', `Processing: ${gEmail} → ${m365Email}`);
-        if (jobIds[gEmail]) {
-          await db().collection('migrationJobs').updateOne(
-            { jobId: jobIds[gEmail] },
-            { $set: { status: 'running', startTime: new Date() } }
-          ).catch(() => {});
-        }
         let conversations = null;
         const errors = [];
         let pagesCreated = 0;
@@ -1172,17 +1218,8 @@ export function createG2CRouter(deps) {
             { _id: batchId },
             { $set: { progressUsers, progressPages, progressErrors, totalUsers: users.length } }
           ).catch(() => {});
-          if (jobIds[gEmail]) {
-            await db().collection('migrationJobs').updateOne(
-              { jobId: jobIds[gEmail] },
-              { $set: {
-                status: errors.length > 0 ? 'failed' : 'done',
-                pages: pagesCreated,
-                errors: errors.map(e => ({ page: e.conversation || '', message: e.error || '' })),
-                endTime: new Date(),
-              } }
-            ).catch(() => {});
-          }
+          // Per-user status now lives in conversationStore (status: migrated /
+          // failed on each conversation row, looked up by sourceEmail).
         }
       });
 
@@ -1328,7 +1365,7 @@ export function createG2CRouter(deps) {
     if (!batchDoc) return res.status(404).json({ error: 'Batch not found' });
 
     const mappingDoc = await db().collection('userMappings').findOne({ appUserId, migDir: 'gemini-copilot' });
-    const uploadDoc = await db().collection('uploads').findOne({ appUserId }, { sort: { uploadTime: -1 } });
+    const uploadDoc = await db().collection('geminiUploads').findOne({ appUserId }, { sort: { uploadTime: -1 } });
 
     const retryTargets = {};
     for (const u of batchDoc.report?.users || []) {
@@ -1341,13 +1378,10 @@ export function createG2CRouter(deps) {
     const retryBatchId = `${batchId}_retry_${randomUUID()}`;
     res.json({ started: true, batch_id: retryBatchId, targets: retryTargets });
 
-    const failedEmails = Object.keys(retryTargets);
-    if (failedEmails.length > 0) {
-      await db().collection('migrationJobs').updateMany(
-        { workspaceId: batchId, sourceEmail: { $in: failedEmails } },
-        { $set: { status: 'retried', retriedAt: new Date() } }
-      ).catch(() => {});
-    }
+    // Retry sources are tracked by re-running the migration for failedEmails;
+    // conversationStore rows for those users are still status:'failed' until
+    // the retry run flips them to 'migrated'. No separate retry-state field
+    // needed now that migrationJobs is gone.
 
     runRetry({ batchId, retryBatchId, extractPath: uploadDoc?.extractPath, tenantId: batchDoc.tenantId, customerName: effectiveCustomerName, userMappings: mappingDoc?.mappings || {}, retryTargets, appUserId }).catch(e => {
       console.error('[G2C] runRetry unhandled error:', e.message);
@@ -1427,7 +1461,7 @@ export function createG2CRouter(deps) {
       startMigration: async ({ dryRun, batchId, migDir: dir, appUserId: uid }) => {
         // Validate preconditions only — UI handles the actual migration trigger and SSE connection
         if (dir === 'gemini-copilot') {
-          const uploadDoc = await db().collection('uploads').findOne({ appUserId: uid }, { sort: { uploadTime: -1 } });
+          const uploadDoc = await db().collection('geminiUploads').findOne({ appUserId: uid }, { sort: { uploadTime: -1 } });
           const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: 'gemini-copilot' });
           if (!uploadDoc) return { error: 'No Gemini export uploaded. Upload your takeout ZIP first.' };
           if (!mappingDoc || !Object.keys(mappingDoc.mappings || {}).length) return { error: 'No user mappings for Gemini→Copilot. Map users first.' };
@@ -1439,7 +1473,7 @@ export function createG2CRouter(deps) {
           return { validated: true, batchId, note: 'UI will start migration and connect to log stream' };
         }
         if (dir === 'claude-gemini') {
-          const uploadDoc = await db().collection('cl2gUploads').findOne({ appUserId: uid }, { sort: { uploadTime: -1 } });
+          const uploadDoc = await db().collection('claudeUploads').findOne({ appUserId: uid }, { sort: { uploadTime: -1 } });
           const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: 'claude-gemini' });
           if (!uploadDoc) return { error: 'No Claude export ZIP uploaded. Upload your export first.' };
           if (!mappingDoc || !Object.keys(mappingDoc.mappings || {}).length) return { error: 'No user mappings for Claude→Gemini. Map users first.' };
@@ -1456,7 +1490,7 @@ export function createG2CRouter(deps) {
           return { error: `Retry not yet supported for ${batchDir} migrations. Run another batch instead.` };
         }
         const mappingDoc = await db().collection('userMappings').findOne({ appUserId: uid, migDir: batchDir });
-        const uploadDoc = await db().collection('uploads').findOne({ appUserId: uid }, { sort: { uploadTime: -1 } });
+        const uploadDoc = await db().collection('geminiUploads').findOne({ appUserId: uid }, { sort: { uploadTime: -1 } });
         const retryTargets = {};
         for (const u of batchDoc.report?.users || []) {
           if (u.errors?.length > 0) retryTargets[u.email] = u.errors.map(e => e.conversation);

@@ -16,8 +16,9 @@ export async function validateG2C(ctx) {
   const { pairs = [], config = {}, uploadData, extractPath, appUserId, msAccountId } = ctx;
   const sectionName = config.folderName || config.sectionName || 'CopilotChats';
 
-  // Global: extract path validity (one check shared across all pairs).
-  const extractChecks = checkVaultExtractValid(extractPath);
+  // Global: extract validity (one check shared across all pairs). Accepts
+  // either a disk extract OR DB-persisted conversations.
+  const extractChecks = checkVaultExtractValid(extractPath, uploadData);
   const extractFatal = extractChecks.some(c => c.severity === 'blocker');
 
   // Destination Graph token (delegated, since UI side is delegated MS OAuth).

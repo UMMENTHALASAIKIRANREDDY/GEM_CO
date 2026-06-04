@@ -451,6 +451,7 @@ export function createC2CRouter(deps) {
               migDir: 'copilot-copilot', customerName: c2cFolderName, direction: 'c2c',
               sourceTenantId, destTenantId, startTime, status: 'running',
               dryRun: isDryRun, appUserId,
+              fromDate: fromDate || null, toDate: toDate || null,
               totalUsers: pairs.length, migratedConversations: 0, filesUploaded: 0, totalErrors: 0,
               lastHeartbeat: new Date(),
               resumeContext, ...(isResume ? { resumedAt: new Date() } : {}),

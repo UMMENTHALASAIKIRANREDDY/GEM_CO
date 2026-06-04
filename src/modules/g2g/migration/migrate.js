@@ -434,7 +434,7 @@ export async function runG2GMigration(
       // DB-only path: look up the upload doc for the user list
       onLog({ type: 'info', message: 'Reading user list from upload metadata (DB-only mode)...' });
       const { getDb } = await import('../../../db/mongo.js');
-      const uploadDoc = uploadId ? await getDb().collection('uploads').findOne({ _id: uploadId }) : null;
+      const uploadDoc = uploadId ? await getDb().collection('geminiUploads').findOne({ _id: uploadId }) : null;
       if (!uploadDoc) {
         result.errors.push(`Upload ${uploadId || '(none)'} not found in DB and disk extract is gone — please re-upload the Vault ZIP.`);
         onLog({ type: 'error', message: result.errors[0] });

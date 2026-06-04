@@ -66,8 +66,34 @@ async function ensureCollections() {
   } catch {}
   await _db.collection('cloudMembers').createIndex({ appUserId: 1, email: 1, source: 1 }, { unique: true });
 
-  // 3. uploads
-  if (!existing.has('uploads')) await _db.createCollection('uploads');
+  // 3. Source-scoped upload metadata collections.
+  //    - claudeUploads: every Claude ZIP (regardless of CL2C/CL2G destination)
+  //    - geminiUploads: every Vault ZIP / Vault API export (regardless of G2C/G2G destination)
+  //    - (future) chatgptUploads: ChatGPT exports
+  // Legacy collections being migrated:
+  //    cl2gUploads -> claudeUploads   (rename, data preserved)
+  //    cl2cUploads -> dropped         (cl2g data wins per user decision)
+  //    uploads     -> geminiUploads   (rename, data preserved)
+  if (existing.has('cl2gUploads') && !existing.has('claudeUploads')) {
+    try {
+      await _db.collection('cl2gUploads').rename('claudeUploads');
+      logger.info('Renamed cl2gUploads -> claudeUploads');
+    } catch (e) { logger.warn(`Rename cl2gUploads failed: ${e.message}`); }
+  }
+  if (existing.has('cl2cUploads')) {
+    try {
+      await _db.collection('cl2cUploads').drop();
+      logger.info('Dropped cl2cUploads (cl2g data wins, per consolidation plan)');
+    } catch (e) { logger.warn(`Drop cl2cUploads failed: ${e.message}`); }
+  }
+  if (existing.has('uploads') && !existing.has('geminiUploads')) {
+    try {
+      await _db.collection('uploads').rename('geminiUploads');
+      logger.info('Renamed uploads -> geminiUploads');
+    } catch (e) { logger.warn(`Rename uploads failed: ${e.message}`); }
+  }
+  if (!existing.has('claudeUploads') && !existing.has('cl2gUploads')) await _db.createCollection('claudeUploads');
+  if (!existing.has('geminiUploads') && !existing.has('uploads')) await _db.createCollection('geminiUploads');
 
   // 4. userMappings — one mapping doc per migDir+user
   if (!existing.has('userMappings')) await _db.createCollection('userMappings');
@@ -82,10 +108,15 @@ async function ensureCollections() {
   if (!existing.has('migrationWorkspaces')) await _db.createCollection('migrationWorkspaces');
   await _db.collection('migrationWorkspaces').createIndex({ appUserId: 1, startTime: -1 });
 
-  // 5b. migrationJobs — one doc per user per run (live runs only)
-  if (!existing.has('migrationJobs')) await _db.createCollection('migrationJobs');
-  await _db.collection('migrationJobs').createIndex({ workspaceId: 1, appUserId: 1 });
-  await _db.collection('migrationJobs').createIndex({ jobId: 1 }, { unique: true });
+  // migrationJobs is deprecated — its per-user status info is now derivable
+  // from conversationStore (which all 6 directions populate). Drop the old
+  // collection on boot so it doesn't linger.
+  if (existing.has('migrationJobs')) {
+    try {
+      await _db.collection('migrationJobs').drop();
+      logger.info('Dropped migrationJobs (per-user status now lives in conversationStore)');
+    } catch (e) { logger.warn(`Drop migrationJobs failed: ${e.message}`); }
+  }
 
   // 6. checkpoints
   if (!existing.has('checkpoints')) await _db.createCollection('checkpoints');
@@ -124,13 +155,12 @@ async function ensureCollections() {
     logger.info('Seeded 3 default app users');
   }
 
-  // 12. cl2gUploads — Claude export ZIP uploads for CL2G migrations
-  if (!existing.has('cl2gUploads')) await _db.createCollection('cl2gUploads');
-  await _db.collection('cl2gUploads').createIndex({ appUserId: 1, uploadTime: -1 });
-
-  // 13. cl2cUploads — Claude export ZIP uploads for CL2C migrations
-  if (!existing.has('cl2cUploads')) await _db.createCollection('cl2cUploads');
-  await _db.collection('cl2cUploads').createIndex({ appUserId: 1, uploadTime: -1 });
+  // 12. claudeUploads — every Claude export ZIP (source-scoped, not direction-
+  //    scoped). Same upload is usable for both CL2C and CL2G destinations.
+  await _db.collection('claudeUploads').createIndex({ appUserId: 1, uploadTime: -1 });
+  // 13. geminiUploads — every Gemini Vault export (manual ZIP + API export).
+  //    Usable for both G2C and G2G destinations.
+  await _db.collection('geminiUploads').createIndex({ appUserId: 1, uploadTime: -1 });
 
   // 14. chatHistory — persists agent chat messages per user for cross-device restore
   if (!existing.has('chatHistory')) await _db.createCollection('chatHistory');

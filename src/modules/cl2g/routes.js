@@ -147,6 +147,7 @@ export function createCL2GRouter({ db }) {
         else dbLog.info(`extractDir cleaned: ${extractDir}`);
       });
 
+      const now = new Date();
       const doc = {
         _id:                uploadId,
         appUserId,
@@ -155,14 +156,19 @@ export function createCL2GRouter({ db }) {
         // No extractPath — disk is gone; migration reads exclusively from conversationStore.
         ingestBatchId,
         conversationsPersisted: totalPersisted,
-        uploadTime:         new Date(),
+        uploadTime:         now,
+        // lastActiveAt tracks the user's currently-selected upload across
+        // restarts. Bumped on upload (this is the new active one) and again
+        // any time the user picks a different upload from the Saved Uploads
+        // menu (POST /uploads/:id/activate). GET /uploads sorts by this DESC.
+        lastActiveAt:       now,
         totalConversations: parsed.totalConversations,
         users:              parsed.users,
         status:             'ready',
       };
 
-      await db().collection('cl2gUploads').insertOne(doc);
-      dbLog.info(`cl2gUploads.insert — ${uploadId} (${parsed.users.length} users, ${parsed.totalConversations} convs, ${totalPersisted} in conversationStore)`);
+      await db().collection('claudeUploads').insertOne(doc);
+      dbLog.info(`claudeUploads.insert — ${uploadId} (${parsed.users.length} users, ${parsed.totalConversations} convs, ${totalPersisted} in conversationStore)`);
 
       res.json({ uploadId, users: parsed.users, totalConversations: parsed.totalConversations, conversations_persisted: totalPersisted, ingest_batch_id: ingestBatchId });
     } catch (err) {
@@ -173,12 +179,16 @@ export function createCL2GRouter({ db }) {
   });
 
   // ── GET /api/cl2g/uploads ─────────────────────────────────────────────────
+  // Sorted by lastActiveAt DESC so the user's last-selected (or last-uploaded)
+  // ZIP is index 0 — that's the one the App-level mount restore picks on
+  // server restart / browser refresh. Falls back to uploadTime for legacy
+  // rows that don't have lastActiveAt yet.
   router.get('/uploads', requireAuth, async (req, res) => {
     try {
       const { appUserId } = getCtx(req);
-      const uploads = await db().collection('cl2gUploads')
+      const uploads = await db().collection('claudeUploads')
         .find({ appUserId })
-        .sort({ uploadTime: -1 })
+        .sort({ lastActiveAt: -1, uploadTime: -1 })
         .toArray();
 
       // Auto-purge only LEGACY records that have an extractPath whose dir is
@@ -188,11 +198,27 @@ export function createCL2GRouter({ db }) {
         .filter(u => u.extractPath && !fs.existsSync(u.extractPath) && !u.conversationsPersisted)
         .map(u => u._id);
       if (staleIds.length) {
-        await db().collection('cl2gUploads').deleteMany({ _id: { $in: staleIds } });
-        dbLog.info(`cl2gUploads.purge — removed ${staleIds.length} legacy record(s) with no disk + no DB content`);
+        await db().collection('claudeUploads').deleteMany({ _id: { $in: staleIds } });
+        dbLog.info(`claudeUploads.purge — removed ${staleIds.length} legacy record(s) with no disk + no DB content`);
       }
 
       res.json(uploads.filter(u => !staleIds.includes(u._id)));
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── POST /api/cl2g/uploads/:id/activate ────────────────────────────────────
+  // Bumps lastActiveAt so the App-level mount restore picks this upload on
+  // next refresh / server restart. Called from the UI when the user clicks
+  // a different ZIP in the "Saved Uploads" menu.
+  router.post('/uploads/:id/activate', requireAuth, async (req, res) => {
+    try {
+      const { appUserId } = getCtx(req);
+      const r = await db().collection('claudeUploads').updateOne(
+        { _id: req.params.id, appUserId },
+        { $set: { lastActiveAt: new Date() } }
+      );
+      if (r.matchedCount === 0) return res.status(404).json({ error: 'Upload not found' });
+      res.json({ ok: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
@@ -200,7 +226,7 @@ export function createCL2GRouter({ db }) {
   router.delete('/uploads/:id', requireAuth, async (req, res) => {
     try {
       const { appUserId } = getCtx(req);
-      const doc = await db().collection('cl2gUploads').findOne({ _id: req.params.id, appUserId });
+      const doc = await db().collection('claudeUploads').findOne({ _id: req.params.id, appUserId });
       if (!doc) return res.status(404).json({ error: 'Upload not found' });
 
       // Delete extracted files from disk
@@ -208,7 +234,7 @@ export function createCL2GRouter({ db }) {
         fs.rm(doc.extractPath, { recursive: true, force: true }, () => {});
       }
 
-      await db().collection('cl2gUploads').deleteOne({ _id: req.params.id, appUserId });
+      await db().collection('claudeUploads').deleteOne({ _id: req.params.id, appUserId });
       res.json({ ok: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
@@ -255,7 +281,7 @@ export function createCL2GRouter({ db }) {
       if (!pairs?.length)  return res.status(400).json({ error: 'No user pairs provided' });
       if (!uploadId)       return res.status(400).json({ error: 'No uploadId provided' });
 
-      const uploadDoc = await db().collection('cl2gUploads').findOne({ _id: uploadId, appUserId });
+      const uploadDoc = await db().collection('claudeUploads').findOne({ _id: uploadId, appUserId });
       if (!uploadDoc) return res.status(404).json({ error: 'Upload not found' });
 
       const batchId     = `cl2g_${Date.now()}`;
@@ -280,7 +306,7 @@ export function createCL2GRouter({ db }) {
     const cl2gFolder = folderName || 'ClaudeChats';
 
     // Re-look up uploadDoc by id on resume (uploadDoc not in closure here)
-    const uploadDoc = await db().collection('cl2gUploads').findOne({ _id: uploadId, appUserId });
+    const uploadDoc = await db().collection('claudeUploads').findOne({ _id: uploadId, appUserId });
     if (!uploadDoc) {
       dbLog.error(`[CL2G] Upload ${uploadId} not found on ${isResume ? 'resume' : 'start'} — aborting batch ${batchId}`);
       await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { status: 'failed', endTime: new Date(), error: 'Upload doc missing' } }).catch(() => {});
@@ -295,7 +321,7 @@ export function createCL2GRouter({ db }) {
         try {
           await db().collection('migrationWorkspaces').updateOne(
             { _id: batchId },
-            { $set: { migDir: 'claude-gemini', direction: 'claude-gemini', customerName: cl2gFolder, startTime, status: 'running', dryRun: isDryRun, appUserId, googleEmail, totalUsers: pairs.length, lastHeartbeat: new Date(), resumeContext, ...(isResume ? { resumedAt: new Date() } : {}) } },
+            { $set: { migDir: 'claude-gemini', direction: 'claude-gemini', customerName: cl2gFolder, startTime, status: 'running', dryRun: isDryRun, appUserId, googleEmail, fromDate: fromDate || null, toDate: toDate || null, totalUsers: pairs.length, lastHeartbeat: new Date(), resumeContext, ...(isResume ? { resumedAt: new Date() } : {}) } },
             { upsert: true }
           );
           _heartbeatId = startHeartbeat(batchId);

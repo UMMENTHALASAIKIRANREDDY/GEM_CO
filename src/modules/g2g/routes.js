@@ -251,6 +251,8 @@ export function createG2GRouter(deps) {
               appUserId,
               sourceAccountId,
               destAccountId,
+              fromDate: fromDate || null,
+              toDate: toDate || null,
               totalUsers: selectedUsers?.length || 0,
               migratedConversations: 0,
               filesUploaded: 0,
