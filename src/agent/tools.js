@@ -69,14 +69,6 @@ export const AGENT_TOOLS = [
   {
     type: 'function',
     function: {
-      name: 'show_post_migration_guide',
-      description: 'Show post-migration setup instructions when user asks what to do next after migration completes',
-      parameters: { type: 'object', properties: {}, required: [] },
-    },
-  },
-  {
-    type: 'function',
-    function: {
       name: 'navigate_to_step',
       description: 'Navigate the left panel to a specific step. Step indices differ per combination. Common pattern: 0=Connect Clouds, 1=Direction. After that the order depends on combo: G2C=2 Import,3 Map,4 Options,5+ Migrate. C2G=2 Map,3 Options,4+ Migrate. CL2G/CL2C=2 Upload ZIP,3 Map,4 Options,5+ Migrate. G2G=2 Select Accounts,3 Upload,4 Map,5 Options,6+ Migrate. C2C=2 Select Tenants,3 Map,4 Options,5+ Migrate. Always check current step via get_migration_status before navigating.',
       parameters: {
