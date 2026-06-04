@@ -108,14 +108,30 @@ async function ensureCollections() {
   if (!existing.has('migrationWorkspaces')) await _db.createCollection('migrationWorkspaces');
   await _db.collection('migrationWorkspaces').createIndex({ appUserId: 1, startTime: -1 });
 
-  // migrationJobs is deprecated — its per-user status info is now derivable
-  // from conversationStore (which all 6 directions populate). Drop the old
-  // collection on boot so it doesn't linger.
-  if (existing.has('migrationJobs')) {
+  // Deprecated collections — dropped on boot so they don't linger in the DB.
+  // migrationJobs: per-user status now lives in conversationStore.
+  // cachedUsers:   was never wired up in code; only existed in old docs.
+  // g2gSessions:   absorbed into userSessions (every direction now uses the
+  //                same per-user session collection — no per-direction
+  //                sessions collection anymore).
+  for (const dead of ['migrationJobs', 'cachedUsers', 'g2gSessions']) {
+    if (existing.has(dead)) {
+      try {
+        await _db.collection(dead).drop();
+        logger.info(`Dropped ${dead} (deprecated)`);
+      } catch (e) { logger.warn(`Drop ${dead} failed: ${e.message}`); }
+    }
+  }
+
+  // chatHistory -> chatMessages rename. The old chatHistory doc mixed
+  // chat messages with UI state — we've split those concerns. UI state
+  // moves to a new `userSessions` collection (handled separately below);
+  // chat messages stay where they are, just under a more accurate name.
+  if (existing.has('chatHistory') && !existing.has('chatMessages')) {
     try {
-      await _db.collection('migrationJobs').drop();
-      logger.info('Dropped migrationJobs (per-user status now lives in conversationStore)');
-    } catch (e) { logger.warn(`Drop migrationJobs failed: ${e.message}`); }
+      await _db.collection('chatHistory').rename('chatMessages');
+      logger.info('Renamed chatHistory -> chatMessages');
+    } catch (e) { logger.warn(`Rename chatHistory failed: ${e.message}`); }
   }
 
   // 6. checkpoints
@@ -162,11 +178,14 @@ async function ensureCollections() {
   //    Usable for both G2C and G2G destinations.
   await _db.collection('geminiUploads').createIndex({ appUserId: 1, uploadTime: -1 });
 
-  // 14. chatHistory — persists agent chat messages per user for cross-device restore
-  if (!existing.has('chatHistory')) await _db.createCollection('chatHistory');
-  // Drop old unique index if it exists, then create correct non-unique index
-  try { await _db.collection('chatHistory').dropIndex('appUserId_1'); } catch (_) {}
-  await _db.collection('chatHistory').createIndex({ appUserId: 1, timestamp: -1 });
+  // 14. chatMessages — persists agent chat messages per user for cross-device
+  //     restore. One doc per user; `messages` field holds the last 30 chats.
+  await _db.collection('chatMessages').createIndex({ appUserId: 1 }, { unique: true });
+
+  // 15. userSessions — persists UI/session state per user for cross-device
+  //     restore. One doc per user; holds step, migDir, options, configs,
+  //     done flags, stats, and cosmetic UI prefs (panel split, etc).
+  await _db.collection('userSessions').createIndex({ appUserId: 1 }, { unique: true });
 
   // 15. agentAuditLog — structured per-session agent trace for the monitor UI
   if (!existing.has('agentAuditLog')) await _db.createCollection('agentAuditLog');

@@ -599,33 +599,61 @@ app.put('/api/config', requireAuth, async (req, res) => {
 
 // ─── Migration workspace + job endpoints ─────────────────────────────────────
 
-// One-call state load on login — returns config, mappings, recent workspaces, recent uploads
+// One-call state load on login — returns config, mappings, recent workspaces,
+// recent uploads, chat messages, and UI session state. Loaded in parallel so
+// the UI can hydrate from a single round-trip on mount.
 app.get('/api/init', requireAuth, async (req, res) => {
   try {
     const { appUserId } = getWorkspaceContext(req);
     if (!appUserId) return res.status(401).json({ error: 'Session missing user id' });
-    const [config, mappings, recentWorkspaces, recentUploads, chatDoc] = await Promise.all([
+    const [config, mappings, recentWorkspaces, recentUploads, chatDoc, sessionDoc] = await Promise.all([
       db().collection('userConfig').findOne({ appUserId }),
       db().collection('userMappings').find({ appUserId }).toArray(),
       db().collection('migrationWorkspaces').find({ appUserId }).sort({ startTime: -1 }).limit(10).toArray(),
       db().collection('uploads').find({ appUserId }).sort({ uploadTime: -1 }).limit(5).toArray(),
-      db().collection('chatHistory').findOne({ appUserId }),
+      db().collection('chatMessages').findOne({ appUserId }),
+      db().collection('userSessions').findOne({ appUserId }),
     ]);
-    res.json({ config, mappings, recentWorkspaces, recentUploads, chatMessages: chatDoc?.messages || [], uiState: chatDoc?.uiState || null });
+    res.json({
+      config,
+      mappings,
+      recentWorkspaces,
+      recentUploads,
+      chatMessages: chatDoc?.messages || [],
+      uiState: sessionDoc?.uiState || null,
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Save chat messages + UI position for cross-device persistence
-app.post('/api/chat-history', requireAuth, async (req, res) => {
+// Save agent chat messages (just the messages — UI state is a separate endpoint)
+app.post('/api/chat-messages', requireAuth, async (req, res) => {
   try {
     const { appUserId } = getWorkspaceContext(req);
     if (!appUserId) return res.status(401).json({ error: 'Not authenticated' });
-    const { messages, uiState } = req.body;
+    const { messages } = req.body;
     if (!Array.isArray(messages)) return res.status(400).json({ error: 'messages must be array' });
-    const update = { messages: messages.slice(-30), updatedAt: new Date() };
-    // uiState carries step, migDir, options — enough to restore left-panel position on any device
-    if (uiState && typeof uiState === 'object') update.uiState = uiState;
-    await db().collection('chatHistory').updateOne({ appUserId }, { $set: update }, { upsert: true });
+    await db().collection('chatMessages').updateOne(
+      { appUserId },
+      { $set: { messages: messages.slice(-30), updatedAt: new Date() } },
+      { upsert: true }
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Save UI session state (step, migDir, options, configs, done flags, stats,
+// cosmetic UI prefs) for cross-device restore. One doc per user.
+app.post('/api/user-session', requireAuth, async (req, res) => {
+  try {
+    const { appUserId } = getWorkspaceContext(req);
+    if (!appUserId) return res.status(401).json({ error: 'Not authenticated' });
+    const { uiState } = req.body;
+    if (!uiState || typeof uiState !== 'object') return res.status(400).json({ error: 'uiState must be object' });
+    await db().collection('userSessions').updateOne(
+      { appUserId },
+      { $set: { uiState, updatedAt: new Date() } },
+      { upsert: true }
+    );
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -790,7 +818,6 @@ async function ensureIndexes(database) {
     idx('userMappings',        { appUserId: 1, migDir: 1 }, { unique: true }),
     idx('uploads',             { appUserId: 1, uploadTime: -1 }),
     idx('userConfig',          { appUserId: 1 }, { unique: true }),
-    idx('cachedUsers',         { appUserId: 1, role: 1, migDir: 1 }),
   ]);
 }
 

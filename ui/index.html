@@ -55,17 +55,12 @@ const C={primary:'#0129AC',primaryH:'#0C18D4',primaryL:'#809EFC',tint:'#E1ECFF',
   bg:'#F6F6F6',white:'#FFFFFF',dark:'#2e2e2e',muted:'#707070',
   border:'#EBEBEB',success:'#0129AC',error:'#FF1F1F',warn:'#809EFC'};
 
-/* ── localStorage — cache keys ── */
-// Upload state and user mappings are restored from the DB on mount — no
-// localStorage cache for them anymore.
-const LS_PREFS   = 'gem_ui_prefs';       // cosmetic UI prefs + migration state
-const LS_CHAT    = 'gem_chat_history';   // last 30 agent messages (role, content, ts)
-const lsGet=(k,fb)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb}catch{return fb}};
-const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}};
-// Clear ALL gem_ keys (used when switching users and for manual reset)
+/* ── No localStorage. All persisted state lives in MongoDB collections:
+     - chatHistory (uiState + agent messages, hydrated via /api/init)
+     - userMappings, claudeUploads/geminiUploads, userConfig — per-feature
+   Only sentinel kept: gem_last_user, a one-key marker so we can wipe any
+   leftover gem_* keys when a different user signs in on the same browser. */
 const lsClearAll=()=>{Object.keys(localStorage).filter(k=>k.startsWith('gem_')).forEach(k=>localStorage.removeItem(k))};
-// Alias — delegates to lsClearAll so both always stay in sync
-const lsClear=()=>lsClearAll();
 
 function parseCsvLine(line){
   const f=[];let cur='',inQ=false;
@@ -5093,23 +5088,20 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
 /* ═══            MAIN APP            ═══ */
 /* ══════════════════════════════════════ */
 function App(){
-  // Read stored userId synchronously so state initializers use the right scoped keys
-  const [step,setStep]=useState(()=>lsGet(LS_PREFS,{}).step||0);
-  // Track initial values so DB restore doesn't clobber navigation the user made before init fetch returned
-  const initStepRef=useRef(lsGet(LS_PREFS,{}).step||0);
-  const initMigDirRef=useRef(lsGet(LS_PREFS,{}).migDir||null);
+  // All persisted state hydrates from the DB via /api/init (chatHistory.uiState).
+  // localStorage is no longer used — initial values are static defaults that
+  // get overwritten by the mount-time fetch.
+  const [step,setStep]=useState(0);
+  const initStepRef=useRef(0);
+  const initMigDirRef=useRef(null);
   const [uploadData,setUploadData]=useState(null);
-  // Signal to drive the G2C Import Data tab from the agent (e.g. "I want to upload a ZIP")
   const [importTabSignal,setImportTabSignal]=useState(null);
-  // Signal to drive the Vault export from the agent ("Export Vault for ALL users")
   const [exportTrigger,setExportTrigger]=useState(null);
-  // No hardcoded tenantId and no localStorage cache. Hydrated from the
-  // userConfig collection via /api/init on mount, and saved back via
-  // PUT /api/config whenever the user edits it.
+  // Hydrated from userConfig collection via /api/init.
   const [config,setConfig]=useState({filePath:'GeminiChats',tenantId:''});
   const [mappings,setMappings]=useState({});
   const [selectedUsers,setSelectedUsers]=useState(()=>new Set());
-  const [options,setOptions]=useState(()=>({dryRun:true,skipFollowups:false,skipAiResponse:false,fromDate:'',toDate:'',...(lsGet(LS_PREFS,{}).options||{})}));
+  const [options,setOptions]=useState({dryRun:true,skipFollowups:false,skipAiResponse:false,fromDate:'',toDate:''});
   const [googleAuthed,setGoogleAuthed]=useState(false);
   const [msAuthed,setMsAuthed]=useState(false);
   const [googleUsers,setGoogleUsers]=useState([]);
@@ -5118,63 +5110,59 @@ function App(){
   const [msUsers,setMsUsers]=useState([]);
   const [logs,setLogs]=useState([]);
   const [live,setLive]=useState(false);
-  const [migDone,setMigDone]=useState(()=>lsGet(LS_PREFS,{}).migDone||false);
-  const [stats,setStats]=useState(()=>lsGet(LS_PREFS,{}).stats||{users:0,pages:0,errors:0,flagged:0});
-  const [lastRunWasDry,setLastRunWasDry]=useState(()=>lsGet(LS_PREFS,{}).lastRunWasDry||false);
-  const [currentBatchId,setCurrentBatchId]=useState(()=>lsGet(LS_PREFS,{}).currentBatchId||null);
+  const [migDone,setMigDone]=useState(false);
+  const [stats,setStats]=useState({users:0,pages:0,errors:0,flagged:0});
+  const [lastRunWasDry,setLastRunWasDry]=useState(false);
+  const [currentBatchId,setCurrentBatchId]=useState(null);
   const [retrying,setRetrying]=useState(false);
   const [retryMode,setRetryMode]=useState(false);
   const [toast,setToast]=useState(null); // {message, type}
   const [showReports,setShowReports]=useState(false);
   const [appUser,setAppUser]=useState(null);
   const [showReset,setShowReset]=useState(false);
-  const [reportRefreshKey,setReportRefreshKey]=useState(0); // increments to force reports re-fetch
-  const [wsLoaded,setWsLoaded]=useState(false); // true after DB workspace hydration
-  const wsSaveTimer=useRef(null); // debounce timer for workspace saves
+  const [reportRefreshKey,setReportRefreshKey]=useState(0);
+  const [wsLoaded,setWsLoaded]=useState(false);
+  const wsSaveTimer=useRef(null);
   const sseRef=useRef(null);
   const silenceTimer=useRef(null);
   const cl2gLiveRef=useRef(false);
-  const [splitPct,setSplitPct]=useState(()=>lsGet(LS_PREFS,{}).splitPct||50);
-  // Agent panel always on LEFT by default (force false)
+  const [splitPct,setSplitPct]=useState(50);
   const [panelSwapped,setPanelSwapped]=useState(false);
-  const [agentMsgs,setAgentMsgs]=useState(()=>lsGet(LS_CHAT,[]));
+  const [agentMsgs,setAgentMsgs]=useState([]);
   const [agentTyping,setAgentTyping]=useState(false);
   const [agentInput,setAgentInput]=useState('');
   const [agentMode,setAgentMode]=useState('guide');
-  const [leftMode,setLeftMode]=useState(()=>lsGet(LS_PREFS,{}).leftMode||'viz'); // 'viz' | 'mapping'
-  const [migDir,setMigDir]=useState(()=>lsGet(LS_PREFS,{}).migDir||null); // 'gemini-copilot' | 'copilot-gemini' | 'claude-gemini' | null
+  const [leftMode,setLeftMode]=useState('viz');
+  const [migDir,setMigDir]=useState(null);
   const [c2gMappings,setC2gMappings]=useState({});
   const [c2gSelectedUsers,setC2gSelectedUsers]=useState(()=>new Set());
-  const [c2gStats,setC2gStats]=useState(()=>lsGet(LS_PREFS,{}).c2gStats||{users:0,files:0,errors:0});
+  const [c2gStats,setC2gStats]=useState({users:0,files:0,errors:0});
   const [c2gTotal,setC2gTotal]=useState(0);
   const [c2gConvProgress,setC2gConvProgress]=useState({convIdx:0,totalConvs:0});
-  const [c2gDone,setC2gDone]=useState(()=>lsGet(LS_PREFS,{}).c2gDone||false);
+  const [c2gDone,setC2gDone]=useState(false);
   const [c2gLive,setC2gLive]=useState(false);
-  const [c2gOptions,setC2gOptions]=useState(()=>({dryRun:true,fromDate:'',toDate:'',...(lsGet(LS_PREFS,{}).c2gOptions||{})}));
-  const [c2gConfig,setC2gConfig]=useState(()=>({folderName:'CopilotChats',...(lsGet(LS_PREFS,{}).c2gConfig||{})}));
-  const [c2gLastDry,setC2gLastDry]=useState(()=>lsGet(LS_PREFS,{}).c2gLastDry||false);
-  // CL2G (Claude → Gemini) state
+  const [c2gOptions,setC2gOptions]=useState({dryRun:true,fromDate:'',toDate:''});
+  const [c2gConfig,setC2gConfig]=useState({folderName:'CopilotChats'});
+  const [c2gLastDry,setC2gLastDry]=useState(false);
   const [cl2gUploadData,setCl2gUploadData]=useState(null);
   const [cl2gMappings,setCl2gMappings]=useState({});
   const [cl2gSelectedUuids,setCl2gSelectedUuids]=useState(new Set());
-  const [cl2gOptions,setCl2gOptions]=useState(()=>({dryRun:true,fromDate:'',toDate:'',includeMemory:true,includeProjects:true,...(lsGet(LS_PREFS,{}).cl2gOptions||{})}));
-  const [cl2gConfig,setCl2gConfig]=useState(()=>({folderName:'ClaudeChats',...(lsGet(LS_PREFS,{}).cl2gConfig||{})}));
-  const [cl2gStats,setCl2gStats]=useState(()=>lsGet(LS_PREFS,{}).cl2gStats||{users:0,files:0,errors:0});
+  const [cl2gOptions,setCl2gOptions]=useState({dryRun:true,fromDate:'',toDate:'',includeMemory:true,includeProjects:true});
+  const [cl2gConfig,setCl2gConfig]=useState({folderName:'ClaudeChats'});
+  const [cl2gStats,setCl2gStats]=useState({users:0,files:0,errors:0});
   const [cl2gTotal,setCl2gTotal]=useState(0);
-  const [cl2gDone,setCl2gDone]=useState(()=>lsGet(LS_PREFS,{}).cl2gDone||false);
+  const [cl2gDone,setCl2gDone]=useState(false);
   const [cl2gLive,setCl2gLive]=useState(false);
-  const [cl2gLastDry,setCl2gLastDry]=useState(()=>lsGet(LS_PREFS,{}).cl2gLastDry||false);
-  // G2G (Gemini → Gemini) state — stored in DB, not localStorage
+  const [cl2gLastDry,setCl2gLastDry]=useState(false);
   const [g2gUploadData,setG2gUploadData]=useState(null);
   const [g2gConfig,setG2gConfig]=useState({gemName:'Gemini Conversations',sourceAccountId:'',destAccountId:''});
   const [g2gMappings,setG2gMappings]=useState({});
   const [g2gSelectedUsers,setG2gSelectedUsers]=useState(new Set());
   const [g2gOptions,setG2gOptions]=useState({dryRun:true,fromDate:'',toDate:''});
-  const [g2gStats,setG2gStats]=useState(()=>lsGet(LS_PREFS,{}).g2gStats||{files:0,conversationCount:0,errors:0,users:0});
-  const [g2gDone,setG2gDone]=useState(()=>lsGet(LS_PREFS,{}).g2gDone||false);
-  const [g2gLive,setG2gLive]=useState(false); // never restore live=true (SSE doesn't survive refresh)
-  const [g2gLastDry,setG2gLastDry]=useState(()=>lsGet(LS_PREFS,{}).g2gLastDry||false);
-  // CL2C (Claude → Copilot) state
+  const [g2gStats,setG2gStats]=useState({files:0,conversationCount:0,errors:0,users:0});
+  const [g2gDone,setG2gDone]=useState(false);
+  const [g2gLive,setG2gLive]=useState(false);
+  const [g2gLastDry,setG2gLastDry]=useState(false);
   const [cl2cUploadData,setCl2cUploadData]=useState(null);
   const [cl2cMappings,setCl2cMappings]=useState({});
   const [cl2cSelectedUuids,setCl2cSelectedUuids]=useState(new Set());
@@ -5185,15 +5173,14 @@ function App(){
   const [cl2cDone,setCl2cDone]=useState(false);
   const [cl2cLive,setCl2cLive]=useState(false);
   const [cl2cLastDry,setCl2cLastDry]=useState(false);
-  // C2C (Copilot → Copilot, cross-tenant) state
-  const [c2cConfig,setC2cConfig]=useState(()=>({folderName:'CopilotChats',sourceTenantId:'',destTenantId:'',...(lsGet(LS_PREFS,{}).c2cConfig||{})}));
+  const [c2cConfig,setC2cConfig]=useState({folderName:'CopilotChats',sourceTenantId:'',destTenantId:''});
   const [c2cMappings,setC2cMappings]=useState({});
   const [c2cSelectedUsers,setC2cSelectedUsers]=useState(new Set());
-  const [c2cOptions,setC2cOptions]=useState(()=>({dryRun:true,fromDate:'',toDate:'',...(lsGet(LS_PREFS,{}).c2cOptions||{})}));
-  const [c2cStats,setC2cStats]=useState(()=>lsGet(LS_PREFS,{}).c2cStats||{users:0,files:0,errors:0,conversationCount:0});
-  const [c2cDone,setC2cDone]=useState(()=>lsGet(LS_PREFS,{}).c2cDone||false);
+  const [c2cOptions,setC2cOptions]=useState({dryRun:true,fromDate:'',toDate:''});
+  const [c2cStats,setC2cStats]=useState({users:0,files:0,errors:0,conversationCount:0});
+  const [c2cDone,setC2cDone]=useState(false);
   const [c2cLive,setC2cLive]=useState(false);
-  const [c2cLastDry,setC2cLastDry]=useState(()=>lsGet(LS_PREFS,{}).c2cLastDry||false);
+  const [c2cLastDry,setC2cLastDry]=useState(false);
   const [chatGLoading,setChatGLoading]=useState(false);
   const [chatMLoading,setChatMLoading]=useState(false);
   const [chatUploading,setChatUploading]=useState(false);
@@ -5231,18 +5218,9 @@ function App(){
   // Load app config (reset button, feature flags)
   useEffect(()=>{fetch('/api/app-config').then(r=>r.ok?r.json():null).then(cfg=>{if(cfg?.showReset)setShowReset(true);}).catch(()=>{});},[]);
 
-  // Load G2G session state from database on mount (for page refresh persistence)
-  useEffect(()=>{
-    fetch('/api/g2g/session').then(r=>r.ok?r.json():null).then(session=>{
-      if(session&&session.g2gUploadData){
-        setG2gUploadData(session.g2gUploadData);
-        setG2gConfig(session.g2gConfig||{gemName:'Gemini Conversations',sourceAccountId:'',destAccountId:''});
-        setG2gMappings(session.g2gMappings||{});
-        setG2gSelectedUsers(new Set(session.g2gSelectedUsers||[]));
-        setG2gOptions(session.g2gOptions||{dryRun:true,fromDate:'',toDate:''});
-      }
-    }).catch(()=>{});
-  },[]);
+  // G2G session state is now part of the unified userSessions doc (loaded via
+  // /api/init below). Its mappings live in userMappings, its upload in
+  // geminiUploads, its config + selectedUsers in userSessions.uiState.
 
   // Restore the latest ZIP upload for G2C / CL2G / CL2C from the DB on mount.
   // The Step{Dir}Upload components already do this when they mount, but they
@@ -5267,12 +5245,8 @@ function App(){
     }).catch(()=>{});
   },[]);
 
-  // Save G2G session state to database whenever it changes
-  useEffect(()=>{
-    if(g2gUploadData||g2gConfig.sourceAccountId){
-      fetch('/api/g2g/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({g2gUploadData,g2gConfig,g2gMappings,g2gSelectedUsers:[...g2gSelectedUsers],g2gOptions})}).catch(()=>{});
-    }
-  },[g2gUploadData,g2gConfig,g2gMappings,g2gSelectedUsers,g2gOptions]);
+  // G2G state save is now folded into the unified userSessions save effect
+  // below (POST /api/user-session). No per-direction session endpoint.
 
   // Auth check on mount — verify app session, hydrate state from DB (cross-device), check cloud auth
   useEffect(()=>{
@@ -5338,45 +5312,52 @@ function App(){
             });
           }
 
-          // Restore chat history from DB (cross-device) — DB wins over localStorage
-          if(initData.chatMessages?.length>0){
-            setAgentMsgs(initData.chatMessages);
-            lsSet(LS_CHAT,initData.chatMessages);
-          }
+          // Restore chat history from DB (cross-device, single source of truth)
+          if(initData.chatMessages?.length>0) setAgentMsgs(initData.chatMessages);
 
-          // Restore UI position from DB — cross-device (step, migDir, options)
-          // recentWorkspaces recovery below may further update done/stats state
+          // Restore UI position from DB — single source of truth (no localStorage).
+          // recentWorkspaces recovery below may further update done/stats state.
           const ui=initData.uiState;
           if(ui){
-            // Only restore step/migDir if user hasn't navigated since page load (race condition guard)
+            // Cosmetic UI prefs (panel layout)
+            if(typeof ui.splitPct==='number') setSplitPct(ui.splitPct);
+            if(typeof ui.panelSwapped==='boolean') setPanelSwapped(ui.panelSwapped);
+            if(ui.leftMode) setLeftMode(ui.leftMode);
+            // Position in the flow — race-guarded against user nav before init fetch returned
             if(typeof ui.step==='number') setStep(prev=>prev===initStepRef.current?ui.step:prev);
             if(ui.migDir) setMigDir(prev=>prev===initMigDirRef.current?ui.migDir:prev);
+            // Per-direction stats / done flags / options / configs
             if(ui.stats) setStats(ui.stats);
             if(ui.c2gStats) setC2gStats(ui.c2gStats);
             if(ui.cl2gStats) setCl2gStats(ui.cl2gStats);
+            if(ui.g2gStats) setG2gStats(ui.g2gStats);
+            if(ui.cl2cStats) setCl2cStats(ui.cl2cStats);
+            if(ui.c2cStats) setC2cStats(ui.c2cStats);
             if(ui.migDone!=null) setMigDone(!!ui.migDone);
             if(ui.c2gDone!=null) setC2gDone(!!ui.c2gDone);
             if(ui.cl2gDone!=null) setCl2gDone(!!ui.cl2gDone);
             if(ui.g2gDone!=null) setG2gDone(!!ui.g2gDone);
-            if(ui.g2gStats) setG2gStats(ui.g2gStats);
             if(ui.cl2cDone!=null) setCl2cDone(!!ui.cl2cDone);
-            if(ui.cl2cStats) setCl2cStats(ui.cl2cStats);
-            if(ui.cl2cLastDry!=null) setCl2cLastDry(!!ui.cl2cLastDry);
-            if(ui.cl2cOptions) setCl2cOptions(p=>({...p,...ui.cl2cOptions}));
             if(ui.c2cDone!=null) setC2cDone(!!ui.c2cDone);
-            if(ui.c2cStats) setC2cStats(ui.c2cStats);
-            if(ui.c2cLastDry!=null) setC2cLastDry(!!ui.c2cLastDry);
-            if(ui.c2cOptions) setC2cOptions(p=>({...p,...ui.c2cOptions}));
             if(ui.lastRunWasDry!=null) setLastRunWasDry(!!ui.lastRunWasDry);
             if(ui.c2gLastDry!=null) setC2gLastDry(!!ui.c2gLastDry);
             if(ui.cl2gLastDry!=null) setCl2gLastDry(!!ui.cl2gLastDry);
             if(ui.g2gLastDry!=null) setG2gLastDry(!!ui.g2gLastDry);
+            if(ui.cl2cLastDry!=null) setCl2cLastDry(!!ui.cl2cLastDry);
+            if(ui.c2cLastDry!=null) setC2cLastDry(!!ui.c2cLastDry);
             if(ui.currentBatchId) setCurrentBatchId(ui.currentBatchId);
             if(ui.options) setOptions(p=>({...p,...ui.options}));
             if(ui.c2gOptions) setC2gOptions(p=>({...p,...ui.c2gOptions}));
             if(ui.cl2gOptions) setCl2gOptions(p=>({...p,...ui.cl2gOptions}));
-            // Sync to localStorage so same-device is also up to date
-            lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),...ui});
+            if(ui.cl2cOptions) setCl2cOptions(p=>({...p,...ui.cl2cOptions}));
+            if(ui.c2cOptions) setC2cOptions(p=>({...p,...ui.c2cOptions}));
+            if(ui.c2gConfig) setC2gConfig(p=>({...p,...ui.c2gConfig}));
+            if(ui.cl2gConfig) setCl2gConfig(p=>({...p,...ui.cl2gConfig}));
+            if(ui.cl2cConfig) setCl2cConfig(p=>({...p,...ui.cl2cConfig}));
+            if(ui.c2cConfig) setC2cConfig(p=>({...p,...ui.c2cConfig}));
+            // G2G unique state (was previously in g2gSessions collection)
+            if(ui.g2gConfig) setG2gConfig(p=>({...p,...ui.g2gConfig}));
+            if(Array.isArray(ui.g2gSelectedUsers)) setG2gSelectedUsers(new Set(ui.g2gSelectedUsers));
           }
 
           // DB mappings override localStorage (DB is authoritative for mappings)
@@ -5503,40 +5484,42 @@ function App(){
     },500);
   },[config.tenantId,config.filePath,wsLoaded]);
 
-  // Persist chat history — localStorage for instant restore, MongoDB for cross-device
+  // Persist agent chat messages to chatMessages collection. Debounced 1.5s.
   useEffect(()=>{
-    if(agentMsgs.length===0)return;
-    const trimmed=agentMsgs.slice(-30);
-    lsSet(LS_CHAT,trimmed);
+    if(!wsLoaded)return;
     clearTimeout(window._chatSaveTimer);
     window._chatSaveTimer=setTimeout(()=>{
-      // Save chat + current UI position so any device can restore exactly where user left off
-      const uiState={step,migDir,migDone,c2gDone,cl2gDone,g2gDone,cl2cDone,c2cDone,stats,c2gStats,cl2gStats,g2gStats,cl2cStats,c2cStats,lastRunWasDry,c2gLastDry,cl2gLastDry,g2gLastDry,cl2cLastDry,c2cLastDry,currentBatchId,options,c2gOptions,cl2gOptions,cl2cOptions,c2cOptions};
-      fetch('/api/chat-history',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:trimmed,uiState})}).catch(()=>{});
+      const trimmed=agentMsgs.slice(-30);
+      fetch('/api/chat-messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:trimmed})}).catch(()=>{});
     },1500);
-  },[agentMsgs,step,migDir,migDone,c2gDone,cl2gDone,g2gDone,cl2cDone,c2cDone,stats,c2gStats,cl2gStats,g2gStats,cl2cStats,c2cStats,lastRunWasDry,c2gLastDry,cl2gLastDry,g2gLastDry,cl2cLastDry,c2cLastDry,currentBatchId,options,c2gOptions,cl2gOptions,cl2cOptions,c2cOptions]);
+  },[wsLoaded,agentMsgs]);
 
-  // Persist mapping cache to localStorage
-  // Mappings are persisted server-side via /api/{dir}/user-mappings; each
-  // Step*Map component fetches them on mount. No localStorage cache.
+  // Persist all UI session state to userSessions collection. Debounced 1.5s.
+  // This includes step, migDir, options, configs, stats, done flags, cosmetic
+  // UI prefs, plus G2G's selectedUsers/g2gConfig which used to live in
+  // g2gSessions (now dropped).
+  useEffect(()=>{
+    if(!wsLoaded)return;
+    clearTimeout(window._sessionSaveTimer);
+    window._sessionSaveTimer=setTimeout(()=>{
+      const uiState={
+        splitPct, panelSwapped, leftMode,
+        step, migDir, currentBatchId,
+        migDone, c2gDone, cl2gDone, g2gDone, cl2cDone, c2cDone,
+        stats, c2gStats, cl2gStats, g2gStats, cl2cStats, c2cStats,
+        lastRunWasDry, c2gLastDry, cl2gLastDry, g2gLastDry, cl2cLastDry, c2cLastDry,
+        options, c2gOptions, cl2gOptions, cl2cOptions, c2cOptions,
+        c2gConfig, cl2gConfig, cl2cConfig, c2cConfig,
+        // G2G unique state that used to live in g2gSessions
+        g2gConfig, g2gSelectedUsers: [...g2gSelectedUsers],
+      };
+      fetch('/api/user-session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uiState})}).catch(()=>{});
+    },1500);
+  },[wsLoaded,splitPct,panelSwapped,leftMode,step,migDir,currentBatchId,migDone,c2gDone,cl2gDone,g2gDone,cl2cDone,c2cDone,stats,c2gStats,cl2gStats,g2gStats,cl2cStats,c2cStats,lastRunWasDry,c2gLastDry,cl2gLastDry,g2gLastDry,cl2cLastDry,c2cLastDry,options,c2gOptions,cl2gOptions,cl2cOptions,c2cOptions,c2gConfig,cl2gConfig,cl2cConfig,c2cConfig,g2gConfig,g2gSelectedUsers]);
 
-  // Upload state is restored from the DB on mount (see effect below) — no
-  // localStorage cache is needed. Server-side records are the source of truth
-  // and survive browser refreshes, cross-device sign-ins, and back-navigation
-  // from any step.
-
-  // Persist all migration state to LS_PREFS for instant restore on refresh
-  useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),splitPct})},[splitPct]);
-  useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),panelSwapped})},[panelSwapped]);
-  useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),leftMode})},[leftMode]);
-  useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),step})},[step]);
-  useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),migDir})},[migDir]);
-  useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),migDone,lastRunWasDry,currentBatchId,stats})},[migDone,lastRunWasDry,currentBatchId,stats]);
-  useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),c2gDone,c2gStats,c2gLastDry,c2gOptions,c2gConfig})},[c2gDone,c2gStats,c2gLastDry,c2gOptions,c2gConfig]);
-  useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),cl2gDone,cl2gStats,cl2gLastDry,cl2gOptions,cl2gConfig})},[cl2gDone,cl2gStats,cl2gLastDry,cl2gOptions,cl2gConfig]);
-  useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),g2gDone,g2gStats,g2gLastDry})},[g2gDone,g2gStats,g2gLastDry]);
-  useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),c2cDone,c2cStats,c2cLastDry,c2cOptions,c2cConfig})},[c2cDone,c2cStats,c2cLastDry,c2cOptions,c2cConfig]);
-  useEffect(()=>{lsSet(LS_PREFS,{...lsGet(LS_PREFS,{}),cl2cDone,cl2cStats,cl2cLastDry,cl2cOptions,cl2cConfig})},[cl2cDone,cl2cStats,cl2cLastDry,cl2cOptions,cl2cConfig]);
+  // Mappings, upload state, and user config are persisted via their own DB
+  // collections (userMappings, claudeUploads/geminiUploads, userConfig) — no
+  // localStorage cache anywhere.
 
   // Load users at App level as soon as auth is confirmed — not dependent on Step0 being visible
   useEffect(()=>{
@@ -6174,7 +6157,8 @@ function App(){
     setCl2gUploadData(null);setCl2gMappings({});setCl2gSelectedUuids(new Set());setCl2gDone(false);setCl2gStats({users:0,files:0,errors:0});setCl2gTotal(0);
     setG2gUploadData(null);setG2gConfig({gemName:'Gemini Conversations',sourceAccountId:'',destAccountId:''});setG2gMappings({});setG2gSelectedUsers(new Set());setG2gDone(false);setG2gStats({files:0,conversationCount:0,errors:0,users:0});
     setCl2cUploadData(null);setCl2cMappings({});setCl2cSelectedUuids(new Set());setCl2cDone(false);setCl2cStats({users:0,files:0,errors:0});setCl2cTotal(0);
-    fetch('/api/g2g/session',{method:'DELETE'}).catch(()=>{});
+    // Reset clears the React state above; the debounced userSessions save
+    // will persist the cleared state to DB on the next save cycle.
     if(sseRef.current){sseRef.current.close();sseRef.current=null;}
     setLive(false);setC2gLive(false);setCl2gLive(false);setG2gLive(false);setCl2cLive(false);
   },[]);

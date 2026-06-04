@@ -124,59 +124,11 @@ export function createG2GRouter(deps) {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
-  // GET /api/g2g/session — get current G2G migration session state
-  router.get('/session', requireAuth, async (req, res) => {
-    try {
-      const { appUserId } = getWorkspaceContext(req);
-      const session = await db().collection('g2gSessions').findOne({ appUserId });
-      if (session) {
-        return res.json({ ...session, _id: undefined, appUserId: undefined });
-      }
-      res.json({});
-    } catch (err) {
-      console.error('[g2g/session]', err.message);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // POST /api/g2g/session — save G2G migration session state
-  router.post('/session', requireAuth, async (req, res) => {
-    try {
-      const { appUserId } = getWorkspaceContext(req);
-      const { g2gUploadData, g2gConfig, g2gMappings, g2gSelectedUsers, g2gOptions } = req.body;
-
-      await db().collection('g2gSessions').updateOne(
-        { appUserId },
-        { $set: {
-          appUserId,
-          g2gUploadData,
-          g2gConfig,
-          g2gMappings,
-          g2gSelectedUsers: Array.from(g2gSelectedUsers || []),
-          g2gOptions,
-          lastUpdated: new Date()
-        } },
-        { upsert: true }
-      );
-
-      res.json({ saved: true });
-    } catch (err) {
-      console.error('[g2g/session]', err.message);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // DELETE /api/g2g/session — clear G2G migration session
-  router.delete('/session', requireAuth, async (req, res) => {
-    try {
-      const { appUserId } = getWorkspaceContext(req);
-      await db().collection('g2gSessions').deleteOne({ appUserId });
-      res.json({ cleared: true });
-    } catch (err) {
-      console.error('[g2g/session delete]', err.message);
-      res.status(500).json({ error: err.message });
-    }
-  });
+  // G2G session endpoints removed — session state for all 6 directions now
+  // lives in the unified `userSessions` collection (saved via POST
+  // /api/user-session and loaded via GET /api/init). G2G's upload data,
+  // mappings, and selected users are stored in their respective collections
+  // (geminiUploads, userMappings) like every other direction.
 
   // POST /api/g2g/migrate — run Gemini→Gemini migration
   router.post('/migrate', requireAuth, async (req, res) => {
