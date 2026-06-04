@@ -59,8 +59,11 @@ Rules:
     if (match) {
       const chips = JSON.parse(match[0]);
       if (Array.isArray(chips) && chips.length > 0) {
-        return chips.slice(0, 4).map(c => String(c).trim()).filter(Boolean);
+        const result = chips.slice(0, 4).map(c => String(c).trim()).filter(Boolean);
+        logger.info(`[agentLoop] generateChips OK: ${JSON.stringify(result)}`);
+        return result;
       }
+      logger.warn(`[agentLoop] generateChips: invalid array in response: ${raw.slice(0, 100)}`);
     }
   } catch (e) {
     logger.warn(`[agentLoop] generateChips failed: ${e.message}`);
