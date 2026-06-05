@@ -37,11 +37,15 @@ function isFullMigrationIntent(message) {
  */
 async function generateChips(agentReply, migrationState) {
   const s = migrationState ?? {};
+  // Only surface auth status for clouds the current direction actually needs —
+  // otherwise the chip model suggests "Connect Microsoft" for a Claude→Google flow.
+  const needsGoogle = !s.migDir || ['gemini-copilot', 'copilot-gemini', 'claude-gemini', 'gemini-gemini'].includes(s.migDir);
+  const needsMs = !s.migDir || ['gemini-copilot', 'copilot-gemini', 'claude-copilot'].includes(s.migDir);
   const stateCtx = [
     `step=${s.step ?? 0}`,
     `dir=${s.migDir || 'none'}`,
-    `google=${s.googleAuthed ? 'connected' : 'not connected'}`,
-    `ms=${s.msAuthed ? 'connected' : 'not connected'}`,
+    needsGoogle ? `google=${s.googleAuthed ? 'connected' : 'not connected'}` : null,
+    needsMs ? `ms=${s.msAuthed ? 'connected' : 'not connected'}` : null,
     s.migDir === 'claude-gemini' ? `zip_users=${s.cl2g_upload_users ?? 0}` : null,
     s.migDir === 'copilot-gemini' ? `mapped=${s.c2g_mappings_count ?? 0}` : null,
     s.migDir === 'claude-gemini' ? `mapped=${s.cl2g_mappings_count ?? 0}` : null,
@@ -50,6 +54,7 @@ async function generateChips(agentReply, migrationState) {
     s.migDir === 'copilot-copilot' ? `mapped=${s.c2c_mappings_count ?? 0}` : null,
     (s.migDone || s.c2g_done || s.cl2g_done || s.g2g_done || s.cl2c_done || s.c2c_done) ? 'migration=done' : null,
     (s.live || s.c2g_live || s.cl2g_live || s.g2g_live || s.cl2c_live || s.c2c_live) ? 'migration=running' : null,
+    s.justStarted ? (s.justStartedDry ? 'just_started=dry_run' : 'just_started=live_run') : null,
   ].filter(Boolean).join(', ');
 
   const snippet = (agentReply || '').slice(-300);
@@ -58,14 +63,18 @@ async function generateChips(agentReply, migrationState) {
     const res = await callAI([
       {
         role: 'system',
-        content: `You generate exactly 3 short quick-reply chips for a migration assistant chat UI.
+        content: `You generate exactly 3 quick-reply chips for a cloud-migration assistant chat. The user CLICKS a chip and it is sent as their next message — so each chip must be something the USER would say, phrased as a request/command.
+
 Rules:
-- Each chip max 6 words, starts with a verb or noun (action-oriented)
-- Chips must directly follow up on what the assistant just said OR unblock the current step
-- Never repeat the agent's exact words
-- No generic chips like "What do I do next?" or "Tell me more"
-- Chips must be specific to the current migration state
-- Return ONLY a JSON array of 3 strings, nothing else. Example: ["Auto-map all users", "Upload Claude ZIP", "Start dry run"]`,
+- Chip 1 = the single most likely NEXT STEP in the migration flow (answer the assistant's question if it asked one)
+- Chip 2 = the best alternative action
+- Chip 3 = a useful check/help action (e.g. "Show live progress", "Explain what happens next")
+- Max 6 words each, action-first phrasing
+- Match the migration stage: if migration=running suggest progress/status chips; if migration=done suggest report/retry/new-batch chips; if a question was asked, the first 2 chips should be its possible answers
+- NEVER suggest actions that are already complete (check State) or unavailable at this stage
+- NEVER suggest "dry run" if just_started=dry_run — it is already running
+- No generic filler like "Tell me more" / "What next?"
+- Return ONLY a JSON array of 3 strings. Example: ["Auto-map users by email", "Upload a mapping CSV", "Explain user mapping"]`,
       },
       {
         role: 'user',
@@ -523,21 +532,30 @@ export async function runAgentLoop(req, res, { message, migrationState: _migrati
         req.session.pendingAction = null;
         req.session.pendingConfirmed = true;
         const result = await executeTool(tool, args, toolCtx);
+        // Reflect the just-started migration in state so chips suggest
+        // progress/status actions instead of pre-migration setup actions.
+        if (tool === 'start_migration' && result.started) {
+          migrationState = { ...migrationState, live: true, justStarted: true, justStartedDry: !!args?.dryRun };
+        }
         const replyMsg = await callAI([
           { role: 'system', content: buildSystemPrompt(migrationState, migrationLogs) },
           { role: 'user', content: `I confirmed. Tool ${tool} completed with result: ${JSON.stringify(result)}. Tell me what happened in a natural, friendly way.` },
         ], null);
-        streamText(replyMsg.content ?? 'Done!');
-        streamQuickReplies(defaultChips(migrationState));
+        const replyText = replyMsg.content ?? 'Done!';
+        streamText(replyText);
+        const aiChips = await generateChips(replyText, migrationState);
+        streamQuickReplies(aiChips ?? defaultChips(migrationState));
         await saveHistory(db, appUserId, 'user', message, migrationState?.migDir);
-        await saveHistory(db, appUserId, 'assistant', replyMsg.content ?? 'Done!', migrationState?.migDir);
+        await saveHistory(db, appUserId, 'assistant', replyText, migrationState?.migDir);
         return streamDone();
       }
 
       if (message === 'Cancel') {
         req.session.pendingAction = null;
-        streamText("No problem — cancelled. What would you like to do instead?");
-        streamQuickReplies(defaultChips(migrationState));
+        const cancelText = "No problem — cancelled. What would you like to do instead?";
+        streamText(cancelText);
+        const aiChips = await generateChips(cancelText, migrationState);
+        streamQuickReplies(aiChips ?? defaultChips(migrationState));
         await saveHistory(db, appUserId, 'user', message, migrationState?.migDir);
         await saveHistory(db, appUserId, 'assistant', 'Cancelled.', migrationState?.migDir);
         return streamDone();

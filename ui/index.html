@@ -5546,7 +5546,6 @@ function App(){
 
   // Persist chat history — localStorage for instant restore, MongoDB for cross-device
   useEffect(()=>{
-    if(agentMsgs.length===0)return;
     const trimmed=agentMsgs.slice(-30);
     lsSet(LS_CHAT,trimmed);
     clearTimeout(window._chatSaveTimer);
@@ -7021,7 +7020,7 @@ function App(){
                 <span style={{fontSize:12,color:live?'#16a34a':C.muted,fontWeight:500}}>{live?'Migrating':'Ready'}</span>
               </div>
             </div>
-            <AgentChat msgs={agentMsgs} typing={agentTyping} input={agentInput} onInput={setAgentInput} onSend={()=>sendToAgent()} onLogLineClick={handleLogLineClick} onQuickReply={handleAgentQuickReply} widgetProps={widgetProps} onShowReports={()=>setShowReports(true)} onClearChat={()=>setAgentMsgs([])} onWidgetDone={(msgId,w,result)=>{
+            <AgentChat msgs={agentMsgs} typing={agentTyping} input={agentInput} onInput={setAgentInput} onSend={()=>sendToAgent()} onLogLineClick={handleLogLineClick} onQuickReply={handleAgentQuickReply} widgetProps={widgetProps} onShowReports={()=>setShowReports(true)} onClearChat={()=>{setAgentMsgs([]);lsSet(LS_CHAT,[]);fetch('/api/chat-history',{method:'DELETE'}).catch(()=>{});}} onWidgetDone={(msgId,w,result)=>{
   setAgentMsgs(prev=>prev.map(m=>m.id===msgId?{...m,content:{...m.content,done:true}}:m));
   // Sync React state with whatever the backend just stored — otherwise migration
   // reads empty React state and migrates 0 users.
