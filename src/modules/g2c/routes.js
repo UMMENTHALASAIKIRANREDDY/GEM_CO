@@ -1403,9 +1403,16 @@ export function createG2CRouter(deps) {
     const mappingDoc = await db().collection('userMappings').findOne({ appUserId, migDir: 'gemini-copilot' });
     const uploadDoc = await db().collection('geminiUploads').findOne({ appUserId }, { sort: { uploadTime: -1 } });
 
+    // retryTargets is keyed by M365 destination email (the loop below names
+    // its iteration var `m365Email` and uses it to call creator.createPage).
+    // Per-user `u.email` is the SOURCE Gemini address — translate to the M365
+    // mailbox via userMappings before keying.
+    const _mappings = mappingDoc?.mappings || {};
     const retryTargets = {};
     for (const u of batchDoc.report?.users || []) {
-      if (u.errors?.length > 0) retryTargets[u.email] = u.errors.map(e => e.conversation);
+      if (!u.errors?.length) continue;
+      const destKey = u.destEmail || _mappings[u.email] || u.email;
+      retryTargets[destKey] = u.errors.map(e => e.conversation);
     }
 
     if (Object.keys(retryTargets).length === 0) return res.json({ started: false, message: 'No failed conversations to retry' });
