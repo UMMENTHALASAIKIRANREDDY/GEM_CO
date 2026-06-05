@@ -646,9 +646,11 @@ After each step completes, tell the user what happened in 1 sentence and ask wha
 
       // Tool call
       if (aiMsg.tool_calls && aiMsg.tool_calls.length > 0) {
-        // Stream any narration the model produced alongside the tool call —
-        // otherwise it's silently dropped and the user sees nothing between steps.
-        if (aiMsg.content) streamProgress(aiMsg.content);
+        // Stream short narration beats ("✓ Direction set...") between tool calls.
+        // Long content alongside a tool call is the model restating its full
+        // answer — drop it, the final text-only reply will cover it (streaming
+        // it caused near-duplicate stacked messages in the chat).
+        if (aiMsg.content && aiMsg.content.length <= 120) streamProgress(aiMsg.content);
 
         const call = aiMsg.tool_calls[0];
         const toolName = call.function.name;

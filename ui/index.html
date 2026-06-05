@@ -5268,6 +5268,7 @@ function App(){
   const panelDragRef=useRef(null);
   const greetedRef=useRef(false);
   const prevGuideKeyRef=useRef(null);
+  const agentNavTsRef=useRef(0); // timestamp of last agent-driven navigation — suppresses redundant step-context trigger
   const sendToAgentRef=useRef(null);
   const runMigrationRef=useRef(null);
   const runC2GMigrationRef=useRef(null);
@@ -6308,8 +6309,8 @@ function App(){
       }
       return;
     }
-    if(evt.event==='navigate'&&typeof evt.step==='number'){setStep(evt.step);}
-    else if(evt.event==='select_direction'&&evt.direction){setMigDir(evt.direction);if(typeof evt.step==='number')setStep(evt.step);}
+    if(evt.event==='navigate'&&typeof evt.step==='number'){agentNavTsRef.current=Date.now();setStep(evt.step);}
+    else if(evt.event==='select_direction'&&evt.direction){agentNavTsRef.current=Date.now();setMigDir(evt.direction);if(typeof evt.step==='number')setStep(evt.step);}
     else if(evt.event==='refresh_mapping'){setLeftMode&&typeof setLeftMode==='function'&&setLeftMode('mapping');}
     else if(evt.event==='trigger_auto_map'){triggerAutoMap&&triggerAutoMap();}
     else if(evt.event==='refresh_reports'){setShowReports&&setShowReports(true);}
@@ -6880,6 +6881,9 @@ function App(){
       return;
     }
     prevGuideKeyRef.current=key;
+    // Agent-driven navigation: the agent already explained this step in its reply —
+    // firing a step-context trigger would produce a near-duplicate message.
+    if(Date.now()-agentNavTsRef.current<8000)return;
     setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current('__step_context__',true),400);
   },[wsLoaded,agentMode,step,migDir]);
 
