@@ -229,7 +229,7 @@ export function createC2GRouter(deps) {
                 const sessions = new Map();
                 for (const item of interactions) { const sid = item.sessionId || 'unknown'; if (!sessions.has(sid)) sessions.set(sid, []); sessions.get(sid).push(item); }
                 c2gLog('info', `${p.sourceDisplayName} → ${p.destUserEmail}: ${interactions.length} interactions, ${sessions.size} conversations`);
-                reportUsers.push({ email: p.sourceEmail, destEmail: p.destUserEmail, displayName: p.sourceDisplayName, status: 'success', pages_created: sessions.size, conversations_processed: sessions.size, error_count: 0, errors: [] });
+                reportUsers.push({ email: p.sourceEmail, destEmail: p.destUserEmail, displayName: p.sourceDisplayName, status: 'success', pages_created: sessions.size, conversations_processed: sessions.size, migrated_conversations: sessions.size, files_uploaded: 0, error_count: 0, errors: [] });
                 files += sessions.size;
                 // Animate ring as we count sessions for this user. Emit ~10 progress
                 // events per user, with a tiny delay so the ring visibly moves even
@@ -254,7 +254,7 @@ export function createC2GRouter(deps) {
                 c2gLog('progress', JSON.stringify({ files: cumulativeConvs, errors, users: userIdx, total: migPairs.length }));
               } catch (e) {
                 c2gLog('warn', `${p.sourceDisplayName}: ${e.message}`);
-                reportUsers.push({ email: p.sourceEmail, destEmail: p.destUserEmail, displayName: p.sourceDisplayName, status: 'failed', pages_created: 0, conversations_processed: 0, error_count: 1, errors: [{ error_message: e.message }] });
+                reportUsers.push({ email: p.sourceEmail, destEmail: p.destUserEmail, displayName: p.sourceDisplayName, status: 'failed', pages_created: 0, conversations_processed: 0, migrated_conversations: 0, files_uploaded: 0, error_count: 1, errors: [{ error_message: e.message }] });
                 errors++;
                 userIdx++;
                 c2gLog('progress', JSON.stringify({ files: cumulativeConvs, errors, users: userIdx, total: migPairs.length }));
@@ -336,11 +336,21 @@ export function createC2GRouter(deps) {
             results.push(r);
             cumulativeConvs += (r.conversationsCount || 0);
 
+            const _convCount = r.conversationsCount || 0;
+            const _status = r.errors?.length ? (r.filesUploaded > 0 ? 'partial' : 'failed') : 'success';
             const userReport = {
               email: r.sourceEmail || pair.sourceEmail || pair.sourceDisplayName,
               destEmail: r.destUserEmail, displayName: r.sourceDisplayName,
-              status: r.errors?.length ? (r.filesUploaded > 0 ? 'partial' : 'failed') : 'success',
-              pages_created: r.filesUploaded || 0, conversations_processed: r.conversationsCount || 0,
+              status: _status,
+              pages_created: r.filesUploaded || 0,
+              conversations_processed: _convCount,
+              // For C2G the destination DOCX bundles all conversations — so if
+              // status is success/partial the DOCX exists and we treat all
+              // parsed conversations as migrated. If failed (DOCX upload
+              // failed), nothing landed → 0.
+              migrated_conversations: _status === 'failed' ? 0 : _convCount,
+              // C2G doesn't upload standalone attachments today — leave at 0.
+              files_uploaded: 0,
               error_count: (r.errors || []).length,
               errors: (r.errors || []).map(e => ({ error_message: e })),
               files: r.files || [],

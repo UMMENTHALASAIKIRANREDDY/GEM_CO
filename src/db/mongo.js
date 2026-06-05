@@ -123,15 +123,20 @@ async function ensureCollections() {
     }
   }
 
-  // chatHistory -> chatMessages rename. The old chatHistory doc mixed
-  // chat messages with UI state — we've split those concerns. UI state
-  // moves to a new `userSessions` collection (handled separately below);
-  // chat messages stay where they are, just under a more accurate name.
-  if (existing.has('chatHistory') && !existing.has('chatMessages')) {
+  // If a previous boot renamed chatHistory -> chatMessages, undo it.
+  // chatHistory has TWO writers with different doc shapes:
+  //   (a) the server's POST /api/chat-history writes ONE doc per user with
+  //       a messages[] array (this was split out into userSessions for the
+  //       uiState piece; chat messages stay in chatHistory)
+  //   (b) src/agent/conversationHistory.js writes ONE doc per message with
+  //       fields {role, content, timestamp}
+  // Renaming the collection broke (b). Reverting the rename so the agent
+  // module keeps working unchanged.
+  if (existing.has('chatMessages') && !existing.has('chatHistory')) {
     try {
-      await _db.collection('chatHistory').rename('chatMessages');
-      logger.info('Renamed chatHistory -> chatMessages');
-    } catch (e) { logger.warn(`Rename chatHistory failed: ${e.message}`); }
+      await _db.collection('chatMessages').rename('chatHistory');
+      logger.info('Reverted chatMessages -> chatHistory (agent module needs the original name)');
+    } catch (e) { logger.warn(`Revert chatMessages failed: ${e.message}`); }
   }
 
   // 6. checkpoints
@@ -178,9 +183,14 @@ async function ensureCollections() {
   //    Usable for both G2C and G2G destinations.
   await _db.collection('geminiUploads').createIndex({ appUserId: 1, uploadTime: -1 });
 
-  // 14. chatMessages — persists agent chat messages per user for cross-device
-  //     restore. One doc per user; `messages` field holds the last 30 chats.
-  await _db.collection('chatMessages').createIndex({ appUserId: 1 }, { unique: true });
+  // 14. chatHistory — persists agent chat messages per user for cross-device
+  //     restore. Holds BOTH (a) per-message docs from the agent module
+  //     (src/agent/conversationHistory.js) AND (b) the consolidated
+  //     {appUserId, messages: [...]} doc written by POST /api/chat-history.
+  //     Don't add a unique index — the per-message shape allows many docs
+  //     per user.
+  try { await _db.collection('chatHistory').dropIndex('appUserId_1'); } catch (_) {}
+  await _db.collection('chatHistory').createIndex({ appUserId: 1, timestamp: -1 });
 
   // 15. userSessions — persists UI/session state per user for cross-device
   //     restore. One doc per user; holds step, migDir, options, configs,

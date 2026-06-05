@@ -134,14 +134,17 @@ export function createG2GRouter(deps) {
   router.post('/migrate', requireAuth, async (req, res) => {
     try {
       const { appUserId } = getWorkspaceContext(req);
-      const { sourceAccountId, destAccountId, gemName, dryRun, extractPath, selectedUsers, userMappings, fromDate, toDate } = req.body;
+      const { sourceAccountId, destAccountId, gemName, dryRun, extractPath, uploadId, selectedUsers, userMappings, fromDate, toDate } = req.body;
 
       if (!sourceAccountId || !destAccountId) {
         return res.status(400).json({ error: 'sourceAccountId and destAccountId required' });
       }
 
-      if (!extractPath) {
-        return res.status(400).json({ error: 'extractPath required' });
+      // After the DB-only refactor, uploads have no extract_path on disk —
+      // conversations are loaded from conversationStore via uploadId. Require
+      // ONE of extractPath (legacy) or uploadId (new path).
+      if (!extractPath && !uploadId) {
+        return res.status(400).json({ error: 'uploadId required (re-upload the Vault ZIP and try again)' });
       }
 
       if (!selectedUsers || selectedUsers.length === 0) {
@@ -156,8 +159,6 @@ export function createG2GRouter(deps) {
       const batchId = `g2g_${Date.now()}`;
       const startTime = new Date();
 
-      // Save resume context BEFORE kicking off the migration so a server crash
-      // before the runner starts is still recoverable on boot.
       const resumeContext = {
         kind: 'g2g',
         appUserId,
@@ -165,7 +166,8 @@ export function createG2GRouter(deps) {
         destAccountId,
         g2gGemName,
         isDryRun,
-        extractPath,
+        extractPath: extractPath || null,
+        uploadId: uploadId || null,
         selectedUsers,
         userMappings,
         fromDate,
@@ -182,7 +184,7 @@ export function createG2GRouter(deps) {
   //   1. POST /api/g2g/migrate (fresh run)
   //   2. server.js boot-time orphan resume
   async function executeG2GMigration({ batchId, startTime, resumeContext, isResume }) {
-    const { appUserId, sourceAccountId, destAccountId, g2gGemName, isDryRun, extractPath, selectedUsers, userMappings, fromDate, toDate } = resumeContext;
+    const { appUserId, sourceAccountId, destAccountId, g2gGemName, isDryRun, extractPath, uploadId, selectedUsers, userMappings, fromDate, toDate } = resumeContext;
 
       setImmediate(async () => {
         let files = 0, errors = 0;
@@ -283,7 +285,9 @@ export function createG2GRouter(deps) {
               appUserId,
               sourceAccountId,
               destAccountId,
-              uploadId: extractPath || null,  // G2G uses extractPath as the upload identifier
+              // Prefer explicit uploadId from the new DB-only flow; fall back
+              // to extractPath for legacy uploads that still have disk content.
+              uploadId: uploadId || extractPath || null,
             },
             (logEntry) => {
               g2gLog(logEntry.type, logEntry.message);
@@ -293,20 +297,36 @@ export function createG2GRouter(deps) {
           files = result.filesUploaded || 0;
           errors = result.errors?.length || 0;
 
+          // Split the two counts: totalConversations = how many were read from
+          // the source (result.conversationsCount), migratedConversations =
+          // how many actually landed at the destination (sum of per-user
+          // migrated_conversations, which was bumped on each successful DOCX
+          // upload). These are equal on a clean run, diverge on partial runs.
+          const totalConvSum = result.conversationsCount || 0;
+          const migratedConvSum = (result.users || []).reduce(
+            (s, u) => s + (u.migrated_conversations || 0), 0
+          );
+          // Attachment files only (NOT the DOCXs that wrap conversations).
+          const attachmentSum = (result.users || []).reduce(
+            (s, u) => s + (u.files_uploaded || 0), 0
+          );
+
           const reportUpdate = {
             status: errors > 0 && files === 0 && !isDryRun ? 'failed' : 'completed',
             endTime: new Date(),
-            migratedConversations: result.conversationsCount || 0,
+            totalConversations: totalConvSum,
+            migratedConversations: migratedConvSum,
             migratedUsers: result.migratedUsers || 0,
             totalUsers: selectedUsers?.length || 0,
-            filesUploaded: files,
+            filesUploaded: attachmentSum,
             totalErrors: errors,
             users: result.users || [],
             report: {
               summary: {
                 total_users: selectedUsers?.length || 0,
-                total_conversations: result.conversationsCount || 0,
-                total_files_created: files,
+                total_conversations: totalConvSum,
+                total_migrated_conversations: migratedConvSum,
+                total_files_uploaded: attachmentSum,
                 total_errors: errors
               },
               users: result.users || [],
@@ -352,18 +372,14 @@ export function createG2GRouter(deps) {
     try {
       const { appUserId } = getWorkspaceContext(req);
       if (!appUserId) {
-        dbLog.info('g2g/reports: no appUserId');
         return res.json([]);
       }
       const reports = await db().collection('migrationWorkspaces')
         .find({ appUserId, migDir: 'gemini-gemini' }, { projection: { report: 0 } })
         .sort({ startTime: -1 }).toArray();
-      // Only log when batches exist — this endpoint is polled every 3s by the
-      // Reports panel while ANY migration is running. Logging empty results
-      // every tick swamps the log file (~25 lines/min per user).
-      if (reports.length > 0) {
-        dbLog.info(`g2g/reports: found ${reports.length} batches for ${appUserId}`);
-      }
+      // No log line here — this endpoint is polled every ~3s by the Reports
+      // panel and the result is read-only/expected behavior. Logging every
+      // tick produces 20+ lines/minute of noise.
       res.json(reports);
     } catch (err) {
       dbLog.error('[g2g/reports]', err.message);
@@ -381,6 +397,10 @@ export function createG2GRouter(deps) {
         email: u.email,
         destEmail: u.destEmail,
         status: u.status || 'pending',
+        conversations_processed: u.conversations_processed ?? u.pages_created ?? 0,
+        migrated_conversations: u.migrated_conversations
+          ?? (u.status === 'success' ? (u.conversations_processed ?? u.pages_created ?? 0) : (u.pages_created ?? 0)),
+        files_uploaded: u.files_uploaded ?? 0,
         pages_created: u.pages_created || u.files_created || 0,
         files_created: u.files_created || 0,
         error_count: u.error_count || (u.errors?.length || 0),
@@ -396,6 +416,7 @@ export function createG2GRouter(deps) {
         startTime: batch.startTime,
         endTime: batch.endTime,
         totalUsers: batch.totalUsers || 0,
+        totalConversations: batch.totalConversations || batch.migratedConversations || 0,
         migratedConversations: batch.migratedConversations || 0,
         filesUploaded: batch.filesUploaded || 0,
         totalErrors: batch.totalErrors || 0,

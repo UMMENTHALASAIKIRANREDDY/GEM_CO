@@ -111,8 +111,9 @@ export function createG2CRouter(deps) {
 
   const upload = multer({
     dest: uploadsDir,
+    limits: { fileSize: 500 * 1024 * 1024 },   // 500 MB to match CL2G/CL2C
     fileFilter: (_req, file, cb) => {
-      if (file.originalname.endsWith('.zip')) cb(null, true);
+      if (file.originalname.toLowerCase().endsWith('.zip')) cb(null, true);
       else cb(new Error('Only ZIP files are accepted'));
     }
   });
@@ -857,18 +858,30 @@ export function createG2CRouter(deps) {
 
   router.post('/migrate', requireWorkspace, async (req, res) => {
     const {
-      extract_path, tenant_id, customer_name = 'Gemini', user_mappings = {},
+      extract_path, customer_name = 'Gemini', user_mappings = {},
       dry_run = false, skip_followups = false, skip_ai_response = false,
       from_date = null, to_date = null, upload_id = null
     } = req.body;
-
-    // After the move to DB-only storage, `extract_path` is no longer required —
-    // conversations are loaded from conversationStore via upload_id. We still
-    // accept it for legacy callers / backward compat, but tenant_id is all we
-    // actually need.
-    if (!tenant_id) return res.status(400).json({ error: 'tenant_id is required' });
+    let { tenant_id } = req.body;
 
     const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
+
+    // After the move to DB-only storage, `extract_path` is no longer required —
+    // conversations are loaded from conversationStore via upload_id. tenant_id
+    // is also recoverable from the user's MS auth session if the UI didn't
+    // send one (e.g. first-time user after the userConfig refactor), so we
+    // fall back instead of returning a 400.
+    if (!tenant_id) {
+      try {
+        const { getTenantForUser } = await import('../../core/auth/microsoft.js');
+        tenant_id = await getTenantForUser(appUserId);
+      } catch {}
+    }
+    if (!tenant_id) return res.status(400).json({ error: 'tenant_id is required (no Microsoft account signed in to derive it from)' });
+
+    if (!dry_run && !isAuthenticated(appUserId)) {
+      return res.status(401).json({ error: 'Admin not signed in. Click "Sign in with Microsoft" first.' });
+    }
     if (!dry_run && !isAuthenticated(appUserId)) {
       return res.status(401).json({ error: 'Admin not signed in. Click "Sign in with Microsoft" first.' });
     }
@@ -994,7 +1007,20 @@ export function createG2CRouter(deps) {
       const scanner = new AssetScanner();
       const visualReports = {};
       for (const u of users) {
-        const convs = await reader.loadUserConversations(u.email, from_date, to_date);
+        let convs = [];
+        if (reader) {
+          // Legacy disk-based upload
+          convs = await reader.loadUserConversations(u.email, from_date, to_date);
+        } else {
+          // DB-only upload — load conversations from conversationStore
+          try {
+            const { loadConversationsFromStore } = await import('../_shared/conversationStore.js');
+            convs = await loadConversationsFromStore({
+              appUserId, sourceEmail: u.email, uploadId: upload_id,
+              fromDate: from_date, toDate: to_date, includeMigrated: true,
+            }) || [];
+          } catch { /* leave convs empty */ }
+        }
         visualReports[u.email] = scanner.scan(u.email, convs);
         if (visualReports[u.email].length > 0) {
           emit('warn', `${u.email}: ${visualReports[u.email].length} conversations flagged for visual assets`);
@@ -1016,6 +1042,10 @@ export function createG2CRouter(deps) {
         let conversations = null;
         const errors = [];
         let pagesCreated = 0;
+        // Attachment files uploaded to the destination user's OneDrive
+        // (images, PDFs, code blocks). Does NOT include the OneNote page —
+        // that's the conversation, not a file.
+        let filesUploaded = 0;
 
         try {
           // Try to load from conversationStore FIRST (Chunk 2: DB-backed read).
@@ -1164,6 +1194,7 @@ export function createG2CRouter(deps) {
                         });
                       }
                       regenCount++;
+                      filesUploaded++;
                       emit('success', `    Gemini-regenerated: "${f.name}" (${buf.length} bytes) → ${m365Email}'s OneDrive`);
                     } catch (e) {
                       emit('warn', `    Gemini regen upload error for "${f.name}": ${e.message}`);
@@ -1195,7 +1226,7 @@ export function createG2CRouter(deps) {
             }
           }
 
-          report.addUserResult({ email: m365Email, conversations: conversations.length, pagesCreated, visualAssetsFlagged: (visualReports[gEmail] || []).length, errors });
+          report.addUserResult({ email: gEmail, destEmail: m365Email, conversations: conversations.length, pagesCreated, migratedConversations: pagesCreated, filesUploaded, visualAssetsFlagged: (visualReports[gEmail] || []).length, errors });
           await checkpoint.markComplete(gEmail);
           // Mark conversationStore rows as migrated for this user pair
           if (!dry_run) {
@@ -1204,7 +1235,7 @@ export function createG2CRouter(deps) {
           emit('success', `  Done: ${pagesCreated}/${conversations.length} pages created for ${m365Email}`);
         } catch (err) {
           emit('error', `Fatal error for ${gEmail}: ${err.message}`);
-          report.addUserResult({ email: m365Email, conversations: 0, pagesCreated: 0, visualAssetsFlagged: 0, errors: [{ error: err.message }] });
+          report.addUserResult({ email: gEmail, destEmail: m365Email, conversations: 0, pagesCreated: 0, migratedConversations: 0, filesUploaded: 0, visualAssetsFlagged: 0, errors: [{ error: err.message }] });
           progressErrors++;
           // Mark conversationStore rows as failed
           if (!dry_run) {
@@ -1243,16 +1274,21 @@ export function createG2CRouter(deps) {
       const _finalStatus = (fullReport.summary?.total_pages_created || 0) === 0 && _totalErrors > 0
         ? 'failed'
         : 'completed';
+      // Migrated conversations = sum of per-user OneNote pages actually
+      // created. Differs from total_conversations when some pages failed.
+      const _migratedConvs = fullReport.summary?.total_migrated_conversations
+        ?? fullReport.summary?.total_pages_created
+        ?? 0;
+      const _filesUploaded = fullReport.summary?.total_files_uploaded ?? 0;
       const reportUpdate = {
         status: _finalStatus, endTime: new Date(),
         totalUsers: fullReport.summary?.total_users || users.length,
         migratedUsers: _migratedUsers,
         failedUsers: _failedUsers,
-        totalErrors: _totalErrors,  // ← was missing; reports panel uses this for Success/Partial/Failed badge
+        totalErrors: _totalErrors,
         totalConversations: fullReport.summary?.total_conversations || 0,
-        // migratedConversations must reflect conversation count (not OneNote page
-        // count) so the Reports panel and CSV row match the per-user totals.
-        migratedConversations: fullReport.summary?.total_conversations || 0,
+        migratedConversations: _migratedConvs,
+        filesUploaded: _filesUploaded,
         flaggedAssets: fullReport.summary?.total_flagged || Object.values(visualReports || {}).reduce((s, v) => s + (v?.length || 0), 0),
         report: fullReport,
       };
@@ -1383,12 +1419,12 @@ export function createG2CRouter(deps) {
     // the retry run flips them to 'migrated'. No separate retry-state field
     // needed now that migrationJobs is gone.
 
-    runRetry({ batchId, retryBatchId, extractPath: uploadDoc?.extractPath, tenantId: batchDoc.tenantId, customerName: effectiveCustomerName, userMappings: mappingDoc?.mappings || {}, retryTargets, appUserId }).catch(e => {
+    runRetry({ batchId, retryBatchId, extractPath: uploadDoc?.extractPath, uploadId: uploadDoc?._id, tenantId: batchDoc.tenantId, customerName: effectiveCustomerName, userMappings: mappingDoc?.mappings || {}, retryTargets, appUserId }).catch(e => {
       console.error('[G2C] runRetry unhandled error:', e.message);
     });
   });
 
-  async function runRetry({ batchId, retryBatchId, extractPath, tenantId, customerName, userMappings, retryTargets, appUserId }) {
+  async function runRetry({ batchId, retryBatchId, extractPath, tenantId, customerName, userMappings, retryTargets, appUserId, uploadId }) {
     logBuffers.set(appUserId, []);
     currentBatchId = retryBatchId;
     _currentAppUserId = appUserId;
@@ -1396,7 +1432,9 @@ export function createG2CRouter(deps) {
     const totalFailed = Object.values(retryTargets).flat().length;
     emit('info', `━━━ Retrying ${totalFailed} failed conversation(s) ━━━`);
 
-    const reader = new VaultReader(extractPath);
+    // Disk reader only when the legacy extract still exists. DB-only uploads
+    // load conversations from conversationStore per-user instead.
+    const reader = (extractPath && fs.existsSync(extractPath)) ? new VaultReader(extractPath) : null;
     const generator = new ResponseGenerator();
     const creator = new PagesCreator(tenantId, customerName, appUserId);
     const report = new ReportWriter();
@@ -1411,7 +1449,16 @@ export function createG2CRouter(deps) {
       emit('info', `Retrying ${failedTitles.length} conversation(s) for ${m365Email}`);
 
       try {
-        const allConversations = await reader.loadUserConversations(gEmail, null, null);
+        let allConversations = [];
+        if (reader) {
+          allConversations = await reader.loadUserConversations(gEmail, null, null);
+        } else {
+          const { loadConversationsFromStore } = await import('../_shared/conversationStore.js');
+          allConversations = await loadConversationsFromStore({
+            appUserId, sourceEmail: gEmail, uploadId,
+            includeMigrated: true,
+          }) || [];
+        }
         const toRetry = allConversations.filter(c => titleSet.has(c.title));
         if (toRetry.length === 0) { emit('warn', `  No matching conversations found for ${m365Email} — skipping`); continue; }
 
@@ -1427,7 +1474,7 @@ export function createG2CRouter(deps) {
           }
         }
 
-        report.addUserResult({ email: m365Email, conversations: toRetry.length, pagesCreated, visualAssetsFlagged: 0, errors });
+        report.addUserResult({ email: gEmail, destEmail: m365Email, conversations: toRetry.length, pagesCreated, migratedConversations: pagesCreated, filesUploaded: 0, visualAssetsFlagged: 0, errors });
         emit('success', `  Done: ${pagesCreated}/${toRetry.length} retried for ${m365Email}`);
       } catch (err) { emit('error', `Fatal for ${m365Email}: ${err.message}`); }
     }

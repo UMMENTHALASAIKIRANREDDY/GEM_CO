@@ -315,6 +315,8 @@ export function createCL2GRouter({ db }) {
 
     {
         let files = 0, errors = 0;
+        // Declared at function scope so the catch handler can reference them.
+        let reportUsers = [];
         const { startHeartbeat, stopHeartbeat, markUserPairMigrated, markUserPairFailed } = await import('../_shared/conversationStore.js');
         let _heartbeatId = null;
 
@@ -326,9 +328,15 @@ export function createCL2GRouter({ db }) {
           );
           _heartbeatId = startHeartbeat(batchId);
 
-          // Verify the extracted ZIP directory is still present on disk
-          if (!uploadDoc.extractPath || !fs.existsSync(uploadDoc.extractPath)) {
-            const msg = `Upload files not found on disk (${uploadDoc.extractPath}). The server may have restarted and lost the uploaded ZIP. Please re-upload the ZIP file and try again.`;
+          // After the DB-only refactor, uploadDoc.extractPath is intentionally
+          // missing on new uploads (conversations live in conversationStore).
+          // Only block if BOTH the disk extract AND DB content are missing —
+          // either source is enough to migrate from.
+          const hasDiskExtract = uploadDoc.extractPath && fs.existsSync(uploadDoc.extractPath);
+          const dbConvCount = await db().collection('conversationStore')
+            .countDocuments({ uploadId, appUserId });
+          if (!hasDiskExtract && dbConvCount === 0) {
+            const msg = `Upload has no data — no disk extract AND no conversations in DB. Re-upload the ZIP.`;
             dbLog.error(`[CL2G] ${msg}`);
             cl2gLog('error', msg);
             await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'claude-gemini', status: 'failed', endTime: new Date(), error: msg } }).catch(() => {});
@@ -337,9 +345,10 @@ export function createCL2GRouter({ db }) {
           }
 
           const { migrateUserPair } = await import('./migration/migrate.js');
-          const reportUsers = [];
+          // reportUsers declared at function scope above so catch can see it
+          reportUsers.length = 0;
 
-          dbLog.info(`[CL2G] Starting ${isDryRun ? 'dry run' : 'migration'} — ${pairs.length} user(s), uploadId=${uploadId}, extractPath=${uploadDoc.extractPath}`);
+          dbLog.info(`[CL2G] Starting ${isDryRun ? 'dry run' : 'migration'} — ${pairs.length} user(s), uploadId=${uploadId}, ${hasDiskExtract ? 'disk:' + uploadDoc.extractPath : 'DB-only (' + dbConvCount + ' convs)'}`);
           cl2gLog('info', `Starting CL2G ${isDryRun ? 'dry run' : 'migration'} for ${pairs.length} user(s)...`);
           cl2gLog('total', JSON.stringify({ total: pairs.length }));
 
@@ -368,17 +377,31 @@ export function createCL2GRouter({ db }) {
             cl2gLog('info', `Processing: ${pair.sourceDisplayName} → ${pair.destEmail}`);
 
             if (isDryRun) {
-              // Dry run: count merged files (max 3 per user: conversations, memory, projects)
-              const { getUserData } = await import('./zipParser.js');
-              const { conversations, memory, projects } = getUserData(uploadDoc.extractPath, pair.sourceUuid);
-              const validProjects = projects.filter(p => p.name || p.docs?.length);
-              const dryFiles =
-                (conversations.length > 0 ? 1 : 0) +
-                (memory?.conversations_memory ? 1 : 0) +
-                (validProjects.length > 0 ? 1 : 0);
-              cl2gLog('info', `  ${pair.sourceDisplayName}: ${conversations.length} conversations → 1 merged DOCX${memory?.conversations_memory ? ' + memory' : ''}${validProjects.length > 0 ? ' + projects' : ''}`);
-              reportUsers.push({ email: pair.sourceEmail, destEmail: pair.destEmail, displayName: pair.sourceDisplayName, status: 'success', pages_created: dryFiles, conversations_processed: conversations.length, error_count: 0, errors: [] });
+              // Dry run: count conversations from DB (preferred) or disk (legacy).
+              // Memory + projects are dropped after the DB-only refactor — they
+              // lived only on disk. Each user now produces at most 1 merged DOCX.
+              let convCount = 0;
+              if (hasDiskExtract) {
+                try {
+                  const { getUserData } = await import('./zipParser.js');
+                  const { conversations } = getUserData(uploadDoc.extractPath, pair.sourceUuid);
+                  convCount = conversations.length;
+                } catch (e) { cl2gLog('warn', `getUserData failed for ${pair.sourceEmail}: ${e.message}`); }
+              } else {
+                convCount = await db().collection('conversationStore').countDocuments({
+                  uploadId, appUserId, sourceEmail: pair.sourceEmail,
+                });
+              }
+              const dryFiles = convCount > 0 ? 1 : 0;
+              cl2gLog('info', `  ${pair.sourceDisplayName}: ${convCount} conversations → ${dryFiles ? '1 merged DOCX' : 'no data'}`);
+              reportUsers.push({ email: pair.sourceEmail, destEmail: pair.destEmail, displayName: pair.sourceDisplayName, status: 'success', pages_created: dryFiles, conversations_processed: convCount, migrated_conversations: convCount, files_uploaded: 0, error_count: 0, errors: [] });
               files += dryFiles;
+              // Emit progress so the UI stats card shows the real conversation
+              // count (not just the file count). Live path emits this after
+              // each migrated pair; dry-run was skipping it because of the
+              // `continue` below.
+              const cumulativeConvs = reportUsers.reduce((s, u) => s + (u.conversations_processed || 0), 0);
+              cl2gLog('progress', JSON.stringify({ files, convs: cumulativeConvs, errors, users: reportUsers.length, total: pairs.length }));
               continue;
             }
 
@@ -390,7 +413,13 @@ export function createCL2GRouter({ db }) {
             // Note: conversations already persisted to conversationStore at upload time.
 
             const status = r.errors?.length ? (r.filesUploaded > 0 ? 'partial' : 'failed') : 'success';
-            reportUsers.push({ email: pair.sourceEmail, destEmail: pair.destEmail, displayName: r.sourceDisplayName, status, pages_created: r.filesUploaded, conversations_processed: r.conversationsCount, error_count: r.errors.length, errors: r.errors.map(e => ({ error_message: e })), files: r.files });
+            // CL2G destination is a merged DOCX in Drive that contains all
+            // conversations — so on success/partial, all parsed conversations
+            // are considered migrated. files_uploaded counts standalone
+            // attachments (images, PDFs) regenerated alongside, NOT the DOCX.
+            const _migratedConvs = status === 'failed' ? 0 : (r.conversationsCount || 0);
+            const _attachmentCount = r.attachmentsUploaded || 0;
+            reportUsers.push({ email: pair.sourceEmail, destEmail: pair.destEmail, displayName: r.sourceDisplayName, status, pages_created: r.filesUploaded, conversations_processed: r.conversationsCount, migrated_conversations: _migratedConvs, files_uploaded: _attachmentCount, error_count: r.errors.length, errors: r.errors.map(e => ({ error_message: e })), files: r.files });
 
             // Mark conversationStore rows for this user pair
             if (status === 'failed') {

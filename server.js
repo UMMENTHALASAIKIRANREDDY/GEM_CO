@@ -606,16 +606,29 @@ app.get('/api/init', requireAuth, async (req, res) => {
   try {
     const { appUserId } = getWorkspaceContext(req);
     if (!appUserId) return res.status(401).json({ error: 'Session missing user id' });
-    const [config, mappings, recentWorkspaces, recentUploads, chatDoc, sessionDoc] = await Promise.all([
+    const [config, mappings, recentWorkspaces, recentUploads, chatDoc, sessionDoc, msSession] = await Promise.all([
       db().collection('userConfig').findOne({ appUserId }),
       db().collection('userMappings').find({ appUserId }).toArray(),
       db().collection('migrationWorkspaces').find({ appUserId }).sort({ startTime: -1 }).limit(10).toArray(),
-      db().collection('uploads').find({ appUserId }).sort({ uploadTime: -1 }).limit(5).toArray(),
-      db().collection('chatMessages').findOne({ appUserId }),
+      db().collection('geminiUploads').find({ appUserId }).sort({ uploadTime: -1 }).limit(5).toArray(),
+      // chatHistory holds the consolidated {appUserId, messages: [...]} doc
+      // written by POST /api/chat-messages below. Per-message docs from
+      // src/agent/conversationHistory.js live in the same collection but
+      // have a different shape (no messages field on those) — the findOne
+      // here only matches our consolidated doc.
+      db().collection('chatHistory').findOne({ appUserId, messages: { $exists: true } }),
       db().collection('userSessions').findOne({ appUserId }),
+      // Fall back: if userConfig has no tenantId yet (first-time user after
+      // the localStorage->DB migration), use the MS auth session's tenantId
+      // so /api/migrate doesn't 400 with "tenant_id is required".
+      db().collection('authSessions').findOne({ appUserId, provider: 'microsoft' }, { projection: { tenantId: 1 } }),
     ]);
+    const effectiveConfig = config || {};
+    if (!effectiveConfig.tenantId && msSession?.tenantId) {
+      effectiveConfig.tenantId = msSession.tenantId;
+    }
     res.json({
-      config,
+      config: effectiveConfig,
       mappings,
       recentWorkspaces,
       recentUploads,
@@ -625,15 +638,17 @@ app.get('/api/init', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Save agent chat messages (just the messages — UI state is a separate endpoint)
+// Save agent chat messages. Lives in chatHistory collection as a single doc
+// per user with a `messages` array — distinct from the per-message docs that
+// src/agent/conversationHistory.js writes to the same collection.
 app.post('/api/chat-messages', requireAuth, async (req, res) => {
   try {
     const { appUserId } = getWorkspaceContext(req);
     if (!appUserId) return res.status(401).json({ error: 'Not authenticated' });
     const { messages } = req.body;
     if (!Array.isArray(messages)) return res.status(400).json({ error: 'messages must be array' });
-    await db().collection('chatMessages').updateOne(
-      { appUserId },
+    await db().collection('chatHistory').updateOne(
+      { appUserId, messages: { $exists: true } },
       { $set: { messages: messages.slice(-30), updatedAt: new Date() } },
       { upsert: true }
     );

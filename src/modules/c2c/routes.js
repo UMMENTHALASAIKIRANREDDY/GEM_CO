@@ -598,13 +598,21 @@ export function createC2CRouter(deps) {
               }
             );
 
+            const _convCount = r.conversationsCount || 0;
+            const _pagesCreated = r.pagesCreated || 0;
+            const _status = r.errors?.length ? (_pagesCreated > 0 ? 'partial' : 'failed') : 'success';
             const userReport = {
               email: pair.sourceEmail, destEmail: pair.destUserEmail,
               displayName: pair.sourceDisplayName,
-              status: r.errors?.length ? ((r.pagesCreated || 0) > 0 ? 'partial' : 'failed') : 'success',
-              pages_created: r.pagesCreated || 0,
-              conversations_processed: r.conversationsCount || 0,
+              status: _status,
+              pages_created: _pagesCreated,
+              conversations_processed: _convCount,
+              // OneNote pages == conversations migrated for C2C.
+              migrated_conversations: _pagesCreated,
               files_created: r.filesUploaded || 0,
+              // Attachment files only — r.filesUploaded counts attachments
+              // uploaded to OneDrive (separate from the OneNote pages).
+              files_uploaded: r.filesUploaded || 0,
               error_count: (r.errors || []).length,
               errors: (r.errors || []).map(e => ({ error_message: e })),
               files: r.pages || [],

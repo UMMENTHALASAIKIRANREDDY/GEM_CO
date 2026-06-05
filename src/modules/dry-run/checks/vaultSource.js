@@ -10,21 +10,40 @@ import path from 'node:path';
 import { passingCheck, warningCheck, blockerCheck } from '../reportBuilder.js';
 
 /**
- * Verify the Vault export is migratable. After the move to DB-only storage,
- * a valid upload is one where conversations exist in conversationStore — the
- * disk extract is deleted right after upload. We accept either:
- *   1. uploadData.conversationsPersisted > 0  → DB-only flow (new uploads)
- *   2. extractPath still on disk with XML files → legacy upload (pre-fix)
- * A blocker only fires when BOTH are missing.
+ * Verify the Vault export is migratable. Accepts any of these signals:
+ *   1. uploadData.conversationsPersisted > 0   → new uploads
+ *   2. uploadData.totalConversations > 0       → legacy uploads (pre-DB-only refactor)
+ *   3. conversationStore actually has rows     → most authoritative; queried as fallback
+ *   4. extractPath still on disk with XMLs     → very-legacy uploads
+ * A blocker only fires when ALL of these are missing.
+ *
+ * NOTE: this function is async now because option (3) queries the DB.
  */
-export function checkVaultExtractValid(extractPath, uploadData) {
+export async function checkVaultExtractValid(extractPath, uploadData) {
   const persisted = uploadData?.conversationsPersisted ?? 0;
-  if (persisted > 0) {
+  const totalConvs = uploadData?.totalConversations ?? 0;
+  if (persisted > 0 || totalConvs > 0) {
     return [passingCheck(
       'source.vault.db_ready',
       'Vault export',
-      { conversationsInDB: persisted }
+      { conversationsInDB: persisted || totalConvs }
     )];
+  }
+  // Fallback: legacy uploads may have neither field on the upload doc but
+  // still have rows in conversationStore. Check that directly.
+  if (uploadData?._id) {
+    try {
+      const { getDb } = await import('../../../db/mongo.js');
+      const n = await getDb().collection('conversationStore')
+        .countDocuments({ uploadId: uploadData._id });
+      if (n > 0) {
+        return [passingCheck(
+          'source.vault.db_ready',
+          'Vault export',
+          { conversationsInDB: n, via: 'conversationStore.count' }
+        )];
+      }
+    } catch { /* fall through to disk check */ }
   }
   if (!extractPath) {
     return [blockerCheck(

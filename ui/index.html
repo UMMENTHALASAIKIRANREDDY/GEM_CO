@@ -873,14 +873,22 @@ const Step2=({uploadData,msUsers,mappings,setMappings,selectedUsers,setSelectedU
     }
   },[uploadData?.id]);
 
-  // On mount: load persisted mappings + csvEmails from DB (cross-session)
+  // On mount: load persisted mappings + csvEmails from DB (cross-session).
+  // ALWAYS load mappings if they exist in DB — even when no CSV is active,
+  // user-edited mappings (via dropdown) must survive remount. Previous code
+  // only loaded mappings when csvEmails was set, which caused dropdown-edits
+  // to be silently overwritten by auto-map on remount.
   useEffect(()=>{
     fetch('/api/user-mappings').then(r=>r.ok?r.json():null).then(doc=>{
-      if(doc?.csvEmails&&doc.csvEmails.length>0){
+      if(!doc)return;
+      if(doc.mappings&&Object.keys(doc.mappings).length>0){
+        setMappings(doc.mappings);
+      }
+      if(doc.csvEmails&&doc.csvEmails.length>0){
         setCsvEmails(doc.csvEmails);
         csvEmailsRef.current=doc.csvEmails;
-        if(doc.mappings&&Object.keys(doc.mappings).length>0){
-          setMappings(doc.mappings);
+        // Auto-select rows that have a mapping (CSV-active mode)
+        if(doc.mappings){
           setSelectedUsers(new Set(Object.entries(doc.mappings).filter(([,v])=>v).map(([k])=>k)));
         }
       }
@@ -1156,10 +1164,9 @@ const Step3=({options,setOptions,config,setConfig,msAuthed,googleAuthed,onRun,on
 /* ═══   STEP 4/5: MIGRATE    ═══ */
 /* ══════════════════════════════ */
 const MIG_ENTITIES=[
-  {label:'Users',  icon:<IcoUser s={18}/>,  color:C.primary},
-  {label:'Pages',  icon:<IcoPage s={18}/>,  color:C.success},
-  {label:'Errors', icon:<IcoError s={18}/>, color:C.error},
-  {label:'Flagged',icon:<IcoFlag s={18}/>,  color:C.primaryL},
+  {label:'Users',         icon:<IcoUser s={18}/>,  color:C.primary},
+  {label:'Conversations', icon:<IcoPage s={18}/>,  color:C.success},
+  {label:'Errors',        icon:<IcoError s={18}/>, color:C.error},
 ];
 
 const StepMigrate=({stats,done,live,lastRunWasDry,batchId,onStartLive,onRunAnother,onRetry,retrying,hasUploadData,onGoToConnect,onRetryWithPath,totalExpected=0,onChangeDirection})=>{
@@ -1184,7 +1191,7 @@ const StepMigrate=({stats,done,live,lastRunWasDry,batchId,onStartLive,onRunAnoth
       }).catch(()=>{});
     }
   },[done,batchId,lastRunWasDry]);
-  const vals=[stats.users,stats.pages,stats.errors,stats.flagged];
+  const vals=[stats.users,stats.pages,stats.errors];
 
   const dlMigrationCsv=async()=>{
     try{
@@ -1253,7 +1260,7 @@ const StepMigrate=({stats,done,live,lastRunWasDry,batchId,onStartLive,onRunAnoth
             </div>
           </div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:20}}>
-            {[{label:'Users',val:stats.users,icon:<IcoUser s={22}/>,color:C.primary},{label:lastRunWasDry?'Conversations':' Pages Created',val:stats.pages,icon:<IcoPage s={22}/>,color:C.success},{label:'Errors',val:stats.errors,icon:<IcoError s={22}/>,color:stats.errors>0?C.error:C.muted}].map((s,i)=>(
+            {[{label:'Users',val:stats.users,icon:<IcoUser s={22}/>,color:C.primary},{label:'Conversations',val:stats.pages,icon:<IcoPage s={22}/>,color:C.success},{label:'Errors',val:stats.errors,icon:<IcoError s={22}/>,color:stats.errors>0?C.error:C.muted}].map((s,i)=>(
               <Card key={i} className="scale-in" style={{animationDelay:`${i*80}ms`,textAlign:'center',padding:16}}>
                 <div style={{display:'flex',justifyContent:'center',marginBottom:6,color:s.color}}>{s.icon}</div>
                 <div style={{fontSize:28,fontWeight:700,color:s.color}}>{s.val}</div>
@@ -1279,7 +1286,6 @@ const StepMigrate=({stats,done,live,lastRunWasDry,batchId,onStartLive,onRunAnoth
             <Btn variant="ghost" onClick={()=>onRunAnother(false)} style={{flex:'1 1 100px',justifyContent:'center'}}>
               New Migration
             </Btn>
-            {onChangeDirection&&<Btn variant="ghost" onClick={onChangeDirection} style={{flex:'1 1 120px',justifyContent:'center'}}>⇄ Change Direction</Btn>}
           </div>
         </>
       )}
@@ -1742,8 +1748,8 @@ const VisualizationPanel=({step,googleAuthed,msAuthed,uploadData,googleUsers,msU
       {(live||migDone)&&(
         <div style={{padding:'0 16px 16px',flexShrink:0}}>
           <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:'uppercase',letterSpacing:.6,marginBottom:8}}>{live?'Live Stats':'Final Results'}</div>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-            {[{l:'Users',v:stats.users,c:C.primary},{l:'Pages',v:stats.pages,c:C.success},{l:'Errors',v:stats.errors,c:stats.errors>0?C.error:C.muted},{l:'Flagged',v:stats.flagged,c:C.primaryL}].map((s,i)=>(
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}>
+            {[{l:'Users',v:stats.users,c:C.primary},{l:'Conversations',v:stats.pages,c:C.success},{l:'Errors',v:stats.errors,c:stats.errors>0?C.error:C.muted}].map((s,i)=>(
               <div key={i} style={{background:'white',borderRadius:8,padding:'10px 12px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${s.c}`,textAlign:'center'}}>
                 <div style={{fontSize:20,fontWeight:700,color:s.c}}>{s.v}</div>
                 <div style={{fontSize:10,color:C.muted,textTransform:'uppercase',letterSpacing:.3,marginTop:2}}>{s.l}</div>
@@ -1884,19 +1890,27 @@ const StepC2GMap=({msUsers,googleUsers,c2gMappings,setC2gMappings,c2gSelectedUse
     // Don't touch selection state — selections are user-driven and survive nav.
   };
 
-  // On mount: load from DB first, then auto-map only if no CSV saved
+  // On mount: load from DB first. Always restore persisted mappings —
+  // including user-edited ones (dropdown edits without CSV). Only fall
+  // back to auto-map if the DB has nothing.
   useEffect(()=>{
     fetch('/api/c2g/user-mappings').then(r=>r.ok?r.json():null).then(doc=>{
+      const hasMappings = doc?.mappings && Object.keys(doc.mappings).length > 0;
       if(doc?.csvEmails&&doc.csvEmails.length>0){
         setCsvEmails(doc.csvEmails);
         csvEmailsRef.current=doc.csvEmails;
-        if(doc.mappings){
+        if(hasMappings){
           const restored=normaliseMappings({...c2gMappings,...doc.mappings},msUsers);
           setC2gMappings(restored);
-          // Don't touch selection state on restore — selections are user-driven
-          // and must survive navigation.
         }
+      } else if(hasMappings){
+        // No CSV but user has persisted dropdown-edited mappings — restore them
+        // verbatim, no auto-map overwrite.
+        csvEmailsRef.current=null;
+        const restored=normaliseMappings({...c2gMappings,...doc.mappings},msUsers);
+        setC2gMappings(restored);
       } else {
+        // First-time visit / fresh user — run auto-map to suggest pairings.
         csvEmailsRef.current=null;
         runAutoMap(c2gMappings,null);
       }
@@ -2217,7 +2231,6 @@ const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c
             {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{flex:'1 1 140px',justifyContent:'center'}}><IcoRocket s={14}/> Start Live Migration</Btn>}
             <Btn variant="ghost" onClick={onBack} style={{flex:'1 1 100px',justifyContent:'center'}}>← Options</Btn>
             <Btn variant="ghost" onClick={()=>onRunAnother&&onRunAnother()} style={{flex:'1 1 120px',justifyContent:'center'}}>New Migration</Btn>
-            {onChangeDirection&&<Btn variant="ghost" onClick={onChangeDirection} style={{flex:'1 1 120px',justifyContent:'center'}}>⇄ Change Direction</Btn>}
           </div>
         </>
       )}
@@ -2987,7 +3000,6 @@ const StepCL2GMigrate=({cl2gStats,cl2gDone,onRunAnother,onBack,onStart,cl2gLive,
             {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{flex:'1 1 140px',justifyContent:'center'}}><IcoRocket s={14}/> Start Live Migration</Btn>}
             <Btn variant="ghost" onClick={onBack} style={{flex:'1 1 100px',justifyContent:'center'}}>← Options</Btn>
             <Btn variant="ghost" onClick={()=>onRunAnother&&onRunAnother()} style={{flex:'1 1 120px',justifyContent:'center'}}>New Migration</Btn>
-            {onChangeDirection&&<Btn variant="ghost" onClick={onChangeDirection} style={{flex:'1 1 120px',justifyContent:'center'}}>⇄ Change Direction</Btn>}
           </div>
         </>
       )}
@@ -3471,7 +3483,6 @@ const StepCL2CMigrate=({cl2cStats,cl2cDone,onRunAnother,onBack,onStart,cl2cLive,
             {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{flex:'1 1 140px',justifyContent:'center'}}><IcoRocket s={14}/> Start Live Migration</Btn>}
             <Btn variant="ghost" onClick={onBack} style={{flex:'1 1 100px',justifyContent:'center'}}>← Options</Btn>
             <Btn variant="ghost" onClick={()=>onRunAnother&&onRunAnother()} style={{flex:'1 1 120px',justifyContent:'center'}}>New Migration</Btn>
-            {onChangeDirection&&<Btn variant="ghost" onClick={onChangeDirection} style={{flex:'1 1 120px',justifyContent:'center'}}>⇄ Change Direction</Btn>}
           </div>
         </>
       )}
@@ -3745,13 +3756,17 @@ const StepC2CUserMap=({c2cConfig,c2cMappings,setC2cMappings,c2cSelectedUsers,set
   const csvEmailsRef=useRef(null);
   const srcUsers=csvEmails?allSrcUsers.filter(u=>csvEmails.includes((u.mail||u.userPrincipalName||'').toLowerCase())):allSrcUsers;
 
-  // On mount: load persisted mappings + csvEmails
+  // On mount: load persisted mappings + csvEmails. Always restore mappings
+  // even when no CSV — user dropdown edits must survive navigation.
   useEffect(()=>{
     fetch('/api/c2c/user-mappings').then(r=>r.ok?r.json():null).then(doc=>{
-      if(doc?.csvEmails&&doc.csvEmails.length>0){
+      if(!doc)return;
+      if(doc.mappings&&Object.keys(doc.mappings).length>0){
+        setC2cMappings(doc.mappings);
+      }
+      if(doc.csvEmails&&doc.csvEmails.length>0){
         setCsvEmails(doc.csvEmails);
         csvEmailsRef.current=doc.csvEmails;
-        if(doc.mappings)setC2cMappings(doc.mappings);
       }
     }).catch(()=>{});
   },[]);
@@ -4073,11 +4088,10 @@ const StepC2CMigrate=({c2cStats,c2cDone,c2cLive,onRunAnother,onBack,onChangeDire
               <div style={{position:'absolute',textAlign:'center'}}><div style={{fontSize:22,fontWeight:700,color:C.primary}}>{ring}%</div><div style={{fontSize:10,color:C.muted}}>Progress</div></div>
             </div>
           </div>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:16}}>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:16}}>
             {[
               {label:'Users',icon:<IcoUser s={18}/>,color:C.primary,val:c2cTotal>0?`${c2cStats?.users||0} / ${c2cTotal}`:(c2cStats?.users||0)},
-              {label:'Conversations',icon:<IcoPage s={18}/>,color:C.success,val:c2cStats?.conversationCount||0},
-              {label:'Pages Created',icon:<IcoPage s={18}/>,color:C.primaryL,val:c2cStats?.files||0},
+              {label:'Conversations',icon:<IcoPage s={18}/>,color:C.success,val:c2cStats?.conversationCount||c2cStats?.files||0},
               {label:'Errors',icon:<IcoError s={18}/>,color:C.error,val:c2cStats?.errors||0},
             ].map((e,i)=>(
               <div key={i} className="slide-r" style={{animationDelay:`${i*60}ms`,background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.color}`,display:'flex',alignItems:'center',gap:10}}>
@@ -4092,8 +4106,7 @@ const StepC2CMigrate=({c2cStats,c2cDone,c2cLive,onRunAnother,onBack,onChangeDire
               <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
                 <Btn variant="ghost" onClick={onBack} style={{flex:'1 1 100px',justifyContent:'center'}}>← Back to Options</Btn>
                 <Btn variant="ghost" onClick={()=>onRunAnother&&onRunAnother(false)} style={{flex:'1 1 100px',justifyContent:'center'}}>New Migration</Btn>
-                {onChangeDirection&&<Btn variant="ghost" onClick={onChangeDirection} style={{flex:'1 1 120px',justifyContent:'center'}}>⇄ Change Direction</Btn>}
-              </div>
+                  </div>
             </>)}
         </>
       ):(
@@ -4103,11 +4116,10 @@ const StepC2CMigrate=({c2cStats,c2cDone,c2cLive,onRunAnother,onBack,onChangeDire
             <div style={{fontSize:20,fontWeight:600,color:C.success,marginBottom:4}}>{lastRunWasDry?'Dry Run Complete!':'Migration Complete!'}</div>
             <div style={{fontSize:13,color:C.muted}}>{lastRunWasDry?'Preview complete — no OneNote pages were created.':'Copilot conversations migrated as OneNote pages in destination tenant.'}</div>
           </div>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:20}}>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:20}}>
             {[
               {label:'Users',val:c2cStats?.users||0,icon:<IcoUser s={22}/>,color:C.primary},
-              {label:'Conversations',val:c2cStats?.conversationCount||0,icon:<IcoPage s={22}/>,color:C.success},
-              {label:'Pages Created',val:c2cStats?.files||0,icon:<IcoPage s={22}/>,color:C.primaryL},
+              {label:'Conversations',val:c2cStats?.conversationCount||c2cStats?.files||0,icon:<IcoPage s={22}/>,color:C.success},
               {label:'Errors',val:c2cStats?.errors||0,icon:<IcoError s={22}/>,color:c2cStats?.errors>0?C.error:C.muted},
             ].map((s,i)=>(
               <Card key={i} className="scale-in" style={{animationDelay:`${i*80}ms`,textAlign:'center',padding:16}}>
@@ -4122,7 +4134,6 @@ const StepC2CMigrate=({c2cStats,c2cDone,c2cLive,onRunAnother,onBack,onChangeDire
           {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{width:'100%',justifyContent:'center',marginBottom:12}}><IcoRocket s={14}/> Start Migration (Live)</Btn>}
           <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
             <Btn variant="ghost" onClick={()=>onRunAnother(false)} style={{flex:'1 1 100px',justifyContent:'center'}}>New Migration</Btn>
-            {onChangeDirection&&<Btn variant="ghost" onClick={onChangeDirection} style={{flex:'1 1 120px',justifyContent:'center'}}>⇄ Change Direction</Btn>}
           </div>
         </>
       )}
@@ -4445,10 +4456,13 @@ const StepG2GMap=({g2gUploadData,g2gConfig,g2gMappings,setG2gMappings,g2gSelecte
   // On mount: load persisted mappings + csvEmails
   useEffect(()=>{
     fetch('/api/g2g/user-mappings').then(r=>r.ok?r.json():null).then(doc=>{
-      if(doc?.csvEmails&&doc.csvEmails.length>0){
+      if(!doc)return;
+      if(doc.mappings&&Object.keys(doc.mappings).length>0){
+        setG2gMappings(doc.mappings);
+      }
+      if(doc.csvEmails&&doc.csvEmails.length>0){
         setCsvEmails(doc.csvEmails);
         csvEmailsRef.current=doc.csvEmails;
-        if(doc.mappings)setG2gMappings(doc.mappings);
       }
     }).catch(()=>{});
   },[]);
@@ -4810,8 +4824,7 @@ const StepG2GMigrate=({g2gStats,g2gDone,onRunAnother,onBack,onStart,g2gLive,onCh
                 <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
                   <Btn variant="ghost" onClick={onBack} style={{flex:'1 1 100px',justifyContent:'center'}}>← Back to Options</Btn>
                   <Btn variant="ghost" onClick={()=>onRunAnother&&onRunAnother(false)} style={{flex:'1 1 100px',justifyContent:'center'}}>New Migration</Btn>
-                  {onChangeDirection&&<Btn variant="ghost" onClick={onChangeDirection} style={{flex:'1 1 120px',justifyContent:'center'}}>⇄ Change Direction</Btn>}
-                </div>
+                      </div>
               </>
             )
           }
@@ -4850,7 +4863,6 @@ const StepG2GMigrate=({g2gStats,g2gDone,onRunAnother,onBack,onStart,g2gLive,onCh
             <Btn variant="ghost" onClick={()=>onRunAnother(false)} style={{flex:'1 1 100px',justifyContent:'center'}}>
               New Migration
             </Btn>
-            {onChangeDirection&&<Btn variant="ghost" onClick={onChangeDirection} style={{flex:'1 1 120px',justifyContent:'center'}}>⇄ Change Direction</Btn>}
           </div>
         </>
       )}
@@ -5025,26 +5037,21 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
                       const isRunningBatch=r.status==='running';
                       const live=isRunningBatch&&liveStats&&r._id===liveBatchId;
                       const doneUsers=live?liveStats.users:(isRunningBatch?r.progressUsers:r.totalUsers);
-                      // Sum conversations_processed from per-user reports when available;
-                      // fall back to migratedConversations (some legacy batches only set this).
+                      // Total conversations = how many were FOUND in the source.
+                      // Migrated conversations = how many SUCCESSFULLY migrated.
+                      // For dry-runs, both are equal (preview = "would migrate").
                       const userConvSum=(r.report?.users||r.users||[]).reduce((s,u)=>s+(u.conversations_processed||0),0);
-                      // The /reports endpoint strips the `report` field (projection:
-                      // {report:0}) to keep payloads small, so report.summary.* and
-                      // report.users are typically absent here — we rely on the
-                      // top-level migratedConversations/totalConversations fields
-                      // the backend writes alongside the report. Use || (not ??)
-                      // so zero values (e.g. userConvSum=0 because users[] is
-                      // stripped) fall through to migratedConversations instead
-                      // of pinning the display at 0.
-                      const dryRunConvs=r.report?.summary?.total_conversations||r.totalConversations||userConvSum||r.migratedConversations||0;
+                      const userMigratedSum=(r.report?.users||r.users||[]).reduce((s,u)=>s+(u.migrated_conversations??(u.status==='success'?(u.conversations_processed||0):(u.pages_created||0))),0);
+                      const totalConvs=r.report?.summary?.total_conversations||r.totalConversations||userConvSum||r.migratedConversations||0;
                       const doneConvs=live?liveStats.pages
-                        :(isRunningBatch?(r.progressConversations||r.progressPages||userConvSum||0)
-                        :(r.dryRun?dryRunConvs:(userConvSum||r.migratedConversations||0)));
+                        :(isRunningBatch?(r.progressConversations||r.progressPages||userMigratedSum||0)
+                        :(r.dryRun?totalConvs:(userMigratedSum||r.migratedConversations||0)));
                       const doneErrors=live?liveStats.errors:(isRunningBatch?r.progressErrors:(r.totalErrors??r.report?.summary?.total_errors??0));
                       const totalUsers=r.totalUsers||0;
                       return[
                         ['Users',isRunningBatch?`${doneUsers??0}/${totalUsers}`:doneUsers,false],
-                        ['Conversations',doneConvs,false],
+                        ['Total Convs',totalConvs,false],
+                        ['Migrated',doneConvs,false],
                         ['Errors',doneErrors,doneErrors>0]
                       ].map(([lbl,val,isErr],j)=>(
                         <div key={j} style={{textAlign:'center'}}>
@@ -5231,9 +5238,15 @@ function App(){
   // regardless of which step the user lands on. We pick the most recent upload
   // (the /uploads endpoints already sort by uploadTime DESC).
   useEffect(()=>{
+    // G2C + G2G both read from geminiUploads (same collection — UI export and
+    // manual ZIP upload both land here). One fetch hydrates both directions
+    // with the user's most recently active Vault upload.
     fetch('/api/uploads').then(r=>r.ok?r.json():null).then(d=>{
       const u=d?.uploads?.[0];
-      if(u&&!uploadData)setUploadData({id:u.id,original_name:u.original_name,users:u.users||[],total_users:u.total_users,total_conversations:u.total_conversations,extract_path:u.extract_path});
+      if(!u)return;
+      const shape={id:u.id,original_name:u.original_name,users:u.users||[],total_users:u.total_users,total_conversations:u.total_conversations,extract_path:u.extract_path};
+      if(!uploadData)setUploadData(shape);
+      if(!g2gUploadData)setG2gUploadData(shape);
     }).catch(()=>{});
     fetch('/api/cl2g/uploads').then(r=>r.ok?r.json():null).then(list=>{
       const u=Array.isArray(list)?list[0]:null;
@@ -5959,7 +5972,12 @@ function App(){
     await sseReady;
     try{
       const payload={
-        extractPath:g2gUploadData.extract_path,
+        // After the DB-only refactor, new uploads have no extract_path. The
+        // server now accepts uploadId (looks up the upload doc in geminiUploads
+        // and loads conversations from conversationStore). Legacy uploads with
+        // extract_path are still supported.
+        uploadId:g2gUploadData?.id||null,
+        extractPath:g2gUploadData?.extract_path||null,
         sourceAccountId:g2gConfig.sourceAccountId,
         destAccountId:g2gConfig.destAccountId,
         gemName:g2gConfig.gemName||'Gemini Conversations',

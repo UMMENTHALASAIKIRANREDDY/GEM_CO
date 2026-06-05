@@ -492,6 +492,16 @@ export async function runG2GMigration(
         status: 'pending',
         pages_created: 0,
         files_created: 0,
+        // Total conversations read for this user (source count). Set after we
+        // load them below. Reports panel + CSV "Total Conversations" column.
+        conversations_processed: 0,
+        // Migrated conversations = how many actually made it into the DOCX(s)
+        // at the destination. <= conversations_processed.
+        migrated_conversations: 0,
+        // Attachment files only (images / PDFs uploaded as standalone files).
+        // The conversation DOCX is NOT counted here — it's the conversation
+        // container, not a "file" in the Reports/CSV sense.
+        files_uploaded: 0,
         error_count: 0,
         errors: [],
       };
@@ -566,6 +576,7 @@ export async function runG2GMigration(
       }
 
       result.conversationsCount += conversations.length;
+      userRecord.conversations_processed = conversations.length;
 
       // Note: conversations already persisted to conversationStore at upload time
       // (via the shared /api/upload endpoint that serves both G2C and G2G).
@@ -577,6 +588,7 @@ export async function runG2GMigration(
         });
         userRecord.status = 'success';
         userRecord.pages_created = conversations.length;
+        userRecord.migrated_conversations = conversations.length;
         result.users.push(userRecord);
         result.migratedUsers++;
         emitProgress();
@@ -737,6 +749,8 @@ export async function runG2GMigration(
             }
             result.filesUploaded++;
             userRecord.files_created++;
+            // Real attachment (image regen) — counts toward "Files" in CSV/Reports.
+            userRecord.files_uploaded++;
             regeneratedCount++;
             onLog({ type: 'success', message: `  Gemini-regenerated: "${f.name}" (${buf.length} bytes) → ${mappedTo}'s Drive` });
           } catch (err) {
@@ -784,6 +798,10 @@ export async function runG2GMigration(
           result.filesUploaded++;
           userRecord.files_created++;
           userRecord.pages_created += batch.length;
+          // batch.length conversations just landed at the destination — that's
+          // what "Migrated Conversations" counts. The DOCX itself is NOT a file
+          // (it's the conversation container), so files_uploaded is not bumped here.
+          userRecord.migrated_conversations += batch.length;
 
           onLog({
             type: 'success',
