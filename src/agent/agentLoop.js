@@ -23,11 +23,11 @@ const PAUSE_AFTER_TOOLS = new Set([
  */
 function isFullMigrationIntent(message) {
   if (!message || typeof message !== 'string') return false;
-  const m = message.toLowerCase();
-  return (
-    /migrate|migration|move|transfer|export|import/i.test(m) &&
-    /(all|everything|full|complete|entire|end.to.end|automatically|auto|just do it|run it|start|go ahead|do it)/i.test(m)
-  ) || /^(run|start|do|execute|begin|kick off|let'?s? go|go)\b/i.test(m.trim());
+  const m = message.toLowerCase().trim();
+  // "migrate X" / "move my chats" / "transfer everything" style messages
+  if (/migrate|migration|move .{0,30}(chats?|conversations?|data)|transfer/i.test(m)) return true;
+  // Imperative run commands — but not questions ("do you...") or navigation ("go back")
+  return /^(run|start|execute|begin|kick off|let'?s go)\b/i.test(m) && !/\b(back|previous|question)\b/i.test(m);
 }
 
 /**
@@ -628,6 +628,10 @@ After each step completes, tell the user what happened in 1 sentence and ask wha
 
       // Tool call
       if (aiMsg.tool_calls && aiMsg.tool_calls.length > 0) {
+        // Stream any narration the model produced alongside the tool call —
+        // otherwise it's silently dropped and the user sees nothing between steps.
+        if (aiMsg.content) streamProgress(aiMsg.content);
+
         const call = aiMsg.tool_calls[0];
         const toolName = call.function.name;
         let toolArgs = {};
@@ -673,13 +677,17 @@ After each step completes, tell the user what happened in 1 sentence and ask wha
           result,
         });
 
-        // Keep migrationState in sync so defaultChips() uses current direction/step
+        // Keep migrationState in sync so defaultChips() and subsequent tool calls
+        // in this same turn use the current direction/step.
         if (toolName === 'select_direction' && result.selected && toolArgs.migDir) {
-          migrationState = { ...migrationState, migDir: toolArgs.migDir };
+          migrationState = { ...migrationState, migDir: toolArgs.migDir, step: result.navigatedToStep ?? migrationState.step };
         }
         if (toolName === 'navigate_to_step' && result.navigated && toolArgs.step != null) {
           migrationState = { ...migrationState, step: toolArgs.step };
         }
+        // toolCtx holds a reference captured before the loop — refresh it so the
+        // NEXT executeTool call sees the updated direction/step (prereq checks).
+        toolCtx.migrationState = migrationState;
 
         // Feed result back to AI. Only include the tool_call we actually executed —
         // if the LLM returned multiple parallel tool_calls, we'd otherwise push
@@ -690,17 +698,30 @@ After each step completes, tell the user what happened in 1 sentence and ask wha
         messages.push({ role: 'assistant', tool_calls: [call] });
         messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
 
-        // After tools that require user action, stream a progress beat and break —
-        // the agent cannot proceed until the user completes the action (auth / upload).
+        // After tools that require user action, stop the chain — the agent cannot
+        // proceed until the user completes the action (auth / upload / consent).
         if (PAUSE_AFTER_TOOLS.has(toolName)) {
-          streamProgress('_waiting_for_user_action_');
-          // Let the AI produce one final explanatory message before stopping
-          const pauseMsg = await callAI(messages, null);
-          if (pauseMsg.content) streamText(pauseMsg.content);
-          const aiChips = await generateChips(pauseMsg.content ?? '', migrationState);
+          // Let the AI produce one final explanatory message before stopping.
+          // Guarded: the widget is already on screen, so a failed LLM call here
+          // must not surface as an error — fall back to a static line instead.
+          let pauseText = '';
+          try {
+            const pauseMsg = await callAI(messages, null);
+            pauseText = pauseMsg.content ?? '';
+          } catch (e) {
+            logger.warn(`[agentLoop] pause-path callAI failed: ${e.message}`);
+            pauseText = toolName === 'show_upload_widget'
+              ? 'Drop your file in the widget above to continue.'
+              : 'Complete the connection above and we\'ll pick up right where we left off.';
+          }
+          streamText(pauseText);
+          const aiChips = isSystemTrigger ? null : await generateChips(pauseText, migrationState);
           streamQuickReplies(aiChips ?? defaultChips(migrationState));
-          await saveHistory(db, appUserId, 'user', message, migrationState?.migDir);
-          await saveHistory(db, appUserId, 'assistant', pauseMsg.content ?? '', migrationState?.migDir);
+          if (!isSystemTrigger) {
+            await saveHistory(db, appUserId, 'user', message, migrationState?.migDir);
+            await saveHistory(db, appUserId, 'assistant', pauseText, migrationState?.migDir);
+          }
+          await auditLog(sessionId, 'session_end', { appUserId, finalReplyLength: pauseText.length, toolCallCount: toolCallsMade, pausedAfter: toolName });
           return streamDone();
         }
 
