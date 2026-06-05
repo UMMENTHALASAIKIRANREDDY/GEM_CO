@@ -576,21 +576,23 @@ export async function runAgentLoop(req, res, { message, migrationState: _migrati
         : '';
 
     const agenticInstruction = (!isSystemTrigger && isFullMigrationIntent(message))
-      ? `\n\n[AGENTIC MODE — EXECUTE FULL FLOW]
-The user wants you to drive the ENTIRE migration automatically. Do NOT wait for them to say "continue" at each step.
-Execute this chain in a SINGLE TURN using tool calls:
-1. Call select_direction (if not already set)
-2. STOP if auth is missing → call show_connect_clouds_widget and explain what to connect
-3. STOP if file upload is needed → call show_upload_widget and wait for user to drop the file
-4. Call auto_map_users once upload is done
-5. Call select_mapping_users({action:"all"}) to select everyone
-6. Call set_migration_config with any folder/date/config the user mentioned
-7. Call pre_flight_check — if blockers exist, explain and STOP
-8. Call start_migration({dryRun:true}) — this triggers confirmation gate automatically
+      ? `\n\n[AGENTIC MODE — GUIDE THROUGH CHAT]
+The user wants to run a migration. Drive the conversation step by step — but ALWAYS ask the user before taking action at decision points.
 
-Between each tool call, narrate ONE SHORT sentence of what you just did (e.g. "✓ Direction set — Claude → Google.").
-Never say "I'll now..." before calling a tool — just call it and narrate AFTER.
-If a step is already done (check Current State above), SKIP it and move to the next.`
+DO automatically (no user input needed):
+- Call select_direction if direction is clear from the message
+- Call navigate_to_step to move to the right panel step
+- Call show_connect_clouds_widget if auth is missing (then STOP and wait)
+- Call show_upload_widget if a file is needed (then STOP and wait)
+
+ALWAYS ask the user before:
+- Mapping users — ask "Would you like me to auto-map by email, or do you want to pick manually?"
+- Selecting users — ask "Should I select all mapped users, or do you want to pick specific ones?"
+- Setting folder/dates — ask "What folder name do you want? Any date range?"
+- Running migration — ALWAYS require explicit confirmation ("Ready to run a dry run?")
+
+NEVER silently call auto_map_users, select_mapping_users, set_migration_config, or start_migration without the user saying so.
+After each step completes, tell the user what happened in 1 sentence and ask what they want to do next.`
       : '';
 
     const messages = [
