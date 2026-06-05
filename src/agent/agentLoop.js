@@ -8,7 +8,27 @@ import { getLogger } from '../utils/logger.js';
 import { auditLog } from './auditLogger.js';
 
 const logger = getLogger('agent:loop');
-const MAX_ITERATIONS = 8;
+const MAX_ITERATIONS = 20;
+
+// Tools that require user action to continue — agent must stop and wait after calling these
+const PAUSE_AFTER_TOOLS = new Set([
+  'show_connect_clouds_widget', // user must authenticate
+  'show_upload_widget',         // user must drag a file
+  'initiate_tenant_consent',    // user must approve in browser
+]);
+
+/**
+ * Detect if the user's message is a full migration intent —
+ * i.e. they want the agent to drive the entire flow end-to-end.
+ */
+function isFullMigrationIntent(message) {
+  if (!message || typeof message !== 'string') return false;
+  const m = message.toLowerCase();
+  return (
+    /migrate|migration|move|transfer|export|import/i.test(m) &&
+    /(all|everything|full|complete|entire|end.to.end|automatically|auto|just do it|run it|start|go ahead|do it)/i.test(m)
+  ) || /^(run|start|do|execute|begin|kick off|let'?s? go|go)\b/i.test(m.trim());
+}
 
 /**
  * Generate 3 contextual quick-reply chips using a fast LLM call.
@@ -488,6 +508,7 @@ export async function runAgentLoop(req, res, { message, migrationState: _migrati
   const sessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
   const streamText = (content) => res.write(`data: ${JSON.stringify({ type: 'text', content })}\n\n`);
+  const streamProgress = (content) => res.write(`data: ${JSON.stringify({ type: 'progress', content })}\n\n`);
   const streamEvent = (event, payload = {}) => res.write(`data: ${JSON.stringify({ type: 'ui_event', event, ...payload })}\n\n`);
   const streamQuickReplies = (replies) => streamEvent('quick_replies', { replies });
   const streamDone = () => { res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`); res.end(); };
@@ -554,8 +575,26 @@ export async function runAgentLoop(req, res, { message, migrationState: _migrati
         ? `\n\n[GREETING — RETURNING USER] Welcome ${migrationState.appUserName ?? 'back'} back by name. 1 sentence warm greeting, then immediately tell them where they left off based on current state. Be specific. No generic intros.`
         : '';
 
+    const agenticInstruction = (!isSystemTrigger && isFullMigrationIntent(message))
+      ? `\n\n[AGENTIC MODE — EXECUTE FULL FLOW]
+The user wants you to drive the ENTIRE migration automatically. Do NOT wait for them to say "continue" at each step.
+Execute this chain in a SINGLE TURN using tool calls:
+1. Call select_direction (if not already set)
+2. STOP if auth is missing → call show_connect_clouds_widget and explain what to connect
+3. STOP if file upload is needed → call show_upload_widget and wait for user to drop the file
+4. Call auto_map_users once upload is done
+5. Call select_mapping_users({action:"all"}) to select everyone
+6. Call set_migration_config with any folder/date/config the user mentioned
+7. Call pre_flight_check — if blockers exist, explain and STOP
+8. Call start_migration({dryRun:true}) — this triggers confirmation gate automatically
+
+Between each tool call, narrate ONE SHORT sentence of what you just did (e.g. "✓ Direction set — Claude → Google.").
+Never say "I'll now..." before calling a tool — just call it and narrate AFTER.
+If a step is already done (check Current State above), SKIP it and move to the next.`
+      : '';
+
     const messages = [
-      { role: 'system', content: systemPrompt + stepContextInstruction + greetingInstruction },
+      { role: 'system', content: systemPrompt + stepContextInstruction + greetingInstruction + agenticInstruction },
       ...(isSystemTrigger ? [] : history),
       { role: 'user', content: (isFirstMessage || isReturnGreet) ? 'Greet me.' : isSystemTrigger ? 'What should I do on this step?' : message },
     ];
@@ -648,6 +687,21 @@ export async function runAgentLoop(req, res, { message, migrationState: _migrati
         // skipped tool calls on the next iteration anyway.
         messages.push({ role: 'assistant', tool_calls: [call] });
         messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
+
+        // After tools that require user action, stream a progress beat and break —
+        // the agent cannot proceed until the user completes the action (auth / upload).
+        if (PAUSE_AFTER_TOOLS.has(toolName)) {
+          streamProgress('_waiting_for_user_action_');
+          // Let the AI produce one final explanatory message before stopping
+          const pauseMsg = await callAI(messages, null);
+          if (pauseMsg.content) streamText(pauseMsg.content);
+          const aiChips = await generateChips(pauseMsg.content ?? '', migrationState);
+          streamQuickReplies(aiChips ?? defaultChips(migrationState));
+          await saveHistory(db, appUserId, 'user', message, migrationState?.migDir);
+          await saveHistory(db, appUserId, 'assistant', pauseMsg.content ?? '', migrationState?.migDir);
+          return streamDone();
+        }
+
         continue;
       }
 

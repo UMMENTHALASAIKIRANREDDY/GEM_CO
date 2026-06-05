@@ -1796,6 +1796,12 @@ const AgentChat=({msgs,typing,input,onInput,onSend,onLogLineClick,onQuickReply,w
             );
           }
           if(m.role==='user')return<UserMsg key={m.id}>{m.content}</UserMsg>;
+          if(m.role==='bot-progress')return(
+            <div key={m.id} style={{display:'flex',alignItems:'center',gap:6,padding:'4px 12px',color:C.primary,fontSize:12,opacity:.85}}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><polyline points="20 6 9 17 4 12"/></svg>
+              <span>{m.content}</span>
+            </div>
+          );
           return(
             <div key={m.id}>
               <BotMsg quickReplies={m.quickReplies} onQuickReply={onQuickReply} statusCard={m.statusCard} chips={m.chips}>{m.content}</BotMsg>
@@ -6623,6 +6629,10 @@ function App(){
           try{
             const evt=JSON.parse(json);
             if(evt.type==='text'){finalText=evt.content;}
+            else if(evt.type==='progress'&&evt.content&&evt.content!=='_waiting_for_user_action_'){
+              // Stream progress narration inline as a temporary status message
+              addAgentMsg('bot-progress', evt.content, {});
+            }
             else if(evt.type==='ui_event'){
               applyUIEvent(evt);
               if(evt.event==='quick_replies'&&Array.isArray(evt.replies))finalQuickReplies=evt.replies;
