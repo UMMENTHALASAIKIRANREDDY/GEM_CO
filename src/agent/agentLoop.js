@@ -571,7 +571,7 @@ export async function runAgentLoop(req, res, { message, migrationState: _migrati
       req.session.pendingAction = null;
     }
 
-    const history = await loadHistory(db, appUserId);
+    const history = await loadHistory(db, appUserId, migrationState?.migDir);
     const isReturningUser = history.length > 0;
     await auditLog(sessionId, 'session_start', {
       appUserId,
