@@ -6547,6 +6547,20 @@ function App(){
         // "show me my connected accounts" / "which is the source?" accurately.
         googleAccountsList:(googleAccounts||[]).map(a=>({email:a.email,accountId:a.accountId,displayName:a.displayName||null})),
         msAccountsList:(msAccounts||[]).map(a=>({email:a.email,accountId:a.accountId,tenantId:a.tenantId||null,displayName:a.displayName||null})),
+        // Fetched/loaded users for the current direction's source — lets the agent
+        // resolve references like "only austin" → austin@fuzebot.co instead of
+        // claiming the user doesn't exist. Capped to keep the prompt bounded.
+        availableUsers:(()=>{
+          let src=[];
+          if(migDir==='copilot-gemini'||migDir==='claude-copilot'||migDir==='copilot-copilot'){
+            src=(msUsers||[]).map(u=>({email:(u.mail||u.userPrincipalName||'').toLowerCase(),name:u.displayName||''}));
+          }else if(migDir==='claude-gemini'){
+            src=(cl2gUploadData?.users||[]).map(u=>({email:(u.email_address||u.email||'').toLowerCase(),name:u.name||u.full_name||''}));
+          }else{ // gemini-copilot (G2C) and gemini-gemini (G2G) — Google source
+            src=(googleUsers||[]).map(u=>({email:(u.email||'').toLowerCase(),name:u.name||u.displayName||''}));
+          }
+          return src.filter(u=>u.email).slice(0,100);
+        })(),
         // G2C (gemini-copilot) fields
         ...(migDir==='gemini-copilot'||migDir===null?{
           migDone,stats,lastRunWasDry,currentBatchId,

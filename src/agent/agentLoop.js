@@ -55,6 +55,9 @@ async function generateChips(agentReply, migrationState) {
     (s.migDone || s.c2g_done || s.cl2g_done || s.g2g_done || s.cl2c_done || s.c2c_done) ? 'migration=done' : null,
     (s.live || s.c2g_live || s.cl2g_live || s.g2g_live || s.cl2c_live || s.c2c_live) ? 'migration=running' : null,
     s.justStarted ? (s.justStartedDry ? 'just_started=dry_run' : 'just_started=live_run') : null,
+    Array.isArray(s.availableUsers) && s.availableUsers.length
+      ? `fetched_users=[${s.availableUsers.slice(0, 8).map(u => u.email).join(', ')}${s.availableUsers.length > 8 ? `, +${s.availableUsers.length - 8} more` : ''}]`
+      : null,
   ].filter(Boolean).join(', ');
 
   const snippet = (agentReply || '').slice(-300);
@@ -71,6 +74,7 @@ Rules:
 - Chip 3 = a useful check/help action (e.g. "Show live progress", "Explain what happens next")
 - Max 6 words each, action-first phrasing
 - Match the migration stage: if migration=running suggest progress/status chips; if migration=done suggest report/retry/new-batch chips; if a question was asked, the first 2 chips should be its possible answers
+- If fetched_users is present and the assistant is asking which users to pick/export, make chips CONCRETE: e.g. "Export all <N> users", "Export only <first user's name>", "Search for a user" — use the real emails/names from fetched_users. NEVER produce chips like "Provide full email for X" or "Confirm X exists" when X is already in fetched_users.
 - NEVER suggest actions that are already complete (check State) or unavailable at this stage
 - NEVER suggest "dry run" if just_started=dry_run — it is already running
 - No generic filler like "Tell me more" / "What next?"
