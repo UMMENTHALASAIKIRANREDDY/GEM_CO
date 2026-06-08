@@ -687,7 +687,7 @@ async function buildConversationDocx(items, convIdx, userName, downloadedImages,
 
 // ── Build merged DOCX for batch of conversations ──────────────────────
 
-async function buildMergedBatchDocx(batchEntries, userName, uploadedFileLinks, startConvIdx) {
+export async function buildMergedBatchDocx(batchEntries, userName, uploadedFileLinks, startConvIdx) {
   const children = [];
 
   // Cover page

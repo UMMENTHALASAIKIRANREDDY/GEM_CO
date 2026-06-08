@@ -13,7 +13,6 @@ import { fileURLToPath } from 'node:url';
 import { EventEmitter }  from 'events';
 import { getLogger }     from '../../utils/logger.js';
 import { getTenantForUser } from '../../core/auth/microsoft.js';
-import { IndexWriter } from '../../agent/indexWriter.js';
 
 const dbLog    = getLogger('db:cl2c');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -415,11 +414,14 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
             // Note: conversations already persisted to conversationStore at upload time.
 
             const status = r.errors?.length ? (r.filesUploaded > 0 ? 'partial' : 'failed') : 'success';
-            // CL2C creates one OneNote page per conversation; r.filesUploaded
-            // == pages == migrated conversations. files_uploaded counts
-            // attachment files (images, PDFs) uploaded alongside, NOT pages.
+            // CL2C bundles all conversations into ONE DOCX per user (or split
+            // into _Part1/_Part2 if >5000 convs). r.filesUploaded counts the
+            // DOCX file(s), NOT individual conversations. Migrated conversation
+            // count == the total count if status is success/partial (since the
+            // DOCX contains all of them) or 0 if failed.
             const _attachmentCount = r.attachmentsUploaded || 0;
-            reportUsers.push({ email: pair.sourceEmail, destEmail: pair.destEmail, displayName: r.sourceDisplayName, status, pages_created: r.filesUploaded, conversations_processed: r.conversationsCount, migrated_conversations: r.filesUploaded, files_uploaded: _attachmentCount, error_count: r.errors.length, errors: r.errors.map(e => ({ error_message: e })), files: r.files });
+            const _migratedConvs = status === 'failed' ? 0 : (r.conversationsCount || 0);
+            reportUsers.push({ email: pair.sourceEmail, destEmail: pair.destEmail, displayName: r.sourceDisplayName, status, pages_created: r.filesUploaded, conversations_processed: r.conversationsCount, migrated_conversations: _migratedConvs, files_uploaded: _attachmentCount, error_count: r.errors.length, errors: r.errors.map(e => ({ error_message: e })), files: r.files });
 
             // Mark conversationStore rows
             if (status === 'failed') {
@@ -483,8 +485,10 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
                 const deployer = new AgentDeployer(cl2cFolder, tenantId, {
                   agentName: 'Claude Conversation Agent',
                   sourceLabel: 'Claude',
-                  notebookName: cl2cFolder,
-                  sectionName: `${cl2cFolder} Conversations`,
+                  // Universal 2-subfolder layout — agent searches the DOCX
+                  // inside the Conversations subfolder.
+                  conversationsFolder: `${cl2cFolder}/Conversations`,
+                  attachmentsFolder: `${cl2cFolder}/Migrated from Claude`,
                   appId: existingDeployment?.appId || undefined, // reuse stored GUID
                 }, appUserId);
 
@@ -517,34 +521,9 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
             }
           }
 
-          // Write GemCo/index.json to each target user's OneDrive (non-fatal)
-          if (!isDryRun) {
-            try {
-              const indexWriter = new IndexWriter(appUserId);
-              const pages = await db().collection('conversationPages').find({
-                provider: 'claude',
-                batchFolder: cl2cFolder,
-              }).toArray();
-              const byEmail = {};
-              for (const p of pages) {
-                if (!p.targetEmail || !p.oneNotePageId) continue;
-                if (!byEmail[p.targetEmail]) byEmail[p.targetEmail] = [];
-                byEmail[p.targetEmail].push({
-                  title: p.title || 'Untitled',
-                  pageId: p.oneNotePageId,
-                  migratedAt: p.migratedAt?.toISOString?.() || new Date().toISOString(),
-                });
-              }
-              for (const [email, conversations] of Object.entries(byEmail)) {
-                await indexWriter.writeIndex(email, {
-                  source: 'Claude',
-                  notebookName: cl2cFolder,
-                  sectionName: `${cl2cFolder} Conversations`,
-                  conversations,
-                }).catch(() => {});
-              }
-            } catch {}
-          }
+          // Phase 2 (OneNote -> DOCX): no migration-time index file. The
+          // conversationPages collection is no longer populated, and the
+          // agent reads the DOCX directly from "{cl2cFolder}/Conversations/".
 
           cl2cLog('done', JSON.stringify({ files, errors, users: pairs.length, batchId }));
 

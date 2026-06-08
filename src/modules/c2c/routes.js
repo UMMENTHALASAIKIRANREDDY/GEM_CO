@@ -683,11 +683,11 @@ export function createC2CRouter(deps) {
                   accountId: destDelegatedAuth.accountId,
                   agentName,
                   sourceLabel: sourceLabel || 'Copilot',
-                  notebookName: c2cFolderName,
-                  sectionName: `${c2cFolderName} Conversations`,
-                  // Must match the folder name created by migrate.js so the
-                  // agent's instructions point users to the right place.
-                  driveFolder: 'Migrated from Copilot',
+                  // Universal 2-subfolder layout (Phase 2):
+                  //   {c2cFolderName}/Conversations/...docx
+                  //   {c2cFolderName}/Migrated from Copilot/...attachments
+                  conversationsFolder: `${c2cFolderName}/Conversations`,
+                  attachmentsFolder: `${c2cFolderName}/Migrated from Copilot`,
                   declarativeAgentId: 'copilotConversationAgent',
                   starterTopic: `What did I discuss in my migrated Copilot conversations?`,
                   starterCompare: `Summarize my most recent migrated Copilot conversation`,

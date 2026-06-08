@@ -17,7 +17,6 @@ import { fetchAllEnterpriseInteractions } from '../../c2g/graph.js';
 import { isCopilotChatSurface, buildCopilotChatOnlyFilter } from '../../c2g/appClass.js';
 import { getTenantAccessToken } from '../multiTenantAuth.js';
 import { resolveDestUser, createOneDriveFolder, uploadFileToOneDrive, getDestDriveRoot } from '../destGraph.js';
-import { OneNotePagesCreator } from '../oneNotePages.js';
 import {
   extractAttachments,
   downloadBinary,
@@ -29,8 +28,16 @@ import {
   pickRegeneratedFileByName,
   cleanupRegen,
 } from '../codeRegenerator.js';
+import { buildMergedBatchDocx } from '../../c2g/migration/migrate.js';
+import {
+  CONVERSATIONS_SUBFOLDER,
+  attachmentsSubfolderName,
+  docxFileName,
+} from '../../_shared/destinationFolders.js';
 import fs from 'fs';
 import { getLogger } from '../../../utils/logger.js';
+
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
 const logger = getLogger('c2c:migrate');
 
@@ -402,17 +409,30 @@ export async function migrateC2CUserPair(
     }
 
     const customerName = runOpts.folderName || 'Copilot';
-    // OneDrive folder for migrated attachments — fixed name per product spec
-    // so the agent manifest can reference a stable path. The OneNote page
-    // footer still says "Migrated from <sourceLabel>" for source identification.
-    const sourceFolderName = 'Migrated from Copilot';
-    const pagesCreator = new OneNotePagesCreator(destTenantId, customerName, sourceLabel || 'Copilot', destDelegatedAuth);
+    // Universal 2-subfolder layout (Phase 2 — OneNote replaced with DOCX):
+    //   {customerName}/
+    //   ├── Conversations/                    ← bundled DOCX goes here
+    //   │   └── {sourceLocalPart}_Conversations.docx
+    //   └── Migrated from Copilot/            ← attachment files
+    //       ├── image1.png
+    //       └── ...
+    // OneNote was dropped because it required a manual per-user provisioning
+    // step in the M365 admin console (ONENOTE_NOT_PROVISIONED). OneDrive
+    // auto-provisions on first write.
+    const sourceFolderName = attachmentsSubfolderName('copilot');
 
-    // 8. Lazy: create attachments folder only if we actually have files to upload
+    // Eagerly create the top folder + Conversations subfolder (we always need
+    // them). Attachments subfolder is lazy because not every user has files.
+    const mainFolder = await createOneDriveFolder(destTenantId, destUser.id, customerName);
+    const convoFolder = await createOneDriveFolder(destTenantId, destUser.id, CONVERSATIONS_SUBFOLDER, mainFolder.id);
+    logger.info(`Folder layout in ${destUserEmail}'s OneDrive: ${customerName}/${CONVERSATIONS_SUBFOLDER}/, ${customerName}/${sourceFolderName}/ (lazy)`);
+
+    // 8. Lazy: create attachments folder only if we actually have files to upload.
+    //    Now nested under the main folder (was previously at OneDrive root).
     let attachmentsFolder = null;
     const ensureAttachmentsFolder = async () => {
       if (attachmentsFolder) return attachmentsFolder;
-      attachmentsFolder = await createOneDriveFolder(destTenantId, destUser.id, sourceFolderName);
+      attachmentsFolder = await createOneDriveFolder(destTenantId, destUser.id, sourceFolderName, mainFolder.id);
       return attachmentsFolder;
     };
 
@@ -608,27 +628,43 @@ export async function migrateC2CUserPair(
       // Cleanup any regen temp dir for this session
       if (sessionRegen) cleanupRegen(sessionRegen);
 
-      const conv = {
-        title,
-        createdDateTime: items[0]?.createdDateTime,
-        turns,
-      };
+      // Conversation's attachment downloads are complete. Now we just
+      // accumulate progress — the actual DOCX upload happens AFTER this loop,
+      // bundling all conversations into one file.
+      if (onProgress) onProgress({
+        pagesCreated: result.pagesCreated,
+        filesUploaded: result.filesUploaded,
+        convIdx,
+        totalConvs: sessions.size,
+      });
+    }
 
+    // ── Build + upload the bundled DOCX ────────────────────────────────
+    // After every conversation's attachments have been uploaded to OneDrive
+    // and we have `fileLinks` (source URL → OneDrive webUrl), generate ONE
+    // DOCX containing all conversations, hyperlinked to the uploaded files.
+    // Reuses C2G's `buildMergedBatchDocx` since both directions process the
+    // identical Copilot interaction schema.
+    const batchEntries = Array.from(sessions.entries());
+    if (batchEntries.length === 0) {
+      logger.warn(`No conversations to bundle for ${destUserEmail}`);
+    } else {
       try {
-        const pageId = await pagesCreator.createConversationPage(destUserEmail, conv, fileLinks);
-        result.pagesCreated++;
-        result.pages.push({ title, pageId });
-        if (onProgress) onProgress({
-          pagesCreated: result.pagesCreated,
-          filesUploaded: result.filesUploaded,
-          convIdx,
-          totalConvs: sessions.size,
-        });
+        logger.info(`Building bundled DOCX for ${destUserEmail} (${batchEntries.length} conversations)...`);
+        const userName = destUser.displayName || destUserEmail;
+        const docxBuffer = await buildMergedBatchDocx(batchEntries, userName, fileLinks, 1);
+        const docxName = docxFileName(sourceEmail || destUserEmail);
+
+        const uploaded = await uploadFileToOneDrive(
+          destTenantId, destUser.id, convoFolder.id, docxName, DOCX_MIME, docxBuffer
+        );
+        // pagesCreated semantically = conversations migrated. The DOCX is a
+        // single file but represents N conversations.
+        result.pagesCreated = batchEntries.length;
+        result.pages.push({ title: docxName, oneDriveItemId: uploaded.id, webUrl: uploaded.webUrl });
+        logger.info(`Uploaded bundled DOCX "${docxName}" (${docxBuffer.length} bytes, ${batchEntries.length} convs)`);
       } catch (err) {
-        result.errors.push(`Page "${title.slice(0, 50)}": ${err.message}`);
-        if (err.message?.includes('ONENOTE_NOT_PROVISIONED')) {
-          break;
-        }
+        result.errors.push(`DOCX build/upload failed: ${err.message}`);
       }
     }
   } catch (err) {

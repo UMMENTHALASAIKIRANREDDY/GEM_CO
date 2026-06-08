@@ -18,7 +18,6 @@ import { VaultReader } from './vaultReader.js';
 import { VaultExporter } from './vaultExporter.js';
 import { AssetScanner } from './assetScanner.js';
 import { ResponseGenerator } from './responseGenerator.js';
-import { PagesCreator } from './pagesCreator.js';
 import { DriveFileMatcher } from './driveFileMatcher.js';
 import { FileCorrelator } from './fileCorrelator.js';
 import { AuditLogClient } from './auditLogClient.js';
@@ -26,9 +25,20 @@ import { checkPermissions } from './permissionsChecker.js';
 import { ReportWriter } from './reportWriter.js';
 import { CheckpointManager } from '../../utils/checkpoint.js';
 import { AgentDeployer } from '../../agent/agentDeployer.js';
-import { IndexWriter } from '../../agent/indexWriter.js';
 import { getLogger } from '../../utils/logger.js';
 import { runAgentLoop } from '../../agent/agentLoop.js';
+import { buildMergedBatchDocx } from '../g2g/migration/migrate.js';
+import {
+  CONVERSATIONS_SUBFOLDER,
+  attachmentsSubfolderName,
+  docxFileName,
+} from '../_shared/destinationFolders.js';
+import {
+  createOneDriveFolderDelegated,
+  uploadFileToOneDriveDelegated,
+} from '../_shared/oneDriveDelegated.js';
+
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 import { auditEmitter } from '../../agent/auditLogger.js';
 import { provisionUser, provisionUsers } from './userProvisioner.js';
 
@@ -1029,8 +1039,11 @@ export function createG2CRouter(deps) {
 
       const report = new ReportWriter();
       const generator = new ResponseGenerator();
-      const creator = new PagesCreator(tenant_id, customer_name, appUserId);
       const checkpoint = new CheckpointManager(batchId);
+      // Top-level folder name in each destination user's OneDrive.
+      // Used by both the main migration loop and the retry path.
+      const topFolderName = customer_name || 'GemCo';
+      const filesSubfolderName = attachmentsSubfolderName('gemini');
 
       let progressUsers = 0, progressPages = 0, progressErrors = 0;
 
@@ -1100,7 +1113,9 @@ export function createG2CRouter(deps) {
             }
           }
 
-          // Auto-provision OneDrive + SharePoint personal site before writing pages
+          // Auto-provision OneDrive + SharePoint personal site before writing.
+          // Now strictly required (OneNote no longer in play), but OneDrive
+          // auto-provisions on first write, so this is best-effort.
           try {
             const provResult = await provisionUser(appUserId, m365Email);
             if (provResult.provisioned) emit('info', `  OneDrive provisioned for ${m365Email}`);
@@ -1109,9 +1124,28 @@ export function createG2CRouter(deps) {
             emit('warn', `  Pre-provision failed for ${m365Email}: ${e.message} — continuing anyway`);
           }
 
-          let oneNoteBlocked = false;
+          // Create the universal 2-subfolder layout in this user's OneDrive
+          // BEFORE processing any conversation (so regen uploads have a place
+          // to go).
+          let mainFolder = null, convoFolder = null, filesFolder = null;
+          try {
+            const tokenForFolders = await getValidToken(appUserId);
+            mainFolder = await createOneDriveFolderDelegated(tokenForFolders, m365Email, topFolderName);
+            convoFolder = await createOneDriveFolderDelegated(tokenForFolders, m365Email, CONVERSATIONS_SUBFOLDER, mainFolder.id);
+            filesFolder = await createOneDriveFolderDelegated(tokenForFolders, m365Email, filesSubfolderName, mainFolder.id);
+            emit('info', `  Folder layout: ${topFolderName}/${CONVERSATIONS_SUBFOLDER}/, ${topFolderName}/${filesSubfolderName}/`);
+          } catch (folderErr) {
+            errors.push({ conversation: '', error: `Folder setup failed: ${folderErr.message}` });
+            emit('error', `  Folder setup failed for ${m365Email}: ${folderErr.message}`);
+            throw folderErr;  // bubble up; user record below records the failure
+          }
+
+          // Collects each conversation (with Gemini responses + driveFile
+          // hyperlinks resolved) so we can bundle them all into one DOCX
+          // after the loop completes.
+          const conversationsForDocx = [];
+
           for (const conv of enrichedConversations) {
-            if (oneNoteBlocked) break;
             try {
               let convWithResponses = skip_ai_response ? conv : await generator.generate(conv, skip_followups);
 
@@ -1158,8 +1192,7 @@ export function createG2CRouter(deps) {
                 const { recoverFilesFromConversation, cleanupWorkDirs } = await import('../gemini/fileRegenerator.js');
                 const recovered = await recoverFilesFromConversation(convWithResponses);
                 if (recovered.length > 0) {
-                  const fs = await import('fs');
-                  const msToken = await getValidToken(appUserId);
+                  const fsMod = await import('fs');
                   let regenCount = 0;
                   for (const f of recovered) {
                     if (f._failed) {
@@ -1168,34 +1201,28 @@ export function createG2CRouter(deps) {
                       continue;
                     }
                     try {
-                      const buf = f.buffer || fs.default.readFileSync(f.fullPath);
+                      const buf = f.buffer || fsMod.default.readFileSync(f.fullPath);
                       const safeName = (f.name || 'file').replace(/[\\/:*?"<>|]/g, '_');
-                      const encoded = encodeURIComponent(`GeminiMigration/${safeName}`);
-                      const url = `https://graph.microsoft.com/v1.0/users/${m365Email}/drive/root:/${encoded}:/content`;
-                      const upRes = await fetch(url, {
-                        method: 'PUT',
-                        headers: { Authorization: `Bearer ${msToken}`, 'Content-Type': f.mime || 'application/octet-stream' },
-                        body: buf,
-                      });
-                      if (!upRes.ok) {
-                        emit('warn', `    Gemini regen upload failed for "${f.name}": ${upRes.status}`);
-                        continue;
-                      }
-                      const upData = await upRes.json();
-                      const webUrl = upData.webUrl || upData['@microsoft.graph.downloadUrl'] || null;
+                      // Upload to the universal "Migrated from Gemini/" subfolder
+                      // (used to be a top-level "GeminiMigration/" folder at
+                      // OneDrive root — now nested inside {customerName}/).
+                      const freshToken = await getValidToken(appUserId);
+                      const uploaded = await uploadFileToOneDriveDelegated(
+                        freshToken, m365Email, filesFolder.id, safeName, f.mime || 'application/octet-stream', buf
+                      );
                       const turn = convWithResponses.turns?.[f.turnIndex];
                       if (turn) {
                         if (!turn.driveFiles) turn.driveFiles = [];
                         turn.driveFiles.push({
                           fileName: f.name,
                           mimeType: f.mime,
-                          oneDriveUrl: webUrl,
+                          oneDriveUrl: uploaded.webUrl,
                           _imageBuffer: (f.mime || '').startsWith('image/') ? buf : null,
                         });
                       }
                       regenCount++;
                       filesUploaded++;
-                      emit('success', `    Gemini-regenerated: "${f.name}" (${buf.length} bytes) → ${m365Email}'s OneDrive`);
+                      emit('success', `    Gemini-regenerated: "${f.name}" (${buf.length} bytes) → ${filesSubfolderName}/`);
                     } catch (e) {
                       emit('warn', `    Gemini regen upload error for "${f.name}": ${e.message}`);
                       errors.push({ conversation: conv.title, error: `Gemini regen upload "${f.name}": ${e.message}` });
@@ -1208,21 +1235,41 @@ export function createG2CRouter(deps) {
                 emit('warn', `  Gemini file recovery skipped for "${conv.title}": ${err.message}`);
               }
 
-              await creator.createPage(m365Email, convWithResponses, visualReports[gEmail] || []);
+              // Accumulate processed conversation for the bundled DOCX (built
+              // after the loop). Previously we'd call creator.createPage() per
+              // conversation; now we collect them all and write one DOCX.
+              conversationsForDocx.push(convWithResponses);
               pagesCreated++;
-              emit('success', `  Page created: ${conv.title?.slice(0, 60)}`);
+              emit('success', `  Prepared: ${conv.title?.slice(0, 60)}`);
             } catch (err) {
-              if (err.message.startsWith('ONENOTE_NOT_PROVISIONED:')) {
-                oneNoteBlocked = true;
-                const cleanMsg = err.message.replace(/^ONENOTE_NOT_PROVISIONED:[^\s]+ — /, '');
-                errors.push({ conversation: conv.title, error: cleanMsg });
-                dbLog.error(`OneNote not provisioned for ${m365Email} — skipping remaining conversations`);
-                emit('error', `  OneNote not provisioned for ${m365Email} — ${cleanMsg}`);
-              } else {
-                errors.push({ conversation: conv.title, error: err.message });
-                dbLog.error(`Page creation failed for "${conv.title}" → ${err.message}`);
-                emit('error', `  Failed: ${conv.title?.slice(0, 40)} — ${err.message}`);
-              }
+              errors.push({ conversation: conv.title, error: err.message });
+              dbLog.error(`Conversation processing failed for "${conv.title}" → ${err.message}`);
+              emit('error', `  Failed: ${conv.title?.slice(0, 40)} — ${err.message}`);
+            }
+          }
+
+          // ── Build + upload the bundled DOCX ────────────────────────────
+          // After every conversation in this user's vault has had its
+          // attachments uploaded + driveFiles resolved, generate ONE DOCX
+          // and upload it to {topFolderName}/Conversations/.
+          // Reuses G2G's buildMergedBatchDocx (same Gemini source schema).
+          if (conversationsForDocx.length > 0 && convoFolder) {
+            try {
+              emit('info', `  Building bundled DOCX for ${m365Email} (${conversationsForDocx.length} conversations)...`);
+              const docxBuffer = await buildMergedBatchDocx(conversationsForDocx, gEmail, 1);
+              const docxName = docxFileName(gEmail);
+              const freshToken = await getValidToken(appUserId);
+              await uploadFileToOneDriveDelegated(
+                freshToken, m365Email, convoFolder.id, docxName, DOCX_MIME, docxBuffer
+              );
+              emit('success', `  Uploaded bundled DOCX "${docxName}" (${docxBuffer.length} bytes, ${conversationsForDocx.length} convs)`);
+            } catch (docxErr) {
+              errors.push({ conversation: '', error: `DOCX build/upload failed: ${docxErr.message}` });
+              dbLog.error(`DOCX upload failed for ${m365Email}: ${docxErr.message}`);
+              emit('error', `  DOCX upload failed for ${m365Email}: ${docxErr.message}`);
+              // Reset pagesCreated to 0 — if the DOCX never landed, no
+              // conversations were actually migrated for this user.
+              pagesCreated = 0;
             }
           }
 
@@ -1333,37 +1380,13 @@ export function createG2CRouter(deps) {
         }
       }
 
-      // Write GemCo/index.json to each target user's OneDrive
-      try {
-        emit('info', 'Writing conversation index to OneDrive...');
-        const indexWriter = new IndexWriter(appUserId);
-        const pages = await db().collection('conversationPages').find({
-          batchFolder: customer_name,
-        }).toArray();
-
-        const byEmail = {};
-        for (const p of pages) {
-          if (!p.targetEmail || !p.oneNotePageId) continue;
-          if (!byEmail[p.targetEmail]) byEmail[p.targetEmail] = [];
-          byEmail[p.targetEmail].push({
-            title: p.title || 'Untitled',
-            pageId: p.oneNotePageId,
-            migratedAt: p.migratedAt?.toISOString?.() || new Date().toISOString(),
-          });
-        }
-
-        for (const [email, conversations] of Object.entries(byEmail)) {
-          await indexWriter.writeIndex(email, {
-            source: 'Gemini',
-            notebookName: `${customer_name} Conversations`,
-            sectionName: `${customer_name} Conversations`,
-            conversations,
-          }).catch(e => logger.warn(`IndexWriter failed for ${email}: ${e.message}`));
-        }
-        emit('info', 'Conversation index written to OneDrive.');
-      } catch (err) {
-        emit('warn', `Index write failed (non-fatal): ${err.message}`);
-      }
+      // Phase 2 (OneNote -> DOCX): the migration-time conversation index is
+      // no longer written. It was built from `conversationPages` rows that
+      // OneNote page creation populated — those rows don't exist anymore
+      // since we now write a single bundled DOCX per user. The agent can
+      // still pick up cross-tab "load this conversation" intents via
+      // `GemCo/cfz_pending.json` which the UI writes on demand (no
+      // migration-time index file needed).
 
       await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'gemini-copilot', ...reportUpdate } });
       dbLog.info(`migrationWorkspaces.update — batch ${batchId} status=completed (${reportUpdate.migratedConversations} pages, ${reportUpdate.totalUsers} users)`);
@@ -1443,9 +1466,9 @@ export function createG2CRouter(deps) {
     // load conversations from conversationStore per-user instead.
     const reader = (extractPath && fs.existsSync(extractPath)) ? new VaultReader(extractPath) : null;
     const generator = new ResponseGenerator();
-    const creator = new PagesCreator(tenantId, customerName, appUserId);
     const report = new ReportWriter();
     const reverseMap = Object.fromEntries(Object.entries(userMappings).map(([g, m]) => [m, g]));
+    const topFolderName = customerName || 'GemCo';
 
     for (const [m365Email, failedTitles] of Object.entries(retryTargets)) {
       const gEmail = reverseMap[m365Email] || m365Email;
@@ -1469,15 +1492,37 @@ export function createG2CRouter(deps) {
         const toRetry = allConversations.filter(c => titleSet.has(c.title));
         if (toRetry.length === 0) { emit('warn', `  No matching conversations found for ${m365Email} — skipping`); continue; }
 
+        // Build a retry DOCX containing JUST the conversations that failed
+        // last time. Uploaded as a separate file (suffix _Retry) so it
+        // doesn't overwrite the original bundled DOCX.
+        const conversationsForDocx = [];
         for (const conv of toRetry) {
           try {
             const convWithResponses = await generator.generate(conv, false);
-            await creator.createPage(m365Email, convWithResponses, []);
+            conversationsForDocx.push(convWithResponses);
             pagesCreated++;
             emit('success', `  Retried: ${conv.title?.slice(0, 60)}`);
           } catch (err) {
             errors.push({ conversation: conv.title, error: err.message });
             emit('error', `  Still failing: ${conv.title?.slice(0, 40)} — ${err.message}`);
+          }
+        }
+
+        if (conversationsForDocx.length > 0) {
+          try {
+            const tokenForRetry = await getValidToken(appUserId);
+            const mainFolder = await createOneDriveFolderDelegated(tokenForRetry, m365Email, topFolderName);
+            const convoFolder = await createOneDriveFolderDelegated(tokenForRetry, m365Email, CONVERSATIONS_SUBFOLDER, mainFolder.id);
+            const docxBuffer = await buildMergedBatchDocx(conversationsForDocx, gEmail, 1);
+            const localPart = (gEmail || 'user').split('@')[0].replace(/[\\/:*?"<>|]/g, '_');
+            const retryDocxName = `${localPart}_Conversations_Retry.docx`;
+            const freshToken = await getValidToken(appUserId);
+            await uploadFileToOneDriveDelegated(freshToken, m365Email, convoFolder.id, retryDocxName, DOCX_MIME, docxBuffer);
+            emit('success', `  Retry DOCX uploaded: ${retryDocxName} (${conversationsForDocx.length} convs)`);
+          } catch (docxErr) {
+            errors.push({ conversation: '', error: `Retry DOCX upload failed: ${docxErr.message}` });
+            emit('error', `  Retry DOCX upload failed for ${m365Email}: ${docxErr.message}`);
+            pagesCreated = 0;
           }
         }
 

@@ -59,7 +59,7 @@ function dividerParagraph() {
 
 // ── Build merged ALL conversations DOCX ─────────────────────────────────────
 
-async function buildAllConversationsDocx(conversations, userName) {
+export async function buildAllConversationsDocx(conversations, userName) {
   const children = [];
 
   // ── Cover ──────────────────────────────────────────────────────────────────

@@ -244,7 +244,7 @@ function buildDriveFileParagraphs(driveFiles) {
   return paras;
 }
 
-async function buildMergedBatchDocx(batch, userEmail, startConvIdx) {
+export async function buildMergedBatchDocx(batch, userEmail, startConvIdx) {
   const children = [];
 
   children.push(
