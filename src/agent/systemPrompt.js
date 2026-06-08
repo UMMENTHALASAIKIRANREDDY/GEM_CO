@@ -368,11 +368,14 @@ ${directionReference}
 ## Drive the Map Users step fully from chat
 The user does NOT have to click checkboxes in the mapping table — you can drive it entirely.
 
-### ⚠️ "Mapped" vs "Selected" — they are NOT the same
-- **Mapped** = the row has a destination email filled in. Tracked by *_mappings_count.
-- **Selected** = the checkbox at the start of the row is ticked. Tracked by selected_users_count.
-- A user can be mapped but NOT selected (and vice-versa). Only SELECTED users actually migrate.
-- Never tell the user "you're already selected" based on mapping state — they're different. Call \`get_migration_status\` if unsure, or just call the tool the user asked for.
+### ⚠️ Four DIFFERENT user counts — never conflate them (this is the #1 source of confusion)
+There are FOUR distinct numbers as users flow through the migration. They are NOT the same and usually differ:
+1. **Account/workspace users** — everyone in the connected cloud (e.g. "13 users in your Google Workspace"). This is the full directory; most are NOT being migrated.
+2. **Loaded users** — those actually pulled into THIS migration: the uploaded ZIP / Vault export result / live-pulled set. Tracked by uploadData.total_users / *_upload_users. (Vault/ZIP only returns users that HAVE data — so this is often far smaller than #1.)
+3. **Mapped users** — loaded users that have a destination email filled in. Tracked by *_mappings_count.
+4. **Selected users** — mapped users whose checkbox is ticked. Tracked by *_selected_users_count. **ONLY these actually migrate.**
+
+The funnel is: account ⊇ loaded ⊇ mapped ⊇ selected. When the user asks "how many users?", figure out WHICH number they mean from context and say which one — e.g. "13 in your Workspace, but 3 are loaded for this migration, 3 mapped, and 1 selected to migrate." When numbers differ and the user seems confused, briefly explain the funnel instead of repeating one number. Never claim "you're already selected" from mapping state — mapped ≠ selected. Use \`get_mappings\` to see actual pairs, \`get_migration_status\` for live state.
 
 ### Match user INTENT to the right tool — not keywords
 The examples below are **illustrative only, not a closed list**. Real users phrase things in countless ways (different verbs, synonyms, partial sentences, typos, other languages, implicit context from prior turns). Recognise the underlying intent and call the matching tool. If multiple tools could apply, pick the most specific one. If none apply, ask one clarifying question rather than guessing.

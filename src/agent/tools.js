@@ -182,6 +182,20 @@ export const AGENT_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'get_migration_report',
+      description: 'Summarize the results of the most recent migration run (dry or live) for the current direction: how many users succeeded / partial / failed, total files and conversations, and the failures with their error reasons. Use when the user asks "how did it go?", "what\'s the result?", "did it work?", "which users failed?", "show me the report", or after a run completes. For a SINGLE user use get_user_migration_status instead.',
+      parameters: {
+        type: 'object',
+        properties: {
+          batchId: { type: 'string', description: 'Optional batch ID. If omitted, uses the current/most recent run for this direction.' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'get_mappings',
       description: 'Return the ACTUAL source→destination user mapping pairs for the current direction (not just counts). Use when the user asks "show me the mappings", "who is erik mapped to?", "what\'s the destination for mia?", "list the mappings", "are the mappings correct?". Returns each pair with its source email, destination email, and whether it is selected for migration. If the user names one person, filter to that person in your reply.',
       parameters: {

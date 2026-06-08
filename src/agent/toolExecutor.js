@@ -544,6 +544,63 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
       }
     }
 
+    case 'get_migration_report': {
+      // Whole-batch results so the agent can summarise a run: who succeeded /
+      // failed, file counts, and the failures with reasons. Works for all
+      // directions (report.users[] / users[] are consistent in migrationWorkspaces).
+      try {
+        const batchId = args?.batchId || session.currentBatchId;
+        const query = { appUserId };
+        if (batchId) query._id = batchId;
+        if (migDir && !batchId) query.migDir = migDir; // latest run for this direction
+        const batch = await db.collection('migrationWorkspaces')
+          .find(query)
+          .sort({ startTime: -1 })
+          .limit(1)
+          .toArray()
+          .then(a => a[0]);
+        if (!batch) return { found: false, note: 'No migration run found yet for this account/direction. Run a dry run or migration first.' };
+
+        const users = batch.report?.users || batch.users || [];
+        const norm = users.map(u => ({
+          email: u.email || u.sourceEmail || '',
+          destEmail: u.destEmail || '',
+          status: u.status || 'unknown', // success | partial | failed
+          conversations: u.conversations_processed ?? u.conversationCount ?? 0,
+          files: u.pages_created ?? (u.files || []).length ?? 0,
+          errorCount: u.error_count ?? (u.errors || []).length ?? 0,
+          errors: (u.errors || []).map(e => e.error_message || e).slice(0, 3),
+        }));
+        const tally = (s) => norm.filter(u => u.status === s).length;
+        const failed = norm.filter(u => u.status === 'failed' || u.errorCount > 0);
+        return {
+          found: true,
+          batchId: batch._id,
+          migDir: batch.migDir,
+          batchStatus: batch.status,
+          dryRun: batch.dryRun ?? batch.report?.config?.dryRun ?? null,
+          startTime: batch.startTime,
+          endTime: batch.endTime,
+          summary: {
+            totalUsers: norm.length,
+            succeeded: tally('success'),
+            partial: tally('partial'),
+            failed: tally('failed'),
+            totalFiles: norm.reduce((s, u) => s + (u.files || 0), 0),
+            totalConversations: norm.reduce((s, u) => s + (u.conversations || 0), 0),
+            totalErrors: norm.reduce((s, u) => s + (u.errorCount || 0), 0),
+          },
+          // Cap rows to keep the response bounded; failures listed first.
+          users: [...failed, ...norm.filter(u => !failed.includes(u))].slice(0, 40),
+          note: failed.length > 0
+            ? `${failed.length} user(s) had errors — list them with reasons and offer Retry failed.`
+            : 'All users completed without errors.',
+        };
+      } catch (e) {
+        return { error: e.message };
+      }
+    }
+
     case 'explain_log': {
       const line = args.log_line ?? '';
       const isErr = /error|fail|exception/i.test(line);
