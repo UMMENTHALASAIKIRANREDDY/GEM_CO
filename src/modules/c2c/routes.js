@@ -145,6 +145,13 @@ export function createC2CRouter(deps) {
         const { deleteByTenant } = await import('../_shared/conversationStore.js');
         await deleteByTenant(appUserId, tenantId);
       } catch (e) { /* non-fatal */ }
+      // Wipe the saved C2C mapping doc + C2C session state. The mapping doc
+      // stores sourceTenantId/destTenantId but the read endpoint doesn't
+      // filter by them, so leaving the doc behind causes the User Mapping
+      // screen to show stale destinations after the user reconnects a
+      // different tenant.
+      await db().collection('userMappings').deleteOne({ appUserId, migDir: 'copilot-copilot' });
+      await db().collection('c2cSessions').deleteOne({ appUserId });
       res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ error: e.message });

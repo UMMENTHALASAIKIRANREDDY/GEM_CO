@@ -470,6 +470,14 @@ app.post('/api/auth/google/disconnect', requireAuth, async (req, res) => {
     }
     if (!getGoogleAccounts(appUserId).length) {
       await db().collection('cloudMembers').deleteMany({ appUserId, source: 'google' });
+      // Same fix as MS disconnect — wipe saved mappings + C2C session UI
+      // state so a fresh Google connect into a different domain doesn't
+      // show stale destinations from the prior cloud.
+      const mapWipe = await db().collection('userMappings').deleteMany({ appUserId });
+      const sessWipe = await db().collection('c2cSessions').deleteMany({ appUserId });
+      if (mapWipe.deletedCount > 0 || sessWipe.deletedCount > 0) {
+        console.log(`[disconnect google] cleared ${mapWipe.deletedCount} userMappings + ${sessWipe.deletedCount} c2cSessions for appUserId=${appUserId}`);
+      }
       // Belt-and-suspenders: clear all vault-source conversationStore rows
       // when no Google account remains for this user.
       const { getDb } = await import('./src/db/mongo.js');
@@ -551,6 +559,16 @@ app.post('/api/auth/ms/disconnect', requireAuth, async (req, res) => {
       );
       if (c2cWipe.modifiedCount > 0) {
         console.log(`[disconnect ms] soft-revoked ${c2cWipe.modifiedCount} C2C tenant consent(s) for appUserId=${appUserId}`);
+      }
+      // Wipe ALL saved user-mapping docs + C2C session UI state. Mappings are
+      // keyed only by (appUserId, migDir) with no tenant scope, so without
+      // this they survive a reconnect into a different tenant and the User
+      // Mapping screen shows stale destinations from the prior cloud
+      // (the "gajha.com" bug).
+      const mapWipe = await db().collection('userMappings').deleteMany({ appUserId });
+      const sessWipe = await db().collection('c2cSessions').deleteMany({ appUserId });
+      if (mapWipe.deletedCount > 0 || sessWipe.deletedCount > 0) {
+        console.log(`[disconnect ms] cleared ${mapWipe.deletedCount} userMappings + ${sessWipe.deletedCount} c2cSessions for appUserId=${appUserId}`);
       }
       // Belt-and-suspenders: clear all graph-source conversationStore rows
       // when no MS account remains (covers tenantId-less rows from prior sessions)
