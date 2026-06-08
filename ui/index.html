@@ -1283,11 +1283,7 @@ const StepMigrate=({stats,done,live,lastRunWasDry,batchId,onStartLive,onRunAnoth
           </div>
 
           {lastRunWasDry&&<DryRunReportCard migDir="gemini-copilot"/>}
-          {!lastRunWasDry&&(
-            <Card style={{background:C.tint,border:`1px solid ${C.primary}30`,marginBottom:16,padding:'14px 16px',fontSize:13}}>
-              <b>What's next:</b> Users can open <b>Microsoft Copilot</b> or <b>Teams</b> — the agent is pinned in their sidebar with all migrated conversations.
-            </Card>
-          )}
+          {!lastRunWasDry&&<CopilotAgentInstallPanel/>}
 
           {/* Batch migration actions */}
           <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
@@ -3541,6 +3537,7 @@ const StepCL2CMigrate=({cl2cStats,cl2cDone,onRunAnother,onBack,onStart,cl2cLive,
             ))}
           </div>
           {lastRunWasDry&&<DryRunReportCard migDir="claude-copilot"/>}
+          {!lastRunWasDry&&<CopilotAgentInstallPanel/>}
           <div style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:16}}>
             {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{flex:'1 1 140px',justifyContent:'center'}}><IcoRocket s={14}/> Start Live Migration</Btn>}
             <Btn variant="ghost" onClick={onBack} style={{flex:'1 1 100px',justifyContent:'center'}}>← Options</Btn>
