@@ -16,6 +16,10 @@ import {
   uploadFileToDrive,
 } from '../../c2g/googleService.js';
 import { getUserData, extractMessageText } from '../../cl2g/zipParser.js';
+import {
+  CONVERSATIONS_SUBFOLDER,
+  attachmentsSubfolderName,
+} from '../../_shared/destinationFolders.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -361,7 +365,17 @@ export async function migrateUserPair({
 
     const folderName = opts.folderName || 'ClaudeChats';
     const auth = getServiceAccountAuth(destUserEmail);
+    // Universal 2-subfolder pattern (see _shared/destinationFolders.js).
+    // CL2G doesn't currently extract standalone attachments from Claude
+    // exports (media is inlined into the DOCX), so the "Migrated from Claude"
+    // folder will stay empty for now — created anyway for layout parity with
+    // every other direction and as a placeholder for future attachment work.
+    const filesSubfolderName = attachmentsSubfolderName('claude');
     const mainFolder = await createDriveFolder(auth, folderName);
+    const convoFolder = await createDriveFolder(auth, CONVERSATIONS_SUBFOLDER, mainFolder.id);
+    // eslint-disable-next-line no-unused-vars
+    const filesFolder = await createDriveFolder(auth, filesSubfolderName, mainFolder.id);
+    console.log(`[CL2G] Folder layout: ${folderName}/ → ${CONVERSATIONS_SUBFOLDER}/, ${filesSubfolderName}/ (empty for now)`);
 
     // Apply date filter
     let filteredConvs = conversations;
@@ -402,7 +416,7 @@ export async function migrateUserPair({
           const uploaded = await uploadFileToDrive(
             auth, docxName,
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            buffer, mainFolder.id
+            buffer, convoFolder.id
           );
 
           result.filesUploaded++;

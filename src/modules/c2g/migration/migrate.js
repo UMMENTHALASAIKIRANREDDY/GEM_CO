@@ -21,6 +21,10 @@ import {
   createDriveFolder,
   uploadFileToDrive,
 } from "../googleService.js";
+import {
+  CONVERSATIONS_SUBFOLDER,
+  attachmentsSubfolderName,
+} from "../../_shared/destinationFolders.js";
 import { getCopilotInteractionsForUser } from "../copilotService.js";
 import { createSourceGraphClient } from "../copilotService.js";
 import {
@@ -1258,12 +1262,14 @@ export async function migrateUserPair({
 
     const auth = getServiceAccountAuth(destUserEmail);
     const mainFolder = await createDriveFolder(auth, folderName);
-    // Two subfolders: chats as Google Docs go to "Copilot Conversations",
-    // every attached/generated file goes to "Migrated from Copilot". The
-    // DOCX hyperlinks cross-link the two via Google Drive webViewLinks.
-    const convoFolder = await createDriveFolder(auth, "Copilot Conversations", mainFolder.id);
-    const filesFolder = await createDriveFolder(auth, "Migrated from Copilot", mainFolder.id);
-    console.log(`[C2G] Folder layout: ${folderName}/ → Copilot Conversations/, Migrated from Copilot/`);
+    // Universal 2-subfolder pattern (see _shared/destinationFolders.js):
+    // - "Conversations/" → bundled DOCXs (one per user)
+    // - "Migrated from Copilot/" → attachment files + regenerated images
+    // The DOCX hyperlinks cross-link the two via Google Drive webViewLinks.
+    const filesSubfolderName = attachmentsSubfolderName('copilot');
+    const convoFolder = await createDriveFolder(auth, CONVERSATIONS_SUBFOLDER, mainFolder.id);
+    const filesFolder = await createDriveFolder(auth, filesSubfolderName, mainFolder.id);
+    console.log(`[C2G] Folder layout: ${folderName}/ → ${CONVERSATIONS_SUBFOLDER}/, ${filesSubfolderName}/`);
 
     // ── Split conversations into batches (100 per file) for memory efficiency ──
     const BATCH_SIZE = 100;

@@ -27,6 +27,10 @@ import {
   recoverFilesFromConversation,
   cleanupWorkDirs,
 } from '../../gemini/fileRegenerator.js';
+import {
+  CONVERSATIONS_SUBFOLDER,
+  attachmentsSubfolderName,
+} from '../../_shared/destinationFolders.js';
 
 // Google Docs editor MIME → export format
 const EXPORT_FORMATS = {
@@ -347,12 +351,13 @@ async function buildMergedBatchDocx(batch, userEmail, startConvIdx) {
   return Packer.toBuffer(doc);
 }
 
-async function createDriveFolder(auth, folderName) {
+async function createDriveFolder(auth, folderName, parentFolderId) {
   const drive = google.drive({ version: 'v3', auth });
   const res = await drive.files.create({
     requestBody: {
       name: folderName,
       mimeType: 'application/vnd.google-apps.folder',
+      parents: parentFolderId ? [parentFolderId] : undefined,
     },
     fields: 'id, name, webViewLink',
   });
@@ -611,12 +616,19 @@ export async function runG2GMigration(
         continue;
       }
 
-      // Create destination folder in the user's own Drive
+      // Create destination folder structure in the user's own Drive.
+      // Universal 2-subfolder pattern (see _shared/destinationFolders.js):
+      //   {folderName}/
+      //   ├── Conversations/          ← bundled DOCXs go here
+      //   └── Migrated from Gemini/   ← regenerated images / attachments
       const folderName = opts?.gemName || 'Gemini Conversations';
-      let mainFolder;
+      const filesSubfolderName = attachmentsSubfolderName('gemini');
+      let mainFolder, convoFolder, filesFolder;
       try {
         mainFolder = await createDriveFolder(destUserAuth, folderName);
-        onLog({ type: 'info', message: `Created folder "${folderName}" in ${mappedTo}'s Drive` });
+        convoFolder = await createDriveFolder(destUserAuth, CONVERSATIONS_SUBFOLDER, mainFolder.id);
+        filesFolder = await createDriveFolder(destUserAuth, filesSubfolderName, mainFolder.id);
+        onLog({ type: 'info', message: `Created folder layout in ${mappedTo}'s Drive: ${folderName}/ → ${CONVERSATIONS_SUBFOLDER}/, ${filesSubfolderName}/` });
       } catch (err) {
         const errMsg = `${sourceEmail}: folder create failed in ${mappedTo}'s Drive — ${err.message}`;
         result.errors.push(errMsg);
@@ -736,7 +748,7 @@ export async function runG2GMigration(
           }
           try {
             const buf = f.buffer || fs.readFileSync(f.fullPath);
-            const uploaded = await uploadFileToDrive(destUserAuth, f.name, f.mime, buf, mainFolder.id);
+            const uploaded = await uploadFileToDrive(destUserAuth, f.name, f.mime, buf, filesFolder.id);
             const turn = conv.turns?.[f.turnIndex];
             if (turn) {
               if (!turn.driveFiles) turn.driveFiles = [];
@@ -792,7 +804,7 @@ export async function runG2GMigration(
             docxName,
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             docxBuffer,
-            mainFolder.id
+            convoFolder.id
           );
 
           result.filesUploaded++;
