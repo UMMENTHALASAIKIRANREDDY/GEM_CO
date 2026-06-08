@@ -309,6 +309,10 @@ export function createC2CRouter(deps) {
       const users = (batch.users || batch.report?.users || []).map(u => ({
         email: u.email, destEmail: u.destEmail,
         status: u.status || 'pending',
+        conversations_processed: u.conversations_processed ?? u.pages_created ?? 0,
+        migrated_conversations: u.migrated_conversations
+          ?? (u.status === 'success' ? (u.conversations_processed ?? u.pages_created ?? 0) : (u.pages_created ?? 0)),
+        files_uploaded: u.files_uploaded ?? u.files_created ?? 0,
         pages_created: u.pages_created || u.files_created || 0,
         files_created: u.files_created || 0,
         error_count: u.error_count || (u.errors?.length || 0),
@@ -320,6 +324,7 @@ export function createC2CRouter(deps) {
         status: batch.status, dryRun: batch.dryRun,
         startTime: batch.startTime, endTime: batch.endTime,
         totalUsers: batch.totalUsers || 0,
+        totalConversations: batch.totalConversations || batch.migratedConversations || 0,
         migratedConversations: batch.migratedConversations || 0,
         filesUploaded: batch.filesUploaded || 0,
         totalErrors: batch.totalErrors || 0,
