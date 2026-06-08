@@ -275,6 +275,40 @@ export async function buildMergedBatchDocx(batch, userEmail, startConvIdx) {
     })
   );
 
+  // ── Conversation Index (first page) ────────────────────────────────
+  // Lists every conversation title with its first-message timestamp and
+  // message count so the user can navigate the bundled DOCX at a glance.
+  // Matches the layout used by C2G and CL2G.
+  children.push(
+    new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      spacing: { before: 200, after: 160 },
+      children: [new TextRun({ text: 'CONVERSATION INDEX', bold: true, size: 26, color: '0B5394', allCaps: true })],
+    })
+  );
+  for (let i = 0; i < batch.length; i++) {
+    const c = batch[i];
+    const convIdx = startConvIdx + i;
+    const title = c.title || `Conversation ${convIdx}`;
+    const firstDate = c.turns?.[0]?.timestamp;
+    const dateStr = firstDate ? formatTimestamp(firstDate) : '';
+    const msgCount = (c.turns || []).length;
+
+    children.push(
+      new Paragraph({
+        spacing: { after: 60 },
+        children: [
+          new TextRun({ text: `${convIdx}.  `, bold: true, size: 20, color: '0B5394' }),
+          new TextRun({ text: title, size: 20, color: '1E3A5F', bold: true }),
+          new TextRun({ text: dateStr ? `\t${dateStr}` : '', size: 18, color: '999999' }),
+          new TextRun({ text: `  (${msgCount} msg${msgCount !== 1 ? 's' : ''})`, size: 17, color: 'AAAAAA' }),
+        ],
+      })
+    );
+  }
+  // Page break so conversations start on a fresh page
+  children.push(new Paragraph({ spacing: { before: 400 }, children: [new PageBreak()] }));
+
   let idx = startConvIdx;
   for (const conv of batch) {
     children.push(
