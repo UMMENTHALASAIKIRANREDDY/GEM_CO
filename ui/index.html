@@ -6549,17 +6549,38 @@ function App(){
         msAccountsList:(msAccounts||[]).map(a=>({email:a.email,accountId:a.accountId,tenantId:a.tenantId||null,displayName:a.displayName||null})),
         // Fetched/loaded users for the current direction's source — lets the agent
         // resolve references like "only austin" → austin@fuzebot.co instead of
-        // claiming the user doesn't exist. Capped to keep the prompt bounded.
+        // claiming the user doesn't exist, and answer per-user conversation counts.
+        // Capped to keep the prompt bounded.
         availableUsers:(()=>{
           let src=[];
-          if(migDir==='copilot-gemini'||migDir==='claude-copilot'||migDir==='copilot-copilot'){
+          if(migDir==='copilot-gemini'||migDir==='copilot-copilot'){
             src=(msUsers||[]).map(u=>({email:(u.mail||u.userPrincipalName||'').toLowerCase(),name:u.displayName||''}));
           }else if(migDir==='claude-gemini'){
-            src=(cl2gUploadData?.users||[]).map(u=>({email:(u.email_address||u.email||'').toLowerCase(),name:u.name||u.full_name||''}));
+            src=(cl2gUploadData?.users||[]).map(u=>({email:(u.email_address||u.email||'').toLowerCase(),name:u.full_name||u.name||'',conversations:u.conversationCount??null}));
+          }else if(migDir==='claude-copilot'){
+            src=(cl2cUploadData?.users||[]).map(u=>({email:(u.email_address||u.email||'').toLowerCase(),name:u.full_name||u.name||'',conversations:u.conversationCount??null}));
           }else{ // gemini-copilot (G2C) and gemini-gemini (G2G) — Google source
-            src=(googleUsers||[]).map(u=>({email:(u.email||'').toLowerCase(),name:u.name||u.displayName||''}));
+            src=(googleUsers||[]).map(u=>({email:(u.email||'').toLowerCase(),name:u.name||u.displayName||'',conversations:u.conversationCount??u.conversations??null}));
           }
           return src.filter(u=>u.email).slice(0,100);
+        })(),
+        // Actual source→destination mapping pairs for the current direction, so the
+        // agent can answer "who is X mapped to?" / "show the mappings" — not just counts.
+        mappingPairs:(()=>{
+          let map={},sel=new Set(),users=null;
+          if(migDir==='copilot-gemini'){map=c2gMappings;sel=c2gSelectedUsers;}
+          else if(migDir==='claude-gemini'){map=cl2gMappings;sel=cl2gSelectedUuids;users=cl2gUploadData?.users;}
+          else if(migDir==='claude-copilot'){map=cl2cMappings;sel=cl2cSelectedUuids;users=cl2cUploadData?.users;}
+          else if(migDir==='gemini-gemini'){map=g2gMappings;sel=g2gSelectedUsers;}
+          else if(migDir==='copilot-copilot'){map=c2cMappings;sel=c2cSelectedUsers;}
+          else{map=mappings;sel=selectedUsers;} // gemini-copilot (G2C)
+          // Claude directions key by UUID — resolve to the source email for readability.
+          const uuidToEmail={};
+          (users||[]).forEach(u=>{if(u.uuid)uuidToEmail[u.uuid]=(u.email_address||u.email||'').toLowerCase();});
+          return Object.entries(map||{}).filter(([,dest])=>dest).map(([key,dest])=>{
+            const source=uuidToEmail[key]||key;
+            return {source,dest:String(dest).toLowerCase(),selected:sel?.has?.(key)??false};
+          }).slice(0,100);
         })(),
         // G2C (gemini-copilot) fields
         ...(migDir==='gemini-copilot'||migDir===null?{

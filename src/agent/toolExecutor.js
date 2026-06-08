@@ -239,6 +239,51 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
       return { shown: true };
     }
 
+    case 'get_mappings': {
+      const pairs = Array.isArray(migrationState?.mappingPairs) ? migrationState.mappingPairs : [];
+      if (pairs.length === 0) {
+        return { mappings: [], total: 0, note: 'No user mappings exist yet. Offer auto-map (auto_map_users), CSV upload, or manual mapping.' };
+      }
+      const filter = String(args?.userEmail || '').trim().toLowerCase();
+      let rows = pairs;
+      if (filter) {
+        const local = filter.split('@')[0];
+        rows = pairs.filter(p => p.source === filter || p.source.startsWith(local + '@') || p.source.split('@')[0] === local);
+        if (rows.length === 0) {
+          return { mappings: [], total: pairs.length, matched: 0, note: `No mapping found for "${args.userEmail}". ${pairs.length} pairs exist — they can ask to see all.` };
+        }
+      }
+      const selectedCount = pairs.filter(p => p.selected).length;
+      return {
+        mappings: rows.map(p => ({ source: p.source, destination: p.dest, selected: p.selected })),
+        total: pairs.length,
+        selected: selectedCount,
+        note: `${pairs.length} mapped, ${selectedCount} selected for migration. Only SELECTED pairs migrate.`,
+      };
+    }
+
+    case 'get_user_conversation_count': {
+      const users = Array.isArray(migrationState?.availableUsers) ? migrationState.availableUsers : [];
+      const liveDirections = ['copilot-gemini', 'copilot-copilot'];
+      const hasCounts = users.some(u => typeof u.conversations === 'number');
+      if (!hasCounts) {
+        if (liveDirections.includes(migDir)) {
+          return { available: false, note: `Conversation counts for ${migDir} are pulled live from the source API during migration — they aren't known until the run starts. Suggest running a dry run to get exact numbers.` };
+        }
+        return { available: false, note: 'No conversation counts loaded yet. The source data (ZIP/Vault) must be uploaded first.' };
+      }
+      const filter = String(args?.userEmail || '').trim().toLowerCase();
+      if (filter) {
+        const local = filter.split('@')[0];
+        const hit = users.find(u => u.email === filter || u.email.startsWith(local + '@') || u.email.split('@')[0] === local);
+        if (!hit) return { available: false, note: `No loaded user matches "${args.userEmail}".` };
+        return { user: hit.email, conversations: hit.conversations ?? 0, name: hit.name || undefined };
+      }
+      const withCounts = users.filter(u => typeof u.conversations === 'number');
+      const total = withCounts.reduce((s, u) => s + (u.conversations || 0), 0);
+      return { totalConversations: total, userCount: withCounts.length, note: `${total} conversations across ${withCounts.length} loaded users.` };
+    }
+
     case 'set_migration_config': {
       // Resolve natural-language dates server-side. LLMs unreliably anchor to
       // "today" — relying on prompt instructions alone gives stale 2023 dates.

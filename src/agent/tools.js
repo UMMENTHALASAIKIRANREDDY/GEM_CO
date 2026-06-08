@@ -182,6 +182,34 @@ export const AGENT_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'get_mappings',
+      description: 'Return the ACTUAL source→destination user mapping pairs for the current direction (not just counts). Use when the user asks "show me the mappings", "who is erik mapped to?", "what\'s the destination for mia?", "list the mappings", "are the mappings correct?". Returns each pair with its source email, destination email, and whether it is selected for migration. If the user names one person, filter to that person in your reply.',
+      parameters: {
+        type: 'object',
+        properties: {
+          userEmail: { type: 'string', description: 'Optional — if the user asks about ONE specific person, pass their source email to filter. Omit to return all pairs.' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_user_conversation_count',
+      description: 'Return how many conversations are loaded/pending for a user (or the total across all loaded users) BEFORE migration runs. Use when the user asks "how many conversations does erik have?", "how many chats will migrate?", "what\'s the total?". Reads the loaded source data (Claude ZIP / Vault export). For live-API directions (Copilot→Gemini, cross-tenant) counts are not known until the migration runs — say so.',
+      parameters: {
+        type: 'object',
+        properties: {
+          userEmail: { type: 'string', description: 'Optional — a specific user\'s email to get their count. Omit to get the total across all loaded users.' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'set_migration_config',
       description: 'Update migration options: folder name, date range, and/or dry-run flag. ALWAYS call this when the user expresses intent to change any of these — never just reply with text saying it\'s been changed, the UI will not reflect the change unless this tool is invoked. Resolve natural-language dates ("today", "last week", "since March 1") to ISO format (YYYY-MM-DD) before calling, using the "Today\'s date is …" context above. Empty string clears a field.',
       parameters: {
