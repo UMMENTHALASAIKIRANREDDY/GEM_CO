@@ -2242,7 +2242,7 @@ const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c
             {[
               {label:'Users Processed',val:c2gTotal>0?`${c2gStats.users}/${c2gTotal}`:c2gStats.users,c:'#0129AC'},
               {label:'Total Convs',val:c2gStats.convs??0,c:'#0129AC'},
-              {label:lastRunWasDry?'Would Migrate':'Migrated',val:lastRunWasDry?(c2gStats.convs??0):(c2gStats.files??0),c:'#20CC83'},
+              {label:lastRunWasDry?'Would Migrate':'Migrated',val:(c2gStats.errors>0&&!c2gStats.files)?0:(c2gStats.convs??0),c:'#20CC83'},
               {label:'Errors',val:c2gStats.errors,c:'#FF1F1F'},
             ].map((e,i)=>(
               <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
@@ -3025,7 +3025,7 @@ const StepCL2GMigrate=({cl2gStats,cl2gDone,onRunAnother,onBack,onStart,cl2gLive,
             {[
               {label:'Users Processed',val:cl2gTotal>0?`${cl2gStats.users}/${cl2gTotal}`:cl2gStats.users,c:'#0129AC'},
               {label:'Total Convs',val:cl2gStats.convs??0,c:'#0129AC'},
-              {label:lastRunWasDry?'Would Migrate':'Migrated',val:lastRunWasDry?(cl2gStats.convs??0):(cl2gStats.files??0),c:'#20CC83'},
+              {label:lastRunWasDry?'Would Migrate':'Migrated',val:(cl2gStats.errors>0&&!cl2gStats.files)?0:(cl2gStats.convs??0),c:'#20CC83'},
               {label:'Errors',val:cl2gStats.errors,c:'#FF1F1F'},
             ].map((e,i)=>(
               <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
@@ -3527,7 +3527,11 @@ const StepCL2CMigrate=({cl2cStats,cl2cDone,onRunAnother,onBack,onStart,cl2cLive,
             {[
               {label:'Users Processed',val:cl2cTotal>0?`${cl2cStats.users}/${cl2cTotal}`:cl2cStats.users,c:'#0129AC'},
               {label:'Total Convs',val:cl2cStats.convs??0,c:'#0129AC'},
-              {label:lastRunWasDry?'Would Migrate':'Migrated',val:lastRunWasDry?(cl2cStats.convs??0):(cl2cStats.files??0),c:'#20CC83'},
+              // "Migrated" = conversations actually delivered, NOT file count.
+              // Bundled-DOCX flow: 1 file may contain N conversations, so files=1
+              // while migrated=N. On a successful run, all source conversations
+              // landed in the DOCX → migrated == convs.
+              {label:lastRunWasDry?'Would Migrate':'Migrated',val:(cl2cStats.errors>0&&!cl2cStats.files)?0:(cl2cStats.convs??0),c:'#20CC83'},
               {label:'Errors',val:cl2cStats.errors,c:'#FF1F1F'},
             ].map((e,i)=>(
               <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
@@ -4202,7 +4206,7 @@ const StepC2CMigrate=({c2cStats,c2cDone,c2cLive,onRunAnother,onBack,onChangeDire
             {[
               {label:'Users',val:c2cStats?.users||0,icon:<IcoUser s={22}/>,color:C.primary},
               {label:'Total Convs',val:c2cStats?.conversationCount||0,icon:<IcoPage s={22}/>,color:C.primary},
-              {label:lastRunWasDry?'Would Migrate':'Migrated',val:lastRunWasDry?(c2cStats?.conversationCount||0):(c2cStats?.files||0),icon:<IcoPage s={22}/>,color:C.success},
+              {label:lastRunWasDry?'Would Migrate':'Migrated',val:(c2cStats?.errors>0&&!c2cStats?.files)?0:(c2cStats?.conversationCount||0),icon:<IcoPage s={22}/>,color:C.success},
               {label:'Errors',val:c2cStats?.errors||0,icon:<IcoError s={22}/>,color:c2cStats?.errors>0?C.error:C.muted},
             ].map((s,i)=>(
               <Card key={i} className="scale-in" style={{animationDelay:`${i*80}ms`,textAlign:'center',padding:16}}>
@@ -5106,11 +5110,26 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
                     <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,flexWrap:'wrap'}}>
                       <span style={{fontSize:13,fontWeight:600,color:C.dark}}>{r.customerName||'Migration'}</span>
                       <span style={{fontSize:11,padding:'2px 8px',borderRadius:20,fontWeight:600,background:ss.bg,color:ss.color}}>{ss.label}</span>
-                      {(r.direction==='c2g'||r.direction==='copilot-gemini')&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#EFF6FF',color:'#1D4ED8',fontWeight:600}}>C2G</span>}
-                      {r.direction==='claude-gemini'&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#FFF7ED',color:'#C2410C',fontWeight:600}}>CL2G</span>}
-                      {r.direction==='gemini-gemini'&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#F3E8FF',color:'#7C3AED',fontWeight:600}}>G2G</span>}
-                      {(r.direction==='c2c'||r.direction==='copilot-copilot'||r.migDir==='copilot-copilot')&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#FEE2E2',color:'#991B1B',fontWeight:600}}>C2C</span>}
-                      {(!r.direction||r.direction==='gemini-copilot')&&<span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'#F0FDF4',color:'#166534',fontWeight:600}}>G2C</span>}
+                      {(()=>{
+                        // Single source of truth — derive the badge from the
+                        // most specific identifier available. migDir is the
+                        // primary field (always set on every batch); direction
+                        // is a legacy alias kept for backward compat.
+                        const key=r.migDir||r.direction||'gemini-copilot';
+                        const BADGE={
+                          'copilot-gemini':{label:'C2G',bg:'#EFF6FF',color:'#1D4ED8'},
+                          'c2g':{label:'C2G',bg:'#EFF6FF',color:'#1D4ED8'},
+                          'claude-gemini':{label:'CL2G',bg:'#FFF7ED',color:'#C2410C'},
+                          'gemini-gemini':{label:'G2G',bg:'#F3E8FF',color:'#7C3AED'},
+                          'copilot-copilot':{label:'C2C',bg:'#FEE2E2',color:'#991B1B'},
+                          'c2c':{label:'C2C',bg:'#FEE2E2',color:'#991B1B'},
+                          'claude-copilot':{label:'CL2C',bg:'#FDF4FF',color:'#A21CAF'},
+                          'cl2c':{label:'CL2C',bg:'#FDF4FF',color:'#A21CAF'},
+                          'gemini-copilot':{label:'G2C',bg:'#F0FDF4',color:'#166534'},
+                        };
+                        const b=BADGE[key]||BADGE['gemini-copilot'];
+                        return <span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:b.bg,color:b.color,fontWeight:600}}>{b.label}</span>;
+                      })()}
                     </div>
                     <div style={{fontSize:12,color:C.muted,display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}}>
                       <span>{fmtDate(r.startTime)}</span>
