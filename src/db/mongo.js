@@ -206,5 +206,15 @@ async function ensureCollections() {
   if (!existing.has('conversationPages')) await _db.createCollection('conversationPages');
   await _db.collection('conversationPages').createIndex({ targetEmail: 1, conversationId: 1 }, { unique: true });
 
-  logger.info('All 16 collections verified with indexes (multi-tenant scoped)');
+  // 17. conversationStore — DB-backed staging area for all 6 migration directions
+  //     (fetch-then-migrate pattern). Indexes created via the shared helper so
+  //     the schema/indexes live alongside the code that reads/writes the collection.
+  try {
+    const { ensureConversationStoreIndexes } = await import('../modules/_shared/conversationStore.js');
+    await ensureConversationStoreIndexes();
+  } catch (e) {
+    logger.warn(`conversationStore index setup non-fatal error: ${e.message}`);
+  }
+
+  logger.info('All 17 collections verified with indexes (multi-tenant scoped)');
 }
