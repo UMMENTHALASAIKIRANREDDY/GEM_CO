@@ -6662,16 +6662,19 @@ function App(){
     const C2G_CHIPS=['Copilot → Gemini','Microsoft to Google','Migrate Microsoft 365 → Google Workspace','Migrate Microsoft 365 → Google','Migrate Microsoft 365'];
     const CL2G_CHIPS=['Claude → Gemini','Claude to Google','Teams/Copilot ZIP → Google','Migrate Claude AI → Google Workspace','Migrate Claude AI → Google','Start Claude → Google migration now','Start Claude → Google migration (Google only needed)'];
 
-    if(G2C_CHIPS.includes(qr)){addAgentMsg('user',qr);setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current('I want to migrate from Google Workspace to Microsoft 365'),300);return;}
-    if(C2G_CHIPS.includes(qr)){addAgentMsg('user',qr);setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current('I want to migrate from Microsoft 365 Copilot to Google Workspace'),300);return;}
-    if(CL2G_CHIPS.includes(qr)){addAgentMsg('user',qr);setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current('I want to migrate from Claude AI to Google Workspace'),300);return;}
+    // sendToAgent already renders the message as a user bubble, so DON'T call
+    // addAgentMsg here too — that produced two stacked bubbles (the chip text
+    // plus a rephrased intent). Send the chip text directly so the bubble
+    // matches what the user clicked; the backend's detectDirectionFromMessage
+    // + LLM recognise it and fire select_direction.
+    if(G2C_CHIPS.includes(qr)||C2G_CHIPS.includes(qr)||CL2G_CHIPS.includes(qr)){sendToAgentRef.current&&sendToAgentRef.current(qr);return;}
 
     // Auth chips — trigger sign-in directly without going through agent
     if(['Connect Google Workspace','Connect Google','Sign in with Google','Connect Google Workspace first','Connect Google Workspace to continue'].includes(qr)){setStep(0);handleChatSignInGoogle&&handleChatSignInGoogle();return;}
     if(['Connect Microsoft 365','Sign in with Microsoft','Connect Microsoft 365 first','Connect Microsoft 365 to continue','Connect Microsoft 365 to unlock more migrations','Connect Microsoft 365 to unlock more options'].includes(qr)){setStep(0);handleChatSignInMs&&handleChatSignInMs();return;}
 
-    // Navigation chips
-    if(qr==='Choose direction'||qr==="What's the difference?"){setStep(1);addAgentMsg('user',qr);setTimeout(()=>sendToAgentRef.current(qr),300);return;}
+    // Navigation chips — sendToAgent renders the bubble itself, don't double-add
+    if(qr==='Choose direction'||qr==="What's the difference?"){setStep(1);setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current(qr),300);return;}
 
     // "Migrate another set of users" / "Start a new migration" — after a
     // completed run. Don't ask the agent (it sometimes hallucinates "still
