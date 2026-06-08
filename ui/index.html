@@ -1169,7 +1169,7 @@ const MIG_ENTITIES=[
   {label:'Errors',        icon:<IcoError s={18}/>, color:C.error},
 ];
 
-const StepMigrate=({stats,done,live,lastRunWasDry,batchId,onStartLive,onRunAnother,onRetry,retrying,hasUploadData,onGoToConnect,onRetryWithPath,totalExpected=0,onChangeDirection})=>{
+const StepMigrate=({stats,done,live,lastRunWasDry,batchId,onStartLive,onRunAnother,onRetry,retrying,hasUploadData,onGoToConnect,onRetryWithPath,totalExpected=0,onChangeDirection,onBack})=>{
   const [batchUsers,setBatchUsers]=useState(null);
   const [showUserDetail,setShowUserDetail]=useState(false);
   const [errorGroups,setErrorGroups]=useState(null);
@@ -1291,6 +1291,7 @@ const StepMigrate=({stats,done,live,lastRunWasDry,batchId,onStartLive,onRunAnoth
                 <IcoRocket s={14}/> Start Migration (Live)
               </Btn>
             )}
+            {onBack&&<Btn variant="ghost" onClick={onBack} style={{flex:'1 1 100px',justifyContent:'center'}}>← Back to Options</Btn>}
             <Btn variant="ghost" onClick={()=>onRunAnother(false)} style={{flex:'1 1 100px',justifyContent:'center'}}>
               New Migration
             </Btn>
@@ -4197,6 +4198,7 @@ const StepC2CMigrate=({c2cStats,c2cDone,c2cLive,onRunAnother,onBack,onChangeDire
           {!lastRunWasDry&&<CopilotAgentInstallPanel/>}
           {lastRunWasDry&&onStartLive&&<Btn onClick={onStartLive} style={{width:'100%',justifyContent:'center',marginBottom:12}}><IcoRocket s={14}/> Start Migration (Live)</Btn>}
           <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+            {onBack&&<Btn variant="ghost" onClick={onBack} style={{flex:'1 1 100px',justifyContent:'center'}}>← Back to Options</Btn>}
             <Btn variant="ghost" onClick={()=>onRunAnother(false)} style={{flex:'1 1 100px',justifyContent:'center'}}>New Migration</Btn>
           </div>
         </>
@@ -4931,6 +4933,7 @@ const StepG2GMigrate=({g2gStats,g2gDone,onRunAnother,onBack,onStart,g2gLive,onCh
           )}
 
           <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+            {onBack&&<Btn variant="ghost" onClick={onBack} style={{flex:'1 1 100px',justifyContent:'center'}}>← Back to Options</Btn>}
             <Btn variant="ghost" onClick={()=>onRunAnother(false)} style={{flex:'1 1 100px',justifyContent:'center'}}>
               New Migration
             </Btn>
@@ -5110,19 +5113,23 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
                       const doneUsers=live?liveStats.users:(isRunningBatch?r.progressUsers:r.totalUsers);
                       // Total conversations = how many were FOUND in the source.
                       // Migrated conversations = how many SUCCESSFULLY migrated.
-                      // For dry-runs, both are equal (preview = "would migrate").
+                      // Dry runs DON'T actually migrate anything — Migrated must
+                      // be 0 (or "—"), not the total, otherwise the panel lies.
                       const userConvSum=(r.report?.users||r.users||[]).reduce((s,u)=>s+(u.conversations_processed||0),0);
                       const userMigratedSum=(r.report?.users||r.users||[]).reduce((s,u)=>s+(u.migrated_conversations??(u.status==='success'?(u.conversations_processed||0):(u.pages_created||0))),0);
                       const totalConvs=r.report?.summary?.total_conversations||r.totalConversations||userConvSum||r.migratedConversations||0;
                       const doneConvs=live?liveStats.pages
                         :(isRunningBatch?(r.progressConversations||r.progressPages||userMigratedSum||0)
-                        :(r.dryRun?totalConvs:(userMigratedSum||r.migratedConversations||0)));
+                        :(r.dryRun?0:(userMigratedSum||r.migratedConversations||0)));
                       const doneErrors=live?liveStats.errors:(isRunningBatch?r.progressErrors:(r.totalErrors??r.report?.summary?.total_errors??0));
                       const totalUsers=r.totalUsers||0;
+                      // Dry-run shows "—" for Migrated so users don't read 0 as
+                      // "the migration ran and failed" — it's just informational.
+                      const migratedVal = r.dryRun ? '—' : doneConvs;
                       return[
                         ['Users',isRunningBatch?`${doneUsers??0}/${totalUsers}`:doneUsers,false],
                         ['Total Convs',totalConvs,false],
-                        ['Migrated',doneConvs,false],
+                        ['Migrated',migratedVal,false],
                         ['Errors',doneErrors,doneErrors>0]
                       ].map(([lbl,val,isErr],j)=>(
                         <div key={j} style={{textAlign:'center'}}>
@@ -6950,7 +6957,7 @@ function App(){
                   {step===2&&migDir==='gemini-copilot'&&<Step1 googleUsers={googleUsers} googleAuthed={googleAuthed} onComplete={handleImportComplete} onBack={()=>setStep(1)} showToast={showToast} uploadData={uploadData} importTabSignal={importTabSignal} exportTrigger={exportTrigger}/>}
                   {step===3&&migDir==='gemini-copilot'&&<Step2 uploadData={uploadData} msUsers={msUsers} mappings={mappings} setMappings={setMappings} selectedUsers={selectedUsers} setSelectedUsers={setSelectedUsers} onNext={()=>{addLog('info',`User mappings ready — ${selectedUsers.size||Object.keys(mappings).length} users selected`);setStep(4);}} onBack={()=>setStep(2)} showToast={showToast}/>}
                   {step===4&&migDir==='gemini-copilot'&&<Step3 options={options} setOptions={setOptions} config={config} setConfig={setConfig} msAuthed={msAuthed} googleAuthed={googleAuthed} onRun={retryMode?(()=>retryFailed(config.filePath||undefined)):runMigration} onBack={()=>{setRetryMode(false);setStep(retryMode?5:3)}} retryMode={retryMode}/>}
-                  {(step===5||step===6)&&migDir==='gemini-copilot'&&<StepMigrate stats={stats} done={migDone} live={live} lastRunWasDry={lastRunWasDry} batchId={currentBatchId} onStartLive={()=>runMigration(true)} onRunAnother={runAnotherBatch} onRetry={retryFailed} retrying={retrying} hasUploadData={!!uploadData} onGoToConnect={handleGoToConnect} onRetryWithPath={handleRetryWithPath} onChangeDirection={handleChangeDirection} totalExpected={(()=>{if(!uploadData?.users)return 0;const sel=selectedUsers.size>0?[...selectedUsers]:Object.keys(mappings);const emails=sel.length>0?new Set(sel):new Set(uploadData.users.map(u=>u.email));return uploadData.users.filter(u=>emails.has(u.email)).reduce((s,u)=>s+(u.conversation_count||0),0)})()}/>}
+                  {(step===5||step===6)&&migDir==='gemini-copilot'&&<StepMigrate stats={stats} done={migDone} live={live} lastRunWasDry={lastRunWasDry} batchId={currentBatchId} onStartLive={()=>runMigration(true)} onRunAnother={runAnotherBatch} onRetry={retryFailed} retrying={retrying} hasUploadData={!!uploadData} onGoToConnect={handleGoToConnect} onRetryWithPath={handleRetryWithPath} onChangeDirection={handleChangeDirection} onBack={()=>setStep(4)} totalExpected={(()=>{if(!uploadData?.users)return 0;const sel=selectedUsers.size>0?[...selectedUsers]:Object.keys(mappings);const emails=sel.length>0?new Set(sel):new Set(uploadData.users.map(u=>u.email));return uploadData.users.filter(u=>emails.has(u.email)).reduce((s,u)=>s+(u.conversation_count||0),0)})()}/>}
                   {/* Copilot → Gemini steps */}
                   {step===2&&migDir==='copilot-gemini'&&<StepC2GMap msUsers={msUsers} googleUsers={googleUsers} c2gMappings={c2gMappings} setC2gMappings={setC2gMappings} c2gSelectedUsers={c2gSelectedUsers} setC2gSelectedUsers={setC2gSelectedUsers} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast}/>}
                   {step===3&&migDir==='copilot-gemini'&&<StepC2GOptions c2gOptions={c2gOptions} setC2gOptions={setC2gOptions} c2gConfig={c2gConfig} setC2gConfig={setC2gConfig} googleAuthed={googleAuthed} msAuthed={msAuthed} onRun={runC2GMigration} onBack={()=>setStep(2)}/>}
