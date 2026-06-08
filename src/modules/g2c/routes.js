@@ -484,11 +484,21 @@ export function createG2CRouter(deps) {
         };
         await db().collection('uploads').updateOne({ _id: uploadId }, { $set: uploadDoc }, { upsert: true });
         dbLog.info(`uploads.upsert (vault export) — ${uploadDoc.totalUsers} users`);
+        // Diff requested vs returned — users with no Gemini data don't appear in
+        // the export, so surface them to the UI/agent instead of silently dropping.
+        const requestedEmails = (activeExport.userEmails || []).map(e => String(e).toLowerCase());
+        const returnedEmails = users.map(u => String(u.email).toLowerCase());
+        const emptyUsers = requestedEmails.filter(e => !returnedEmails.includes(e));
+        if (emptyUsers.length > 0) {
+          dbLog.info(`vault-export: ${returnedEmails.length}/${requestedEmails.length} users had Gemini data; ${emptyUsers.length} empty: ${emptyUsers.join(', ')}`);
+        }
         activeExport = null;
         return res.json({
           status, id: uploadId, original_name: uploadDoc.originalName, extract_path: destDir,
           total_users: users.length, total_conversations: uploadDoc.totalConversations,
           users: users.map(u => ({ email: u.email, display_name: u.displayName, conversation_count: u.conversationCount })),
+          requested_users: requestedEmails.length,
+          empty_users: emptyUsers, // requested but no Gemini data in Vault
         });
       }
       if (status === 'FAILED') {

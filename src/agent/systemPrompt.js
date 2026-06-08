@@ -179,7 +179,7 @@ export function buildSystemPrompt(migrationState, migrationLogs = [], { isReturn
     cl2c_upload_users = 0, cl2c_mappings_count = 0, cl2c_live = false, cl2c_done = false, cl2c_stats = {}, cl2cLastDry = false,
     c2c_source_tenant_id = '', c2c_dest_tenant_id = '',
     c2c_mappings_count = 0, c2c_live = false, c2c_done = false, c2c_stats = {}, c2cLastDry = false,
-    googleAccountsList = [], msAccountsList = [], availableUsers = [],
+    googleAccountsList = [], msAccountsList = [], availableUsers = [], vaultEmptyUsers = [],
     googleAccountsCount = 0, msAccountsCount = 0,
     multiGoogle = false, multiMs = false,
   } = migrationState;
@@ -487,6 +487,7 @@ ${migDir === 'copilot-copilot' && !msAuthed ? `- 📌 **C2C consent is PERSISTEN
 - Google Workspace: ${googleAuthed ? `✓ ${googleAccountsCount} account${googleAccountsCount===1?'':'s'} connected` : '✗ not connected'}${googleAccountsList.length > 0 ? '\n  ' + googleAccountsList.map(a => `• ${a.email}${a.displayName ? ` (${a.displayName})` : ''}`).join('\n  ') : ''}
 - Microsoft 365: ${msAuthed ? `✓ ${msAccountsCount} account${msAccountsCount===1?'':'s'} connected` : '✗ not connected'}${msAccountsList.length > 0 ? '\n  ' + msAccountsList.map(a => `• ${a.email}${a.displayName ? ` (${a.displayName})` : ''}`).join('\n  ') : ''}${migDir === 'claude-gemini' ? '\n- ⚠️ Claude→Gemini ONLY needs Google. Microsoft 365 is NOT required or shown.' : ''}
 - Mappings: ${step < 2 ? 'N/A — not at mapping step yet' : `${effectiveMappings} users mapped`}
+${vaultEmptyUsers.length > 0 ? `- ⚠️ **Last Vault export: ${vaultEmptyUsers.length} requested user(s) had NO Gemini data** and were not included: ${vaultEmptyUsers.join(', ')}. If the user asks "why are some users missing?" / "where did the others go?", explain: Google Vault only exports users who actually have Gemini conversation history — these had none, so there is nothing to migrate for them. This is expected, not an error. Do NOT claim they failed or that something broke.` : ''}
 ${availableUsers.length > 0 ? `- **Fetched users (${availableUsers.length}) — these are REAL users already loaded. Resolve any name/partial the user types against THIS list:**\n  ${availableUsers.slice(0, 60).map(u => `• ${u.email}${u.name ? ` (${u.name})` : ''}`).join('\n  ')}${availableUsers.length > 60 ? `\n  • …and ${availableUsers.length - 60} more (ask the user to search the panel if the one they want isn't listed here)` : ''}\n  ⚠️ When the user says "only austin", "just bob", "erik and mia", match against email local-part OR name (case-insensitive, partial OK) and use the FULL email. NEVER claim a user "doesn't exist" if a reasonable match is in this list — only ask for clarification when truly ambiguous (2+ matches) or no match at all. To act on the matched users, call the appropriate tool (trigger_vault_export with scope:"selected" + emails at the export step; select_mapping_users at the mapping step).` : ''}
 - Migration: ${isRunning ? '🔄 RUNNING' : isDone ? '✅ DONE' : 'not started'}
 - Last run: ${isDone ? (activeLastDry ? '✅ Dry run completed' : '✅ Live migration completed') : 'none yet'} | Users: ${activeStats.users ?? 0} · Files: ${activeStats.pages ?? activeStats.files ?? 0} · Errors: ${activeStats.errors ?? 0}
