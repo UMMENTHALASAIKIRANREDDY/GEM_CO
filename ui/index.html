@@ -1201,7 +1201,7 @@ const StepMigrate=({stats,done,live,lastRunWasDry,batchId,onStartLive,onRunAnoth
       const data=await res.json();
       const users=data.users||[];
       const customerName=data.customerName||'Gemini';
-      const destFor=(email)=>`${email}/OneDrive/Notebooks/${customerName}/${customerName} Conversations`;
+      const destFor=(email)=>`${email}/OneDrive/${customerName}/Conversations`;
       // Flatten: one row per user, or one per error for failed users
       const rows=[];
       users.forEach(u=>{
@@ -3501,8 +3501,8 @@ const CopilotAgentInstallPanel=()=>{
     {n:1,icon:'🌐',title:'Open Microsoft 365 Admin Center',desc:'Sign in at admin.microsoft.com as a Global / Application admin of the DESTINATION tenant.'},
     {n:2,icon:'🤖',title:'Go to Integrated apps',desc:'Navigate to Settings → Integrated apps → click Get apps.'},
     {n:3,icon:'🔍',title:'Find the CloudFuze Copilot Agent',desc:'Search "CloudFuze Copilot Migrated Chats" in the agent marketplace. (Or use the manifest URL provided by your CloudFuze rep for a sideload upload.)'},
-    {n:4,icon:'✅',title:'Deploy to users',desc:'Click Get it now → Deploy → choose the destination users that received migrated pages → Finish. The agent is pinned in their Copilot sidebar.'},
-    {n:5,icon:'💬',title:'Users open Copilot',desc:'Each destination user opens Microsoft 365 Copilot. The agent surfaces the migrated OneNote pages — they can ask "Find my migrated chat about X" or browse by date.'},
+    {n:4,icon:'✅',title:'Deploy to users',desc:'Click Get it now → Deploy → choose the destination users that received migrated chats → Finish. The agent is pinned in their Copilot sidebar.'},
+    {n:5,icon:'💬',title:'Users open Copilot',desc:'Each destination user opens Microsoft 365 Copilot. The agent surfaces the migrated conversation DOCX from their OneDrive — they can ask "Find my migrated chat about X" or browse by date.'},
   ];
   return(
     <div style={{border:`1px solid #BFDBFE`,borderRadius:12,background:'#EFF6FF',marginBottom:16,overflow:'hidden'}}>
@@ -4111,11 +4111,34 @@ const StepC2CMigrate=({c2cStats,c2cDone,c2cLive,onRunAnother,onBack,onChangeDire
         </>
       ):(
         <>
-          <div style={{marginBottom:20,textAlign:'center'}}>
-            <div style={{display:'flex',justifyContent:'center',marginBottom:8,color:C.success}}><IcoDone s={48}/></div>
-            <div style={{fontSize:20,fontWeight:600,color:C.success,marginBottom:4}}>{lastRunWasDry?'Dry Run Complete!':'Migration Complete!'}</div>
-            <div style={{fontSize:13,color:C.muted}}>{lastRunWasDry?'Preview complete — no OneNote pages were created.':'Copilot conversations migrated as OneNote pages in destination tenant.'}</div>
-          </div>
+          {(()=>{
+            // Migration may "complete" the SSE stream but have 0 successful
+            // users (all failed). Distinguish failed / partial / success so
+            // the icon + headline match what actually happened.
+            const errs=c2cStats?.errors||0;
+            const totalUsers=c2cStats?.users||0;
+            const migratedConvs=c2cStats?.files||0;  // bundled DOCXs uploaded
+            const allFailed = !lastRunWasDry && errs>0 && migratedConvs===0;
+            const partialFail = !lastRunWasDry && errs>0 && migratedConvs>0;
+            const titleColor = allFailed ? C.error : (partialFail ? '#92400E' : C.success);
+            const title = lastRunWasDry ? 'Dry Run Complete!'
+              : allFailed ? 'Migration Failed'
+              : partialFail ? 'Migration Partially Complete'
+              : 'Migration Complete!';
+            const subtitle = lastRunWasDry ? 'Preview complete — no files were created.'
+              : allFailed ? `No conversations were delivered. ${errs} error${errs!==1?'s':''} during the run — check the report for details.`
+              : partialFail ? `Some conversations migrated, but ${errs} error${errs!==1?'s':''} occurred. Check the report.`
+              : 'Copilot conversations migrated as Word documents to destination users’ OneDrive.';
+            return (
+              <div style={{marginBottom:20,textAlign:'center'}}>
+                <div style={{display:'flex',justifyContent:'center',marginBottom:8,color:titleColor}}>
+                  {allFailed?<IcoError s={48}/>:partialFail?<IcoWarn s={48}/>:<IcoDone s={48}/>}
+                </div>
+                <div style={{fontSize:20,fontWeight:600,color:titleColor,marginBottom:4}}>{title}</div>
+                <div style={{fontSize:13,color:C.muted}}>{subtitle}</div>
+              </div>
+            );
+          })()}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:20}}>
             {[
               {label:'Users',val:c2cStats?.users||0,icon:<IcoUser s={22}/>,color:C.primary},
@@ -6120,7 +6143,7 @@ function App(){
               ? `Migration finished with **${cur.errors} error${cur.errors!==1?'s':''}**.`
               : isDry
                 ? `Dry run complete — **${cur.users} user${cur.users!==1?'s':''}**, **${cur.conversationCount} conversation${cur.conversationCount!==1?'s':''}**.`
-                : `All done! **${cur.files} OneNote page${cur.files!==1?'s':''}** created in destination tenant for **${cur.conversationCount} conversation${cur.conversationCount!==1?'s':''}**.`,
+                : `All done! **${cur.conversationCount} conversation${cur.conversationCount!==1?'s':''}** bundled into Word document${cur.users!==1?'s':''} in destination users’ OneDrive.`,
             {statusCard:{users:cur.users,files:cur.files,errors:cur.errors,label:isDry?'Dry Run Preview':'Migration Results'}}
           ),400);
         }

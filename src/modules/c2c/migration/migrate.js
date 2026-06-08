@@ -653,7 +653,7 @@ export async function migrateC2CUserPair(
         logger.info(`Building bundled DOCX for ${destUserEmail} (${batchEntries.length} conversations)...`);
         const userName = destUser.displayName || destUserEmail;
         const docxBuffer = await buildMergedBatchDocx(batchEntries, userName, fileLinks, 1);
-        const docxName = docxFileName(sourceEmail || destUserEmail);
+        const docxName = docxFileName(runOpts?.sourceEmail || destUserEmail);
 
         const uploaded = await uploadFileToOneDrive(
           destTenantId, destUser.id, convoFolder.id, docxName, DOCX_MIME, docxBuffer
