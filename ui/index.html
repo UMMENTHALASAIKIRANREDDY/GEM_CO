@@ -1250,15 +1250,23 @@ const StepMigrate=({stats,done,live,lastRunWasDry,batchId,onStartLive,onRunAnoth
         </>
       ):(
         <>
-          <div style={{marginBottom:20,textAlign:'center'}}>
-            <div style={{display:'flex',justifyContent:'center',marginBottom:8,color:C.success}}><IcoDone s={48}/></div>
-            <div style={{fontSize:20,fontWeight:600,color:C.success,marginBottom:4}}>
-              {lastRunWasDry?'Dry Run Complete!':'Migration Complete!'}
-            </div>
-            <div style={{fontSize:13,color:C.muted}}>
-              {lastRunWasDry?'Preview complete — no pages were created.':'All conversations migrated. Copilot Agent deployed.'}
-            </div>
-          </div>
+          {(()=>{
+            // Status-aware header so a failed/partial run isn't shown as green success.
+            const errs=stats.errors||0;
+            const migConvs=stats.pages||0;
+            const allFailed=!lastRunWasDry && errs>0 && migConvs===0;
+            const partialFail=!lastRunWasDry && errs>0 && migConvs>0;
+            const color=allFailed?C.error:(partialFail?'#92400E':C.success);
+            const title=lastRunWasDry?'Dry Run Complete!':allFailed?'Migration Failed':partialFail?'Migration Partially Complete':'Migration Complete!';
+            const sub=lastRunWasDry?'Preview complete — no files were created.':allFailed?`No conversations were delivered. ${errs} error${errs!==1?'s':''} during the run — check the report.`:partialFail?`Some conversations migrated, but ${errs} error${errs!==1?'s':''} occurred.`:'All conversations migrated as Word documents to destination users’ OneDrive.';
+            return (
+              <div style={{marginBottom:20,textAlign:'center'}}>
+                <div style={{display:'flex',justifyContent:'center',marginBottom:8,color}}>{allFailed?<IcoError s={48}/>:partialFail?<IcoWarn s={48}/>:<IcoDone s={48}/>}</div>
+                <div style={{fontSize:20,fontWeight:600,color,marginBottom:4}}>{title}</div>
+                <div style={{fontSize:13,color:C.muted}}>{sub}</div>
+              </div>
+            );
+          })()}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:20}}>
             {[{label:'Users',val:stats.users,icon:<IcoUser s={22}/>,color:C.primary},{label:'Conversations',val:stats.pages,icon:<IcoPage s={22}/>,color:C.success},{label:'Errors',val:stats.errors,icon:<IcoError s={22}/>,color:stats.errors>0?C.error:C.muted}].map((s,i)=>(
               <Card key={i} className="scale-in" style={{animationDelay:`${i*80}ms`,textAlign:'center',padding:16}}>
@@ -2212,11 +2220,22 @@ const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c
       )}
       {c2gDone&&(
         <>
-          <div style={{marginBottom:20,textAlign:'center'}}>
-            <div style={{display:'flex',justifyContent:'center',marginBottom:8,color:C.success}}><IcoDone s={48}/></div>
-            <div style={{fontSize:18,fontWeight:700,color:C.dark,marginBottom:4}}>{lastRunWasDry?'Dry Run Complete!':'Migration Complete!'}</div>
-            <div style={{fontSize:13,color:C.muted}}>{lastRunWasDry?'Preview finished — no files were uploaded.':'Copilot conversations have been uploaded to Google Drive.'}</div>
-          </div>
+          {(()=>{
+            const errs=c2gStats.errors||0;
+            const migConvs=c2gStats.convs??c2gStats.files??0;
+            const allFailed=!lastRunWasDry && errs>0 && migConvs===0;
+            const partialFail=!lastRunWasDry && errs>0 && migConvs>0;
+            const color=allFailed?C.error:(partialFail?'#92400E':C.success);
+            const title=lastRunWasDry?'Dry Run Complete!':allFailed?'Migration Failed':partialFail?'Migration Partially Complete':'Migration Complete!';
+            const sub=lastRunWasDry?'Preview finished — no files were uploaded.':allFailed?`No conversations were uploaded. ${errs} error${errs!==1?'s':''} — check the report.`:partialFail?`Some conversations uploaded, but ${errs} error${errs!==1?'s':''} occurred.`:'Copilot conversations have been uploaded to Google Drive as Word documents.';
+            return (
+              <div style={{marginBottom:20,textAlign:'center'}}>
+                <div style={{display:'flex',justifyContent:'center',marginBottom:8,color}}>{allFailed?<IcoError s={48}/>:partialFail?<IcoWarn s={48}/>:<IcoDone s={48}/>}</div>
+                <div style={{fontSize:18,fontWeight:700,color,marginBottom:4}}>{title}</div>
+                <div style={{fontSize:13,color:C.muted}}>{sub}</div>
+              </div>
+            );
+          })()}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:20}}>
             {[{label:'Users Processed',val:c2gTotal>0?`${c2gStats.users}/${c2gTotal}`:c2gStats.users,c:'#0129AC'},{label:lastRunWasDry?'Conversations (preview)':'Conversations',val:c2gStats.convs??c2gStats.files??0,c:'#20CC83'},{label:'Errors',val:c2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
               <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
@@ -2979,11 +2998,22 @@ const StepCL2GMigrate=({cl2gStats,cl2gDone,onRunAnother,onBack,onStart,cl2gLive,
       )}
       {cl2gDone&&(
         <>
-          <div style={{marginBottom:20,textAlign:'center'}}>
-            <div style={{display:'flex',justifyContent:'center',marginBottom:8,color:C.success}}><IcoDone s={48}/></div>
-            <div style={{fontSize:18,fontWeight:700,color:C.dark,marginBottom:4}}>{lastRunWasDry?'Dry Run Complete!':'Migration Complete!'}</div>
-            <div style={{fontSize:13,color:C.muted}}>{lastRunWasDry?'Preview finished — no files were uploaded.':'Claude conversations have been uploaded to Google Drive.'}</div>
-          </div>
+          {(()=>{
+            const errs=cl2gStats.errors||0;
+            const migConvs=cl2gStats.convs??cl2gStats.files??0;
+            const allFailed=!lastRunWasDry && errs>0 && migConvs===0;
+            const partialFail=!lastRunWasDry && errs>0 && migConvs>0;
+            const color=allFailed?C.error:(partialFail?'#92400E':C.success);
+            const title=lastRunWasDry?'Dry Run Complete!':allFailed?'Migration Failed':partialFail?'Migration Partially Complete':'Migration Complete!';
+            const sub=lastRunWasDry?'Preview finished — no files were uploaded.':allFailed?`No conversations were uploaded. ${errs} error${errs!==1?'s':''} — check the report.`:partialFail?`Some conversations uploaded, but ${errs} error${errs!==1?'s':''} occurred.`:'Claude conversations have been uploaded to Google Drive as Word documents.';
+            return (
+              <div style={{marginBottom:20,textAlign:'center'}}>
+                <div style={{display:'flex',justifyContent:'center',marginBottom:8,color}}>{allFailed?<IcoError s={48}/>:partialFail?<IcoWarn s={48}/>:<IcoDone s={48}/>}</div>
+                <div style={{fontSize:18,fontWeight:700,color,marginBottom:4}}>{title}</div>
+                <div style={{fontSize:13,color:C.muted}}>{sub}</div>
+              </div>
+            );
+          })()}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:20}}>
             {[{label:'Users Processed',val:cl2gTotal>0?`${cl2gStats.users}/${cl2gTotal}`:cl2gStats.users,c:'#0129AC'},{label:lastRunWasDry?'Conversations (preview)':'Conversations',val:cl2gStats.convs??cl2gStats.files??0,c:'#20CC83'},{label:'Errors',val:cl2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
               <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
@@ -3465,11 +3495,22 @@ const StepCL2CMigrate=({cl2cStats,cl2cDone,onRunAnother,onBack,onStart,cl2cLive,
       )}
       {cl2cDone&&(
         <>
-          <div style={{marginBottom:20,textAlign:'center'}}>
-            <div style={{display:'flex',justifyContent:'center',marginBottom:8,color:C.success}}><IcoDone s={48}/></div>
-            <div style={{fontSize:18,fontWeight:700,color:C.dark,marginBottom:4}}>{lastRunWasDry?'Dry Run Complete!':'Migration Complete!'}</div>
-            <div style={{fontSize:13,color:C.muted}}>{lastRunWasDry?'Preview finished — no files were uploaded.':'Claude conversations have been uploaded to Microsoft 365 Copilot.'}</div>
-          </div>
+          {(()=>{
+            const errs=cl2cStats.errors||0;
+            const migConvs=cl2cStats.convs??cl2cStats.files??0;
+            const allFailed=!lastRunWasDry && errs>0 && migConvs===0;
+            const partialFail=!lastRunWasDry && errs>0 && migConvs>0;
+            const color=allFailed?C.error:(partialFail?'#92400E':C.success);
+            const title=lastRunWasDry?'Dry Run Complete!':allFailed?'Migration Failed':partialFail?'Migration Partially Complete':'Migration Complete!';
+            const sub=lastRunWasDry?'Preview finished — no files were uploaded.':allFailed?`No conversations were delivered. ${errs} error${errs!==1?'s':''} — check the report.`:partialFail?`Some conversations migrated, but ${errs} error${errs!==1?'s':''} occurred.`:'Claude conversations have been migrated as Word documents to destination users’ OneDrive.';
+            return (
+              <div style={{marginBottom:20,textAlign:'center'}}>
+                <div style={{display:'flex',justifyContent:'center',marginBottom:8,color}}>{allFailed?<IcoError s={48}/>:partialFail?<IcoWarn s={48}/>:<IcoDone s={48}/>}</div>
+                <div style={{fontSize:18,fontWeight:700,color,marginBottom:4}}>{title}</div>
+                <div style={{fontSize:13,color:C.muted}}>{sub}</div>
+              </div>
+            );
+          })()}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:20}}>
             {[{label:'Users Processed',val:cl2cTotal>0?`${cl2cStats.users}/${cl2cTotal}`:cl2cStats.users,c:'#0129AC'},{label:lastRunWasDry?'Conversations (preview)':'Conversations',val:cl2cStats.convs??cl2cStats.files??0,c:'#20CC83'},{label:'Errors',val:cl2cStats.errors,c:'#FF1F1F'}].map((e,i)=>(
               <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
@@ -4854,15 +4895,22 @@ const StepG2GMigrate=({g2gStats,g2gDone,onRunAnother,onBack,onStart,g2gLive,onCh
         </>
       ):(
         <>
-          <div style={{marginBottom:20,textAlign:'center'}}>
-            <div style={{display:'flex',justifyContent:'center',marginBottom:8,color:C.success}}><IcoDone s={48}/></div>
-            <div style={{fontSize:20,fontWeight:600,color:C.success,marginBottom:4}}>
-              {lastRunWasDry?'Dry Run Complete!':'Migration Complete!'}
-            </div>
-            <div style={{fontSize:13,color:C.muted}}>
-              {lastRunWasDry?'Preview complete — no files were created.':'All conversations migrated successfully.'}
-            </div>
-          </div>
+          {(()=>{
+            const errs=g2gStats?.errors||0;
+            const migConvs=g2gStats?.conversationCount||0;
+            const allFailed=!lastRunWasDry && errs>0 && migConvs===0;
+            const partialFail=!lastRunWasDry && errs>0 && migConvs>0;
+            const color=allFailed?C.error:(partialFail?'#92400E':C.success);
+            const title=lastRunWasDry?'Dry Run Complete!':allFailed?'Migration Failed':partialFail?'Migration Partially Complete':'Migration Complete!';
+            const sub=lastRunWasDry?'Preview complete — no files were created.':allFailed?`No conversations were migrated. ${errs} error${errs!==1?'s':''} — check the report.`:partialFail?`Some conversations migrated, but ${errs} error${errs!==1?'s':''} occurred.`:'All conversations migrated successfully to destination users’ Drive.';
+            return (
+              <div style={{marginBottom:20,textAlign:'center'}}>
+                <div style={{display:'flex',justifyContent:'center',marginBottom:8,color}}>{allFailed?<IcoError s={48}/>:partialFail?<IcoWarn s={48}/>:<IcoDone s={48}/>}</div>
+                <div style={{fontSize:20,fontWeight:600,color,marginBottom:4}}>{title}</div>
+                <div style={{fontSize:13,color:C.muted}}>{sub}</div>
+              </div>
+            );
+          })()}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:20}}>
             {[{label:'Users',val:g2gStats?.users||0,icon:<IcoUser s={22}/>,color:C.primary},{label:'Conversations',val:g2gStats?.conversationCount||0,icon:<IcoPage s={22}/>,color:C.success},{label:'Files Created',val:g2gStats?.files||0,icon:<IcoPage s={22}/>,color:C.primaryL},{label:'Errors',val:g2gStats?.errors||0,icon:<IcoError s={22}/>,color:g2gStats?.errors>0?C.error:C.muted}].map((s,i)=>(
               <Card key={i} className="scale-in" style={{animationDelay:`${i*80}ms`,textAlign:'center',padding:16}}>
