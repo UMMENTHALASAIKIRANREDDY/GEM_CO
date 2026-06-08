@@ -112,3 +112,86 @@ export async function callAI(messages, tools, { model, maxTokens } = {}) {
 
   return response.choices?.[0]?.message ?? { content: 'No response from AI.' };
 }
+
+/**
+ * Streaming variant of callAI. Streams OpenAI completion token-by-token,
+ * invoking onText(delta) for each content chunk as it arrives. Tool-call
+ * fragments are accumulated and returned assembled. Returns the same message
+ * shape as callAI: { content, tool_calls }.
+ *
+ * Falls back to non-streaming callAI when no OpenAI key is set (e.g. Azure-only)
+ * so callers don't need a separate code path.
+ *
+ * @param {Array}    messages   chat messages
+ * @param {Array}    tools      tool definitions (or null)
+ * @param {Function} onText     called with each content delta string
+ * @param {object}   opts       { model, maxTokens }
+ */
+export async function callAIStream(messages, tools, onText, { model, maxTokens } = {}) {
+  const openaiKey = process.env.OPENAI_API_KEY;
+  // No OpenAI key → no streaming path; degrade to a single non-streamed emit.
+  if (!openaiKey) {
+    const msg = await callAI(messages, tools, { model, maxTokens });
+    if (msg.content && typeof onText === 'function') onText(msg.content);
+    return msg;
+  }
+
+  const safeMessages = messages.filter(m => m && m.role && (m.content || m.tool_calls));
+  const resolvedModel = model || process.env.OPENAI_MODEL || 'gpt-4.1-mini';
+  const body = { model: resolvedModel, messages: safeMessages, max_tokens: maxTokens || 1800, temperature: 0.15, stream: true };
+  if (tools) { body.tools = tools; body.tool_choice = 'auto'; }
+
+  const r = await _fetchWithRetry(
+    'https://api.openai.com/v1/chat/completions',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
+      body: JSON.stringify(body),
+    },
+    'OpenAI(stream)'
+  );
+
+  let content = '';
+  const toolCallsAcc = []; // index → { id, type, function: { name, arguments } }
+
+  const reader = r.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const data = trimmed.slice(5).trim();
+      if (data === '[DONE]') continue;
+      let chunk;
+      try { chunk = JSON.parse(data); } catch { continue; }
+      const delta = chunk.choices?.[0]?.delta;
+      if (!delta) continue;
+
+      if (delta.content) {
+        content += delta.content;
+        if (typeof onText === 'function') onText(delta.content);
+      }
+
+      if (Array.isArray(delta.tool_calls)) {
+        for (const tc of delta.tool_calls) {
+          const idx = tc.index ?? 0;
+          if (!toolCallsAcc[idx]) toolCallsAcc[idx] = { id: '', type: 'function', function: { name: '', arguments: '' } };
+          const slot = toolCallsAcc[idx];
+          if (tc.id) slot.id = tc.id;
+          if (tc.function?.name) slot.function.name += tc.function.name;
+          if (tc.function?.arguments) slot.function.arguments += tc.function.arguments;
+        }
+      }
+    }
+  }
+
+  const tool_calls = toolCallsAcc.filter(Boolean);
+  return { content: content || null, ...(tool_calls.length > 0 ? { tool_calls } : {}) };
+}

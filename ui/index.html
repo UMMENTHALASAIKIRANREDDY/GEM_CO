@@ -6615,6 +6615,8 @@ function App(){
       let finalText='';
       let finalQuickReplies=[];
       let finalWidget=null;
+      let streamMsgId=null;      // id of the bubble currently being streamed into
+      let lastStreamMsgId=null;  // id of the most recently finalized streamed bubble
       let sseEnded=false;
       while(!sseEnded){
         const{done,value}=await reader.read();
@@ -6629,8 +6631,22 @@ function App(){
           try{
             const evt=JSON.parse(json);
             if(evt.type==='text'){finalText=evt.content;}
+            else if(evt.type==='text_delta'){
+              // Live token stream — create the bubble on first delta, append after.
+              if(streamMsgId===null){
+                const id=Date.now()+Math.random();streamMsgId=id;
+                setAgentMsgs(prev=>{
+                  // strip stale chips/widgets off prior messages so only the newest shows them
+                  const cleaned=prev.map(m=>(m.widget||m.quickReplies)?{...m,widget:undefined,quickReplies:undefined}:m);
+                  return [...cleaned,{id,role:'bot',content:evt.content}];
+                });
+              }else{
+                const id=streamMsgId;
+                setAgentMsgs(prev=>prev.map(m=>m.id===id?{...m,content:(m.content||'')+evt.content}:m));
+              }
+            }
+            else if(evt.type==='text_done'){lastStreamMsgId=streamMsgId;streamMsgId=null;}
             else if(evt.type==='progress'&&evt.content&&evt.content!=='_waiting_for_user_action_'){
-              // Stream progress narration inline as a temporary status message
               addAgentMsg('bot-progress', evt.content, {});
             }
             else if(evt.type==='ui_event'){
@@ -6642,10 +6658,20 @@ function App(){
           }catch(_){}
         }
       }
-      if(finalText)addAgentMsg('bot',finalText,{
-        ...(finalQuickReplies.length>0&&{quickReplies:finalQuickReplies}),
-        ...(finalWidget&&{widget:finalWidget}),
-      });
+      if(finalText){
+        // Non-streamed path (fixed messages: confirm/cancel/pause)
+        addAgentMsg('bot',finalText,{
+          ...(finalQuickReplies.length>0&&{quickReplies:finalQuickReplies}),
+          ...(finalWidget&&{widget:finalWidget}),
+        });
+      }else if(lastStreamMsgId!==null&&(finalQuickReplies.length>0||finalWidget)){
+        // Streamed path — attach chips/widget to the final streamed bubble
+        const id=lastStreamMsgId;
+        setAgentMsgs(prev=>prev.map(m=>m.id===id?{...m,
+          ...(finalQuickReplies.length>0&&{quickReplies:finalQuickReplies}),
+          ...(finalWidget&&{widget:finalWidget}),
+        }:m));
+      }
     }catch(e){console.error('[Agent]',e);addAgentMsg('bot',"Sorry, I couldn't connect right now. Please try again.");}
     setAgentTyping(false);
   },[agentInput,agentMsgs,logs,step,live,c2gLive,cl2gLive,migDone,c2gDone,cl2gDone,stats,c2gStats,cl2gStats,lastRunWasDry,c2gLastDry,cl2gLastDry,currentBatchId,uploadData,googleAuthed,msAuthed,mappings,selectedUsers,options,config,c2gOptions,cl2gOptions,agentMode,migDir,cl2gMappings,cl2gUploadData,c2gMappings,applyAgentConfig,addAgentMsg,setMigDir,setStep,setShowReports,setLeftMode,applyUIEvent]);

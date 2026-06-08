@@ -1,5 +1,5 @@
 // src/agent/agentLoop.js
-import { callAI } from './callAI.js';
+import { callAI, callAIStream } from './callAI.js';
 import { AGENT_TOOLS, DESTRUCTIVE_TOOLS, CONFIRMATION_MESSAGES } from './tools.js';
 import { buildSystemPrompt } from './systemPrompt.js';
 import { loadHistory, saveHistory } from './conversationHistory.js';
@@ -517,6 +517,8 @@ export async function runAgentLoop(req, res, { message, migrationState: _migrati
   const sessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
   const streamText = (content) => res.write(`data: ${JSON.stringify({ type: 'text', content })}\n\n`);
+  const streamTextDelta = (content) => res.write(`data: ${JSON.stringify({ type: 'text_delta', content })}\n\n`);
+  const streamTextDone = () => res.write(`data: ${JSON.stringify({ type: 'text_done' })}\n\n`);
   const streamProgress = (content) => res.write(`data: ${JSON.stringify({ type: 'progress', content })}\n\n`);
   const streamEvent = (event, payload = {}) => res.write(`data: ${JSON.stringify({ type: 'ui_event', event, ...payload })}\n\n`);
   const streamQuickReplies = (replies) => streamEvent('quick_replies', { replies });
@@ -627,13 +629,20 @@ After each step completes, tell the user what happened in 1 sentence and ask wha
     let iterations = 0;
     let toolCallsMade = 0;
     let finalReply = null;
+    let finalReplyStreamed = false; // true once the final answer was streamed live (skip whole re-emit)
 
     while (iterations++ < MAX_ITERATIONS) {
-      const aiMsg = await callAI(messages, isSystemTrigger ? SAFE_TOOLS : AGENT_TOOLS);
+      // Stream the model's tokens live. onText fires per content delta.
+      let streamedThisIter = false;
+      const aiMsg = await callAIStream(messages, isSystemTrigger ? SAFE_TOOLS : AGENT_TOOLS, (delta) => {
+        streamedThisIter = true;
+        streamTextDelta(delta);
+      });
 
       // Text-only response — loop ends
       if (aiMsg.content && (!aiMsg.tool_calls || aiMsg.tool_calls.length === 0)) {
         finalReply = aiMsg.content;
+        if (streamedThisIter) { streamTextDone(); finalReplyStreamed = true; }
         await auditLog(sessionId, 'llm_response', {
           appUserId,
           iteration: iterations,
@@ -646,11 +655,9 @@ After each step completes, tell the user what happened in 1 sentence and ask wha
 
       // Tool call
       if (aiMsg.tool_calls && aiMsg.tool_calls.length > 0) {
-        // Stream short narration beats ("✓ Direction set...") between tool calls.
-        // Long content alongside a tool call is the model restating its full
-        // answer — drop it, the final text-only reply will cover it (streaming
-        // it caused near-duplicate stacked messages in the chat).
-        if (aiMsg.content && aiMsg.content.length <= 120) streamProgress(aiMsg.content);
+        // Any content streamed alongside the tool call is narration — close its
+        // bubble so the UI finalizes it before the tool result / next answer.
+        if (streamedThisIter) streamTextDone();
 
         const call = aiMsg.tool_calls[0];
         const toolName = call.function.name;
@@ -757,7 +764,9 @@ After each step completes, tell the user what happened in 1 sentence and ask wha
       finalReply = "I've been working through this but ran into a limit. Could you rephrase?";
     }
 
-    streamText(finalReply);
+    // If the answer was streamed token-by-token above, it's already on screen —
+    // don't re-emit it whole (would duplicate). Otherwise emit it as one message.
+    if (!finalReplyStreamed) streamText(finalReply);
 
     // AI-generated chips — contextual to agent reply + state. Falls back to rule-based.
     const aiChips = isSystemTrigger ? null : await generateChips(finalReply, migrationState);
