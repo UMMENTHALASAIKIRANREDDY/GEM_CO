@@ -7,12 +7,13 @@ import { rollupSeverity } from '../reportBuilder.js';
 import { getValidToken } from '../../../core/auth/microsoft.js';
 import { checkClaudeUploadValid, checkClaudeUserHasData } from '../checks/claudeSource.js';
 import {
-  checkMsUserExists, checkMsLicenses, checkOneDriveQuota, checkOneNoteSectionAvailable,
+  checkMsUserExists, checkMsLicenses, checkOneDriveQuota, checkDestFolderAvailable,
 } from '../checks/msDestination.js';
 
 export async function validateCL2C(ctx) {
   const { pairs = [], config = {}, uploadData, appUserId, msAccountId } = ctx;
-  const sectionName = config.folderName || config.sectionName || 'ClaudeChats';
+  // Top-level folder in each user's OneDrive (Phase 2 — DOCX layout).
+  const folderName = config.folderName || config.sectionName || 'ClaudeChats';
 
   const uploadChecks = checkClaudeUploadValid(uploadData);
   const uploadFatal = uploadChecks.some(c => c.severity === 'blocker');
@@ -30,7 +31,7 @@ export async function validateCL2C(ctx) {
       checks.push(...await checkMsUserExists(destToken, p.destEmail));
       checks.push(...await checkMsLicenses(destToken, p.destEmail));
       checks.push(...await checkOneDriveQuota(destToken, p.destEmail, p.expectedConversationCount || 25));
-      checks.push(...await checkOneNoteSectionAvailable(destToken, p.destEmail, sectionName));
+      checks.push(...await checkDestFolderAvailable(destToken, p.destEmail, folderName, 'Claude'));
     } else {
       checks.push({
         id: 'dest.ms.no_token',

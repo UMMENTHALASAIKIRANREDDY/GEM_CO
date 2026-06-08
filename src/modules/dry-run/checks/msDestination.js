@@ -109,29 +109,9 @@ export async function checkMsLicenses(accessToken, destEmail) {
     out.push(warningCheck('dest.ms.onedrive.lookup_failed', 'OneDrive provisioned', e.message));
   }
 
-  // ── OneNote functional check ────────────────────────────────────────────
-  try {
-    const { ok, status, data } = await graphGet(accessToken,
-      `https://graph.microsoft.com/v1.0/users/${userId}/onenote/notebooks?$top=1&$select=id`);
-    if (ok) {
-      out.push(passingCheck('dest.ms.onenote.accessible', 'OneNote accessible'));
-    } else if (status === 404 || /not.*licen/i.test(data?.error?.message || '')) {
-      out.push(blockerCheck(
-        'dest.ms.onenote.no_access',
-        'OneNote not accessible',
-        `${destEmail} cannot access OneNote: ${data?.error?.message || `HTTP ${status}`}`,
-        `Assign a Microsoft 365 plan that includes OneNote, or have the user open OneNote.com once to provision it.`
-      ));
-    } else {
-      out.push(warningCheck(
-        'dest.ms.onenote.lookup_failed',
-        'OneNote accessible',
-        `Could not verify OneNote: ${data?.error?.message || `HTTP ${status}`}`
-      ));
-    }
-  } catch (e) {
-    out.push(warningCheck('dest.ms.onenote.lookup_failed', 'OneNote accessible', e.message));
-  }
+  // Phase 2 (OneNote -> DOCX): the OneNote accessibility check is removed.
+  // Migration now writes a DOCX into the user's OneDrive (auto-provisioned
+  // on first write). The OneDrive check above is the only gate that matters.
 
   return out;
 }
@@ -170,80 +150,91 @@ export async function checkOneDriveQuota(accessToken, destEmail, estimatedFiles 
 }
 
 /**
- * Check if a notebook + section that the real migration would create already
- * exists. The pagesCreator (src/modules/g2c/pagesCreator.js) uses customerName
- * as the NOTEBOOK name, and `${customerName} Conversations` as the SECTION
- * inside it. We mirror that exact structure here so the dry-run check matches
- * reality — checking only sections globally misses notebook collisions and
- * also misses that the actual section name is different from the input.
+ * Check if the destination folder tree that the real migration would create
+ * already exists in the user's OneDrive. After Phase 2 (OneNote -> DOCX) the
+ * migration creates:
  *
- * Returns warning (not blocker) — migration will append to existing section,
- * but user should know they're appending vs creating fresh.
+ *   {folderName}/
+ *   ├── Conversations/             ← bundled DOCX(s)
+ *   └── Migrated from {Source}/    ← attachment files
+ *
+ * Returns warnings (not blockers) — migration will reuse existing folders
+ * (folder lookup is idempotent), but the user should know they're appending
+ * to an existing layout vs creating fresh.
+ *
+ * @param {string} accessToken Delegated MS Graph token.
+ * @param {string} destEmail   Destination user UPN.
+ * @param {string} folderName  Top-level folder name (typically customerName).
+ * @param {string} [sourceLabel='Gemini'] One of: Gemini / Copilot / Claude.
  */
-export async function checkOneNoteSectionAvailable(accessToken, destEmail, folderName) {
+export async function checkDestFolderAvailable(accessToken, destEmail, folderName, sourceLabel = 'Gemini') {
   if (!destEmail || !folderName) return [];
-  const notebookName = folderName;
-  const sectionName = `${folderName} Conversations`.slice(0, 46);
+  const conversationsSubfolder = `${folderName}/Conversations`;
+  const attachmentsSubfolder = `${folderName}/Migrated from ${sourceLabel}`;
   const results = [];
 
   try {
-    // 1. Look up notebook by name
-    const safeNb = notebookName.replace(/'/g, "''");
-    const { ok: nbOk, data: nbData } = await graphGet(accessToken,
-      `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(destEmail)}/onenote/notebooks?$filter=displayName eq '${safeNb}'`);
-    if (!nbOk) {
-      results.push(warningCheck(
-        'dest.ms.notebook.lookup_failed',
-        `Notebook "${notebookName}"`,
-        'Could not query existing OneNote notebooks. The migration will still try to create one.'
-      ));
-      return results;
-    }
-    const notebooks = nbData?.value || [];
-    if (notebooks.length === 0) {
-      results.push(passingCheck('dest.ms.notebook.available', `Notebook "${notebookName}" will be created`));
-      results.push(passingCheck('dest.ms.section.available', `Section "${sectionName}" will be created`));
+    // Look up the top folder at OneDrive root.
+    const safeName = folderName.replace(/'/g, "''");
+    const { ok, status, data } = await graphGet(accessToken,
+      `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(destEmail)}/drive/root:/${encodeURIComponent(folderName)}?$select=id,name,createdDateTime`);
+
+    if (!ok && status === 404) {
+      // Folder doesn't exist — fresh layout will be created.
+      results.push(passingCheck('dest.ms.folder.available', `Folder "${folderName}" will be created`));
+      results.push(passingCheck('dest.ms.folder.conversations.available', `Subfolder "${conversationsSubfolder}" will be created`));
+      results.push(passingCheck('dest.ms.folder.attachments.available', `Subfolder "${attachmentsSubfolder}" will be created`));
       return results;
     }
 
-    // 2. Notebook exists — warn that we'll append + look up section inside it
-    const notebook = notebooks[0];
+    if (!ok) {
+      results.push(warningCheck(
+        'dest.ms.folder.lookup_failed',
+        `Folder "${folderName}"`,
+        `Could not query the destination folder: ${data?.error?.message || `HTTP ${status}`}. Migration will still try to create it.`
+      ));
+      return results;
+    }
+
+    // Folder exists — flag that we'll append, then look up its subfolders.
     results.push(warningCheck(
-      'dest.ms.notebook.exists',
-      `Notebook "${notebookName}" already exists`,
-      `${destEmail} already has a OneNote notebook named "${notebookName}". Migration will append into it.`,
-      `Rename in Migration Options if you want a fresh notebook.`,
-      { notebookId: notebook.id, createdDateTime: notebook.createdDateTime }
+      'dest.ms.folder.exists',
+      `Folder "${folderName}" already exists`,
+      `${destEmail} already has a OneDrive folder named "${folderName}". Migration will append into it (any existing DOCX with the same filename will be auto-renamed by OneDrive).`,
+      `Rename in Migration Options if you want a fresh folder.`,
+      { folderId: data.id, createdDateTime: data.createdDateTime }
     ));
 
-    const safeSec = sectionName.replace(/'/g, "''");
-    const { ok: secOk, data: secData } = await graphGet(accessToken,
-      `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(destEmail)}/onenote/notebooks/${notebook.id}/sections?$filter=displayName eq '${safeSec}'`);
-    if (!secOk) {
-      results.push(warningCheck(
-        'dest.ms.section.lookup_failed',
-        `Section "${sectionName}"`,
-        'Could not query sections inside the existing notebook.'
-      ));
-      return results;
-    }
-    const sections = secData?.value || [];
-    if (sections.length === 0) {
-      results.push(passingCheck('dest.ms.section.available', `Section "${sectionName}" will be created inside "${notebookName}"`));
-    } else {
-      results.push(warningCheck(
-        'dest.ms.section.exists',
-        `Section "${sectionName}" already exists`,
-        `Notebook "${notebookName}" already has a section "${sectionName}". New pages will be appended.`,
-        `Rename in Migration Options for a fresh section.`,
-        { sectionId: sections[0].id, createdDateTime: sections[0].createdDateTime }
-      ));
+    // Probe each subfolder so the customer sees the full layout state.
+    for (const [sub, kind, checkId] of [
+      ['Conversations', 'conversations', 'dest.ms.folder.conversations'],
+      [`Migrated from ${sourceLabel}`, 'attachments', 'dest.ms.folder.attachments'],
+    ]) {
+      const fullPath = `${folderName}/${sub}`;
+      const { ok: subOk, status: subStatus } = await graphGet(accessToken,
+        `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(destEmail)}/drive/root:/${encodeURIComponent(fullPath)}?$select=id`);
+      if (!subOk && subStatus === 404) {
+        results.push(passingCheck(`${checkId}.available`, `Subfolder "${fullPath}" will be created`));
+      } else if (subOk) {
+        results.push(warningCheck(
+          `${checkId}.exists`,
+          `Subfolder "${fullPath}" already exists`,
+          `The ${kind} subfolder already exists. Migration will reuse it (idempotent).`
+        ));
+      }
     }
     return results;
   } catch (e) {
-    return [warningCheck('dest.ms.section.lookup_failed', `Section "${sectionName}"`, e.message)];
+    return [warningCheck('dest.ms.folder.lookup_failed', `Folder "${folderName}"`, e.message)];
   }
 }
+
+/**
+ * Backward-compat shim. The dry-run direction modules import this name; keep
+ * it pointing at the new check until those callers are renamed in a follow-up.
+ * @deprecated Use checkDestFolderAvailable directly.
+ */
+export const checkOneNoteSectionAvailable = checkDestFolderAvailable;
 
 function humanBytes(n) {
   if (n == null) return 'unknown';
