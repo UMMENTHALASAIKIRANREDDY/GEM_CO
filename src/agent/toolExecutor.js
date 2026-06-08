@@ -272,9 +272,32 @@ export async function executeTool(toolName, args, { streamEvent, session, migrat
       if (migDir !== 'copilot-copilot') {
         return { error: 'select_c2c_tenants only applies to Copilot→Copilot (cross-tenant). Current direction: ' + (migDir || 'none') };
       }
-      const { sourceTenantId, destTenantId } = args || {};
+      let { sourceTenantId, destTenantId } = args || {};
       if (!sourceTenantId || !destTenantId) {
         return { error: 'Both sourceTenantId and destTenantId are required' };
+      }
+
+      // Self-correct when the LLM passes an email instead of the tenantId GUID.
+      // The agent saw email→tenantId pairs in msAccountsList but sometimes still
+      // sends back the email. Look up the actual GUID before persisting.
+      const isGuid = (s) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+      const msAccountsList = migrationState?.msAccountsList || [];
+      const resolveTenantId = (raw) => {
+        if (isGuid(raw)) return raw;
+        // Match by email (case-insensitive) or by display name
+        const hit = msAccountsList.find(a =>
+          (a.email && a.email.toLowerCase() === String(raw).toLowerCase()) ||
+          (a.displayName && a.displayName.toLowerCase() === String(raw).toLowerCase())
+        );
+        return hit?.tenantId || raw;
+      };
+      sourceTenantId = resolveTenantId(sourceTenantId);
+      destTenantId = resolveTenantId(destTenantId);
+
+      // Final check — both must now be GUIDs
+      if (!isGuid(sourceTenantId) || !isGuid(destTenantId)) {
+        const known = msAccountsList.map(a => `${a.email} → ${a.tenantId}`).join(', ');
+        return { error: `Could not resolve tenant IDs. Pass the literal tenantId GUID from msAccountsList, not the email. Known tenants: ${known || '(none)'}` };
       }
       if (sourceTenantId === destTenantId) {
         return { error: 'Source and destination tenants must be different' };

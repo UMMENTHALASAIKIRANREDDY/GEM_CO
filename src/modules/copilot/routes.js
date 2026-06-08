@@ -732,7 +732,7 @@ async function runMigrationJob(job) {
 
   job.message = 'Session captured. Loading Gemini conversations...';
 
-  let upload = await db.collection('uploads').findOne({ _id: job.uploadId });
+  let upload = await db.collection('geminiUploads').findOne({ _id: job.uploadId });
   if (!upload) {
     const fallbackPath = path.join('uploads', `extracted_${job.uploadId}`);
     if (fs.existsSync(fallbackPath)) {

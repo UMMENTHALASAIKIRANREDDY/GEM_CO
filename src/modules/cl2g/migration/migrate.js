@@ -324,6 +324,10 @@ export async function migrateUserPair({
   sourceDisplayName,
   destUserEmail,
   extractPath,
+  // New optional ctx for DB-first read:
+  appUserId,
+  uploadId,
+  sourceEmail,
 }, opts = {}) {
   const result = {
     sourceUuid,
@@ -336,12 +340,23 @@ export async function migrateUserPair({
   };
 
   try {
-    if (!fs.existsSync(extractPath)) {
-      result.errors.push(`Upload directory not found: ${extractPath}. The uploaded ZIP was likely lost after a server restart. Please re-upload the ZIP file.`);
+    // DB-only: conversations are loaded from conversationStore. The disk
+    // extract is deleted at upload time and Memory/Projects are intentionally
+    // not migrated (see uploads-folder cleanup scope decision).
+    const { loadConversationsFromStore } = await import('../../_shared/conversationStore.js');
+    const conversations = await loadConversationsFromStore({
+      appUserId,
+      sourceEmail,
+      uploadId,
+      fromDate: opts?.fromDate,
+      toDate: opts?.toDate,
+      includeMigrated: !opts?.isResume,
+    }) || [];
+
+    if (conversations.length === 0) {
+      result.errors.push(`No conversations found in conversationStore for ${sourceEmail}. The upload may have failed at ingest time — please re-upload the ZIP.`);
       return result;
     }
-
-    const { conversations, memory, projects } = getUserData(extractPath, sourceUuid);
     result.conversationsCount = conversations.length;
 
     const folderName = opts.folderName || 'ClaudeChats';
@@ -405,41 +420,8 @@ export async function migrateUserPair({
       }
     }
 
-    // ── File 2: Memory (optional) ──────────────────────────────────────────
-    if (opts.includeMemory !== false && memory?.conversations_memory) {
-      try {
-        const buffer = await buildMemoryDocx(memory.conversations_memory, sourceDisplayName);
-        const uploaded = await uploadFileToDrive(
-          auth, 'Claude_Memory.docx',
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          buffer, mainFolder.id
-        );
-        result.filesUploaded++;
-        result.files.push({ name: 'Claude_Memory.docx', driveFileId: uploaded.id, webViewLink: uploaded.webViewLink });
-      } catch (err) {
-        result.errors.push(`Memory doc: ${err.message}`);
-      }
-    }
-
-    // ── File 3: All Projects merged into ONE DOCX (optional) ──────────────
-    if (opts.includeProjects !== false) {
-      const validProjects = projects.filter(p => p.name || (p.docs || []).length);
-      if (validProjects.length > 0) {
-        try {
-          const buffer = await buildAllProjectsDocx(validProjects, sourceDisplayName);
-          const uploaded = await uploadFileToDrive(
-            auth, 'Claude_Projects.docx',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            buffer, mainFolder.id
-          );
-          result.filesUploaded++;
-          result.files.push({ name: 'Claude_Projects.docx', driveFileId: uploaded.id, webViewLink: uploaded.webViewLink });
-        } catch (err) {
-          result.errors.push(`Projects DOCX: ${err.message}`);
-        }
-      }
-    }
-
+    // Memory + Projects DOCXs are no longer generated — those files lived
+    // only on disk and were dropped when we moved to DB-only storage.
   } catch (err) {
     result.errors.push(err.message || String(err));
   }

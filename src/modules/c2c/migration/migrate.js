@@ -541,6 +541,7 @@ export async function migrateC2CUserPair(
           if (onProgress) onProgress({
             pagesCreated: result.pagesCreated,
             filesUploaded: result.filesUploaded,
+            convIdx,
             totalConvs: sessions.size,
           });
         } catch (e) {
@@ -564,6 +565,7 @@ export async function migrateC2CUserPair(
         if (onProgress) onProgress({
           pagesCreated: result.pagesCreated,
           filesUploaded: result.filesUploaded,
+          convIdx,
           totalConvs: sessions.size,
         });
       } catch (err) {

@@ -89,25 +89,44 @@ export function createC2GRouter(deps) {
       const { appUserId, googleEmail, msEmail } = getWorkspaceContext(req);
       const { pairs, folderName, dryRun, fromDate, toDate } = req.body;
       if (!pairs?.length) return res.status(400).json({ error: 'No user pairs provided' });
-      const isDryRun = dryRun === true;
-      const c2gFolderName = folderName || 'CopilotChats';
 
       res.json({ started: true });
 
       const batchId = `c2g_${Date.now()}`;
       const startTime = new Date();
+      const resumeContext = {
+        kind: 'c2g',
+        appUserId, googleEmail, msEmail,
+        pairs, folderName, dryRun, fromDate, toDate,
+      };
 
-      setImmediate(async () => {
+      setImmediate(() => executeC2GMigration({ batchId, startTime, resumeContext, isResume: false }));
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Callable from boot-time auto-resume. The body is the original /migrate
+  // setImmediate work, with all closures replaced by resumeContext fields.
+  async function executeC2GMigration({ batchId, startTime, resumeContext, isResume }) {
+    try {
+      const { appUserId, googleEmail, msEmail, pairs, folderName, dryRun, fromDate, toDate } = resumeContext;
+      const isDryRun = dryRun === true;
+      const c2gFolderName = folderName || 'CopilotChats';
+      {
         let files = 0, errors = 0;
+        const { startHeartbeat, stopHeartbeat, markUserPairMigrated, markUserPairFailed } = await import('../_shared/conversationStore.js');
+        let _heartbeatId = null;
 
         // Create report doc in DB
         try {
           await db().collection('migrationWorkspaces').updateOne(
             { _id: batchId },
-            { $set: { migDir: 'copilot-gemini', customerName: c2gFolderName, tenantId: process.env.SOURCE_AZURE_TENANT_ID || process.env.C2G_AZURE_TENANT_ID || '', startTime, status: 'running', dryRun: isDryRun, direction: 'c2g', appUserId, googleEmail, msEmail } },
+            { $set: { migDir: 'copilot-gemini', customerName: c2gFolderName, tenantId: process.env.SOURCE_AZURE_TENANT_ID || process.env.C2G_AZURE_TENANT_ID || '', startTime, status: 'running', dryRun: isDryRun, direction: 'c2g', appUserId, googleEmail, msEmail, fromDate: fromDate || null, toDate: toDate || null, lastHeartbeat: new Date(), resumeContext, ...(isResume ? { resumedAt: new Date() } : {}) } },
             { upsert: true }
           );
-          dbLog.info(`migrationWorkspaces.insert — C2G batch ${batchId} status=running (dryRun=${isDryRun})`);
+          dbLog.info(`migrationWorkspaces.${isResume ? 'resume' : 'insert'} — C2G batch ${batchId} status=running (${isResume ? 'AUTO-RESUMED' : `dryRun=${isDryRun}`})`);
+          _heartbeatId = startHeartbeat(batchId);
         } catch (dbErr) { console.error('[C2G] DB insert error:', dbErr.message); }
 
         try {
@@ -210,7 +229,7 @@ export function createC2GRouter(deps) {
                 const sessions = new Map();
                 for (const item of interactions) { const sid = item.sessionId || 'unknown'; if (!sessions.has(sid)) sessions.set(sid, []); sessions.get(sid).push(item); }
                 c2gLog('info', `${p.sourceDisplayName} → ${p.destUserEmail}: ${interactions.length} interactions, ${sessions.size} conversations`);
-                reportUsers.push({ email: p.sourceEmail, destEmail: p.destUserEmail, displayName: p.sourceDisplayName, status: 'success', pages_created: sessions.size, conversations_processed: sessions.size, error_count: 0, errors: [] });
+                reportUsers.push({ email: p.sourceEmail, destEmail: p.destUserEmail, displayName: p.sourceDisplayName, status: 'success', pages_created: sessions.size, conversations_processed: sessions.size, migrated_conversations: sessions.size, files_uploaded: 0, error_count: 0, errors: [] });
                 files += sessions.size;
                 // Animate ring as we count sessions for this user. Emit ~10 progress
                 // events per user, with a tiny delay so the ring visibly moves even
@@ -235,7 +254,7 @@ export function createC2GRouter(deps) {
                 c2gLog('progress', JSON.stringify({ files: cumulativeConvs, errors, users: userIdx, total: migPairs.length }));
               } catch (e) {
                 c2gLog('warn', `${p.sourceDisplayName}: ${e.message}`);
-                reportUsers.push({ email: p.sourceEmail, destEmail: p.destUserEmail, displayName: p.sourceDisplayName, status: 'failed', pages_created: 0, conversations_processed: 0, error_count: 1, errors: [{ error_message: e.message }] });
+                reportUsers.push({ email: p.sourceEmail, destEmail: p.destUserEmail, displayName: p.sourceDisplayName, status: 'failed', pages_created: 0, conversations_processed: 0, migrated_conversations: 0, files_uploaded: 0, error_count: 1, errors: [{ error_message: e.message }] });
                 errors++;
                 userIdx++;
                 c2gLog('progress', JSON.stringify({ files: cumulativeConvs, errors, users: userIdx, total: migPairs.length }));
@@ -258,11 +277,20 @@ export function createC2GRouter(deps) {
               }
             } catch (e) { dbLog.warn(`Backfill actualFiles failed: ${e.message}`); }
 
+            const dryConvsSum = reportUsers.reduce((s, u) => s + (u.conversations_processed || 0), 0);
             await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: {
               migDir: 'copilot-gemini', status: 'completed', endTime: new Date(), dryRun: true, totalUsers: migPairs.length,
-              migratedConversations: files, migratedUsers: reportUsers.filter(u => u.status === 'success').length,
+              migratedConversations: dryConvsSum, migratedUsers: reportUsers.filter(u => u.status === 'success').length,
               failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors,
-              report: { summary: { total_users: migPairs.length, total_pages_created: files, total_errors: errors }, users: reportUsers }
+              report: {
+                summary: {
+                  total_users: migPairs.length,
+                  total_pages_created: files,
+                  total_errors: errors,
+                  total_conversations: dryConvsSum,
+                },
+                users: reportUsers,
+              }
             } }).catch(() => {});
             c2gLog('done', JSON.stringify({ files, errors, users: migPairs.length, batchId }));
             return;
@@ -272,6 +300,7 @@ export function createC2GRouter(deps) {
           const migOpts = { folderName: c2gFolderName };
           if (fromDate) migOpts.fromDate = fromDate;
           if (toDate) migOpts.toDate = toDate;
+          if (isResume) migOpts.isResume = true;
           const { migrateUserPair } = migModule;
           const results = [];
           const reportUsers = [];
@@ -283,27 +312,59 @@ export function createC2GRouter(deps) {
           c2gLog('info', `Starting C2G migration for ${migPairs.length} user pair(s)...`);
           c2gLog('total', JSON.stringify({ total: migPairs.length }));
 
+          // cumulativeConvs tracks total conversations processed across all
+          // finished users — needed so the live UI card can display
+          // "Conversations" instead of "Files Uploaded" (a single DOCX bundles
+          // many conversations, so file count understates real progress).
+          let cumulativeConvs = 0;
           for (const pair of migPairs) {
             c2gLog('info', `Processing: ${pair.sourceDisplayName} → ${pair.destUserEmail}`);
             const r = await migrateUserPair(
               { sourceUserId: pair.sourceUserId, sourceDisplayName: pair.sourceDisplayName, destUserEmail: pair.destUserEmail, userDelegatedToken },
-              migOpts,
+              {
+                ...migOpts,
+                // Context plumbed for conversationStore persistence
+                batchId,
+                appUserId,
+                sourceTenantId: process.env.SOURCE_AZURE_TENANT_ID || process.env.C2G_AZURE_TENANT_ID || null,
+                sourceEmail: pair.sourceEmail || pair.sourceDisplayName,
+              },
               ({ filesUploaded, convIdx, totalConvs }) => {
-                c2gLog('progress', JSON.stringify({ files: files + filesUploaded, errors, users: results.length, total: migPairs.length, convIdx, totalConvs }));
+                c2gLog('progress', JSON.stringify({ files: files + filesUploaded, convs: cumulativeConvs + (convIdx || 0), errors, users: results.length, total: migPairs.length, convIdx, totalConvs }));
               }
             );
             results.push(r);
+            cumulativeConvs += (r.conversationsCount || 0);
 
+            const _convCount = r.conversationsCount || 0;
+            const _status = r.errors?.length ? (r.filesUploaded > 0 ? 'partial' : 'failed') : 'success';
             const userReport = {
               email: r.sourceEmail || pair.sourceEmail || pair.sourceDisplayName,
               destEmail: r.destUserEmail, displayName: r.sourceDisplayName,
-              status: r.errors?.length ? (r.filesUploaded > 0 ? 'partial' : 'failed') : 'success',
-              pages_created: r.filesUploaded || 0, conversations_processed: r.conversationsCount || 0,
+              status: _status,
+              pages_created: r.filesUploaded || 0,
+              conversations_processed: _convCount,
+              // For C2G the destination DOCX bundles all conversations — so if
+              // status is success/partial the DOCX exists and we treat all
+              // parsed conversations as migrated. If failed (DOCX upload
+              // failed), nothing landed → 0.
+              migrated_conversations: _status === 'failed' ? 0 : _convCount,
+              // C2G doesn't upload standalone attachments today — leave at 0.
+              files_uploaded: 0,
               error_count: (r.errors || []).length,
               errors: (r.errors || []).map(e => ({ error_message: e })),
               files: r.files || [],
             };
             reportUsers.push(userReport);
+
+            // Mark conversationStore rows for this user pair (Graph source, batchId-based)
+            if (!isDryRun) {
+              if (userReport.status === 'failed') {
+                await markUserPairFailed({ appUserId, batchId, sourceEmail: userReport.email, error: (r.errors || [])[0] || 'unknown' });
+              } else {
+                await markUserPairMigrated({ appUserId, batchId, sourceEmail: userReport.email, destEmail: userReport.destEmail });
+              }
+            }
 
             if (r.errors?.length) {
               console.error(`[C2G] ${r.sourceDisplayName} errors:`, r.errors.join(' | '));
@@ -324,16 +385,38 @@ export function createC2GRouter(deps) {
             files += r.filesUploaded || 0;
             errors += (r.errors || []).length;
             c2gLog(r.errors?.length ? 'warn' : 'success', `${r.sourceDisplayName} → ${r.destUserEmail}: ${r.filesUploaded || 0} files uploaded, ${(r.errors||[]).length} error(s)`);
-            c2gLog('progress', JSON.stringify({ files, errors, users: results.length, total: migPairs.length }));
+            c2gLog('progress', JSON.stringify({ files, convs: cumulativeConvs, errors, users: results.length, total: migPairs.length }));
+
+            // Incremental progress write so the Reports panel (polling every 3s)
+            // sees how many users + files + conversations have been migrated so
+            // far, instead of staying at 0 until the entire batch finishes.
+            await db().collection('migrationWorkspaces').updateOne(
+              { _id: batchId },
+              {
+                $set: {
+                  progressUsers: reportUsers.length,
+                  progressPages: files,
+                  progressConversations: reportUsers.reduce((s, u) => s + (u.conversations_processed || 0), 0),
+                  progressErrors: errors,
+                  users: reportUsers,
+                  lastProgressAt: new Date(),
+                },
+              }
+            ).catch(() => {});
           }
 
+          const totalConvsSum = reportUsers.reduce((s, u) => s + (u.conversations_processed || 0), 0);
           const reportUpdate = {
             status: errors > 0 && files === 0 ? 'failed' : 'completed', endTime: new Date(),
-            totalUsers: migPairs.length, migratedConversations: files,
+            totalUsers: migPairs.length,
+            // migratedConversations is the source of truth for the Reports panel
+            // and CSV exports — it must reflect actual conversation count, not
+            // the file count (a single DOCX may bundle many conversations).
+            migratedConversations: totalConvsSum,
             migratedUsers: reportUsers.filter(u => u.status === 'success' || u.status === 'partial').length,
             failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors,
             report: {
-              summary: { total_users: migPairs.length, total_pages_created: files, total_errors: errors, total_conversations: reportUsers.reduce((s, u) => s + u.conversations_processed, 0) },
+              summary: { total_users: migPairs.length, total_pages_created: files, total_errors: errors, total_conversations: totalConvsSum },
               users: reportUsers,
             },
           };
@@ -345,12 +428,16 @@ export function createC2GRouter(deps) {
           c2gLog('error', e.message || String(e));
           await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'copilot-gemini', status: 'failed', endTime: new Date(), error: e.message } }).catch(() => {});
           c2gLog('done', JSON.stringify({ files, errors, users: 0, batchId }));
+        } finally {
+          stopHeartbeat(_heartbeatId);
         }
-      });
+      }
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      console.error('[C2G] executeC2GMigration top-level error:', err);
     }
-  });
+  }
+
+  router.executeC2GMigration = executeC2GMigration;
 
   return router;
 }

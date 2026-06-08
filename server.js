@@ -13,6 +13,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import session from 'express-session';
 import bcrypt from 'bcryptjs';
+import { randomBytes as _randomBytes } from 'crypto';
 
 import { getAuthUrl, acquireTokenByCode, isAuthenticated, getValidToken, clearMsToken, clearMsAccount, getMsAccounts, restoreMsSessions, verifyAppOnlyAccess } from './src/core/auth/microsoft.js';
 import { fetchTenantInfo, buildAdminConsentUrl } from './src/modules/c2c/tenantConsent.js';
@@ -59,8 +60,22 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json());
+
+// Session secret resolution.
+// - If SESSION_SECRET is set (production + properly-configured dev), use it.
+// - If missing, generate a random 32-byte secret for THIS process only.
+//   This means a server restart invalidates existing sessions (users have to
+//   sign in again) but eliminates the previously-hardcoded "gemco-session-2026"
+//   default which any reader of the source code could use to forge cookies.
+//   We log a loud warning so misconfigured deploys are obvious.
+const _sessionSecret = process.env.SESSION_SECRET || (() => {
+  const generated = _randomBytes(32).toString('base64');
+  console.warn('[security] SESSION_SECRET env var is missing. Using a process-ephemeral random secret. Sessions will not survive server restart. Set SESSION_SECRET in your .env to fix.');
+  return generated;
+})();
+
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'gemco-session-2026',
+  secret: _sessionSecret,
   resave: false,
   saveUninitialized: false,
   cookie: { maxAge: 24 * 60 * 60 * 1000 } // 24 hours
@@ -446,10 +461,35 @@ app.post('/api/auth/google/disconnect', requireAuth, async (req, res) => {
   // Wipe cached Google directory members when no Google accounts remain so a
   // freshly connected (different) domain doesn't show stale users in mapping.
   try {
+    // ConversationStore: drop rows for the specific Google account being
+    // disconnected (matches by sourceAccountId for G2C/G2G source side OR
+    // destAccountId for C2G/CL2G destination side).
+    const { deleteByGoogleAccount } = await import('./src/modules/_shared/conversationStore.js');
+    if (accountId) {
+      await deleteByGoogleAccount(appUserId, accountId);
+    }
     if (!getGoogleAccounts(appUserId).length) {
       await db().collection('cloudMembers').deleteMany({ appUserId, source: 'google' });
+      // Same fix as MS disconnect — wipe saved mappings + C2C session UI
+      // state so a fresh Google connect into a different domain doesn't
+      // show stale destinations from the prior cloud.
+      const mapWipe = await db().collection('userMappings').deleteMany({ appUserId });
+      const sessWipe = await db().collection('c2cSessions').deleteMany({ appUserId });
+      if (mapWipe.deletedCount > 0 || sessWipe.deletedCount > 0) {
+        console.log(`[disconnect google] cleared ${mapWipe.deletedCount} userMappings + ${sessWipe.deletedCount} c2cSessions for appUserId=${appUserId}`);
+      }
+      // Belt-and-suspenders: clear all vault-source conversationStore rows
+      // when no Google account remains for this user.
+      const { getDb } = await import('./src/db/mongo.js');
+      const conv = await getDb().collection('conversationStore').deleteMany({
+        appUserId,
+        sourceType: 'vault',
+      });
+      if (conv.deletedCount > 0) {
+        console.log(`[disconnect google] cleared ${conv.deletedCount} vault-source conversationStore rows`);
+      }
     }
-  } catch (e) { console.warn('[disconnect google] cloudMembers cleanup failed:', e.message); }
+  } catch (e) { console.warn('[disconnect google] cleanup failed:', e.message); }
   res.json({ success: true });
 });
 
@@ -484,7 +524,12 @@ app.get('/api/auth/ms/users', requireAuth, async (req, res) => {
 app.post('/api/auth/ms/disconnect', requireAuth, async (req, res) => {
   const { appUserId } = getWorkspaceContext(req);
   const { accountId } = req.body || {};
+  // Capture tenantId BEFORE clearing — we need it to wipe conversationStore
+  // rows scoped to this specific tenant.
+  let disconnectedTenantId = null;
   if (accountId) {
+    const before = getMsAccounts(appUserId).find(a => a.accountId === accountId);
+    disconnectedTenantId = before?.tenantId || null;
     clearMsAccount(appUserId, accountId);
     const remaining = getMsAccounts(appUserId);
     if (!remaining.length) delete req.session.msEmail;
@@ -499,6 +544,13 @@ app.post('/api/auth/ms/disconnect', requireAuth, async (req, res) => {
   // tenant picker would show consents from a prior session that the user
   // didn't grant in this session. Matches user expectation of "fresh state".
   try {
+    // ConversationStore: drop rows for the specific tenant being disconnected.
+    // If `accountId` was passed and we knew its tenantId, wipe only that one.
+    // If all MS accounts are gone, wipe everything graph-sourced for this user.
+    const { deleteByTenant, deleteByAppUser } = await import('./src/modules/_shared/conversationStore.js');
+    if (disconnectedTenantId) {
+      await deleteByTenant(appUserId, disconnectedTenantId);
+    }
     if (!getMsAccounts(appUserId).length) {
       await db().collection('cloudMembers').deleteMany({ appUserId, source: 'microsoft' });
       const c2cWipe = await db().collection('connectedTenants').updateMany(
@@ -507,6 +559,26 @@ app.post('/api/auth/ms/disconnect', requireAuth, async (req, res) => {
       );
       if (c2cWipe.modifiedCount > 0) {
         console.log(`[disconnect ms] soft-revoked ${c2cWipe.modifiedCount} C2C tenant consent(s) for appUserId=${appUserId}`);
+      }
+      // Wipe ALL saved user-mapping docs + C2C session UI state. Mappings are
+      // keyed only by (appUserId, migDir) with no tenant scope, so without
+      // this they survive a reconnect into a different tenant and the User
+      // Mapping screen shows stale destinations from the prior cloud
+      // (the "gajha.com" bug).
+      const mapWipe = await db().collection('userMappings').deleteMany({ appUserId });
+      const sessWipe = await db().collection('c2cSessions').deleteMany({ appUserId });
+      if (mapWipe.deletedCount > 0 || sessWipe.deletedCount > 0) {
+        console.log(`[disconnect ms] cleared ${mapWipe.deletedCount} userMappings + ${sessWipe.deletedCount} c2cSessions for appUserId=${appUserId}`);
+      }
+      // Belt-and-suspenders: clear all graph-source conversationStore rows
+      // when no MS account remains (covers tenantId-less rows from prior sessions)
+      const { getDb } = await import('./src/db/mongo.js');
+      const conv = await getDb().collection('conversationStore').deleteMany({
+        appUserId,
+        sourceType: 'graph',
+      });
+      if (conv.deletedCount > 0) {
+        console.log(`[disconnect ms] cleared ${conv.deletedCount} graph-source conversationStore rows`);
       }
     }
   } catch (e) { console.warn('[disconnect ms] cleanup failed:', e.message); }
@@ -545,33 +617,76 @@ app.put('/api/config', requireAuth, async (req, res) => {
 
 // ─── Migration workspace + job endpoints ─────────────────────────────────────
 
-// One-call state load on login — returns config, mappings, recent workspaces, recent uploads
+// One-call state load on login — returns config, mappings, recent workspaces,
+// recent uploads, chat messages, and UI session state. Loaded in parallel so
+// the UI can hydrate from a single round-trip on mount.
 app.get('/api/init', requireAuth, async (req, res) => {
   try {
     const { appUserId } = getWorkspaceContext(req);
     if (!appUserId) return res.status(401).json({ error: 'Session missing user id' });
-    const [config, mappings, recentWorkspaces, recentUploads, chatDoc] = await Promise.all([
+    const [config, mappings, recentWorkspaces, recentUploads, chatDoc, sessionDoc, msSession] = await Promise.all([
       db().collection('userConfig').findOne({ appUserId }),
       db().collection('userMappings').find({ appUserId }).toArray(),
       db().collection('migrationWorkspaces').find({ appUserId }).sort({ startTime: -1 }).limit(10).toArray(),
-      db().collection('uploads').find({ appUserId }).sort({ uploadTime: -1 }).limit(5).toArray(),
-      db().collection('chatHistory').findOne({ appUserId }),
+      db().collection('geminiUploads').find({ appUserId }).sort({ uploadTime: -1 }).limit(5).toArray(),
+      // chatHistory holds the consolidated {appUserId, messages: [...]} doc
+      // written by POST /api/chat-messages below. Per-message docs from
+      // src/agent/conversationHistory.js live in the same collection but
+      // have a different shape (no messages field on those) — the findOne
+      // here only matches our consolidated doc.
+      db().collection('chatHistory').findOne({ appUserId, messages: { $exists: true } }),
+      db().collection('userSessions').findOne({ appUserId }),
+      // Fall back: if userConfig has no tenantId yet (first-time user after
+      // the localStorage->DB migration), use the MS auth session's tenantId
+      // so /api/migrate doesn't 400 with "tenant_id is required".
+      db().collection('authSessions').findOne({ appUserId, provider: 'microsoft' }, { projection: { tenantId: 1 } }),
     ]);
-    res.json({ config, mappings, recentWorkspaces, recentUploads, chatMessages: chatDoc?.messages || [], uiState: chatDoc?.uiState || null });
+    const effectiveConfig = config || {};
+    if (!effectiveConfig.tenantId && msSession?.tenantId) {
+      effectiveConfig.tenantId = msSession.tenantId;
+    }
+    res.json({
+      config: effectiveConfig,
+      mappings,
+      recentWorkspaces,
+      recentUploads,
+      chatMessages: chatDoc?.messages || [],
+      uiState: sessionDoc?.uiState || null,
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Save chat messages + UI position for cross-device persistence
-app.post('/api/chat-history', requireAuth, async (req, res) => {
+// Save agent chat messages. Lives in chatHistory collection as a single doc
+// per user with a `messages` array — distinct from the per-message docs that
+// src/agent/conversationHistory.js writes to the same collection.
+app.post('/api/chat-messages', requireAuth, async (req, res) => {
   try {
     const { appUserId } = getWorkspaceContext(req);
     if (!appUserId) return res.status(401).json({ error: 'Not authenticated' });
-    const { messages, uiState } = req.body;
+    const { messages } = req.body;
     if (!Array.isArray(messages)) return res.status(400).json({ error: 'messages must be array' });
-    const update = { messages: messages.slice(-30), updatedAt: new Date() };
-    // uiState carries step, migDir, options — enough to restore left-panel position on any device
-    if (uiState && typeof uiState === 'object') update.uiState = uiState;
-    await db().collection('chatHistory').updateOne({ appUserId }, { $set: update }, { upsert: true });
+    await db().collection('chatHistory').updateOne(
+      { appUserId, messages: { $exists: true } },
+      { $set: { messages: messages.slice(-30), updatedAt: new Date() } },
+      { upsert: true }
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Save UI session state (step, migDir, options, configs, done flags, stats,
+// cosmetic UI prefs) for cross-device restore. One doc per user.
+app.post('/api/user-session', requireAuth, async (req, res) => {
+  try {
+    const { appUserId } = getWorkspaceContext(req);
+    if (!appUserId) return res.status(401).json({ error: 'Not authenticated' });
+    const { uiState } = req.body;
+    if (!uiState || typeof uiState !== 'object') return res.status(400).json({ error: 'uiState must be object' });
+    await db().collection('userSessions').updateOne(
+      { appUserId },
+      { $set: { uiState, updatedAt: new Date() } },
+      { upsert: true }
+    );
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -597,36 +712,6 @@ app.get('/api/workspaces', requireAuth, async (req, res) => {
       .limit(50)
       .toArray();
     res.json(workspaces);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Jobs for a specific workspace
-app.get('/api/jobs/:workspaceId', requireAuth, async (req, res) => {
-  try {
-    const { appUserId } = getWorkspaceContext(req);
-    if (!appUserId) return res.status(401).json({ error: 'Session missing user id' });
-    const jobs = await db().collection('migrationJobs')
-      .find({ workspaceId: req.params.workspaceId, appUserId })
-      .sort({ startTime: 1 })
-      .toArray();
-    res.json(jobs);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Retry a single failed job (marks it retried; actual re-run done by agent)
-app.post('/api/jobs/:jobId/retry', requireAuth, async (req, res) => {
-  try {
-    const { appUserId } = getWorkspaceContext(req);
-    if (!appUserId) return res.status(401).json({ error: 'Session missing user id' });
-    const job = await db().collection('migrationJobs')
-      .findOne({ jobId: req.params.jobId, appUserId });
-    if (!job) return res.status(404).json({ error: 'Job not found' });
-    if (job.status !== 'failed') return res.status(400).json({ error: 'Job is not failed' });
-    await db().collection('migrationJobs').updateOne(
-      { jobId: job.jobId },
-      { $set: { status: 'retried', retriedAt: new Date() } }
-    );
-    res.json({ ok: true, jobId: job.jobId });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -726,6 +811,15 @@ app.use('/api/cl2c', cl2cRouter);
 const g2gRouter = createG2GRouter({ db, getGoogleOAuth2Client });
 app.use('/api/g2g', g2gRouter);
 
+// Register G2G as a resume-capable migration so boot-time orphan detector
+// auto-resumes G2G batches instead of just marking them failed.
+try {
+  const { registerResumeHandler } = await import('./src/modules/_shared/conversationStore.js');
+  if (typeof g2gRouter.executeG2GMigration === 'function') {
+    registerResumeHandler('g2g', g2gRouter.executeG2GMigration);
+  }
+} catch (e) { console.warn('[startup] G2G resume registration failed:', e.message); }
+
 app.use('/copilot', createCopilotRouter());
 
 // C2C router — mounted at /api/c2c (Copilot → Copilot, cross-tenant)
@@ -735,6 +829,17 @@ app.use('/api/c2c', c2cRouter);
 // Tenant consent callback for C2C — outside /api prefix so MS can redirect to it
 app.get('/auth/ms/tenant-consent-callback', createTenantConsentCallback({ db }));
 
+// Register auto-resume handlers for the remaining 5 directions. Must run BEFORE
+// detectAndMarkOrphanedBatches (below) so the boot scan finds a handler to dispatch.
+try {
+  const { registerResumeHandler } = await import('./src/modules/_shared/conversationStore.js');
+  if (typeof g2cRouter.executeG2CMigration === 'function')  registerResumeHandler('g2c',  g2cRouter.executeG2CMigration);
+  if (typeof c2gRouter.executeC2GMigration === 'function')  registerResumeHandler('c2g',  c2gRouter.executeC2GMigration);
+  if (typeof c2cRouter.executeC2CMigration === 'function')  registerResumeHandler('c2c',  c2cRouter.executeC2CMigration);
+  if (typeof cl2gRouter.executeCL2GMigration === 'function') registerResumeHandler('cl2g', cl2gRouter.executeCL2GMigration);
+  if (typeof cl2cRouter.executeCL2CMigration === 'function') registerResumeHandler('cl2c', cl2cRouter.executeCL2CMigration);
+} catch (e) { console.warn('[startup] Resume handler registration failed:', e.message); }
+
 // ─── Index bootstrap ──────────────────────────────────────────────────────────
 
 async function ensureIndexes(database) {
@@ -743,12 +848,9 @@ async function ensureIndexes(database) {
 
   await Promise.all([
     idx('migrationWorkspaces', { appUserId: 1, startTime: -1 }),
-    idx('migrationJobs',       { workspaceId: 1, appUserId: 1 }),
-    idx('migrationJobs',       { jobId: 1 }, { unique: true }),
     idx('userMappings',        { appUserId: 1, migDir: 1 }, { unique: true }),
     idx('uploads',             { appUserId: 1, uploadTime: -1 }),
     idx('userConfig',          { appUserId: 1 }, { unique: true }),
-    idx('cachedUsers',         { appUserId: 1, role: 1, migDir: 1 }),
   ]);
 }
 
@@ -771,6 +873,22 @@ connectMongo().then(async () => {
 
   await restoreGoogleSessions();
   await restoreMsSessions();
+
+  // Boot-time orphan-batch cleanup. If the server was killed mid-migration
+  // (deploy, crash, container restart), there will be migrationWorkspaces
+  // stuck in status='running' with stale heartbeats. Mark them failed so
+  // the UI doesn't show "Running..." forever.
+  try {
+    const { detectAndMarkOrphanedBatches } = await import('./src/modules/_shared/conversationStore.js');
+    // cutoffMs: 0 — on boot, ANY batch left in 'running' state is by definition
+    // orphaned (the previous process is gone). Using a >0 cutoff (e.g. 60s) means
+    // fast restarts skip resume entirely because the heartbeat is still fresh.
+    const { found } = await detectAndMarkOrphanedBatches({ cutoffMs: 0 });
+    if (found > 0) console.log(`[startup] Marked ${found} orphaned migration batch(es) as failed`);
+  } catch (e) {
+    console.warn('[startup] Orphan-batch cleanup non-fatal:', e.message);
+  }
+
   const httpServer = app.listen(PORT, () => {
     console.log(`\nCloudFuze Migration`);
     console.log(`Open: http://localhost:${PORT}\n`);

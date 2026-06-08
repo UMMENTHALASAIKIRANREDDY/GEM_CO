@@ -14,7 +14,7 @@ export async function validateG2G(ctx) {
   const { pairs = [], config = {}, uploadData, extractPath, sourceAccountId, destAccountId } = ctx;
   const folderName = config.folderName || config.gemName || 'Gemini Conversations';
 
-  const extractChecks = checkVaultExtractValid(extractPath);
+  const extractChecks = await checkVaultExtractValid(extractPath, uploadData);
   const extractFatal = extractChecks.some(c => c.severity === 'blocker');
 
   // Cross-account sanity

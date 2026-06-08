@@ -1,19 +1,22 @@
 /**
  * CL2C (Claude → Copilot/OneNote) migration runner.
- * Reads Claude export ZIP and creates OneNote pages in each target user's M365 account.
- * Reuses PagesCreator from g2c and zipParser from cl2g.
+ *
+ * Reads conversations from conversationStore (DB) and creates OneNote pages in
+ * each target user's M365 account. The disk extract is deleted at upload time,
+ * so this code path is DB-only — there is no disk fallback. Memory + project
+ * documents are intentionally not migrated (see uploads-folder cleanup
+ * scope decision); only conversations are processed.
  */
 
-import fs from 'node:fs';
 import { PagesCreator } from '../../g2c/pagesCreator.js';
-import { getUserData } from '../../cl2g/zipParser.js';
 
 export async function migrateUserPair({
   sourceUuid,
   sourceDisplayName,
   destUserEmail,
-  extractPath,
   appUserId,
+  uploadId,
+  sourceEmail,
 }, opts = {}) {
   const result = {
     sourceUuid,
@@ -26,29 +29,27 @@ export async function migrateUserPair({
   };
 
   try {
-    if (!fs.existsSync(extractPath)) {
-      result.errors.push(`Upload directory not found: ${extractPath}. The uploaded ZIP was likely lost after a server restart. Please re-upload the ZIP file.`);
+    const { loadConversationsFromStore } = await import('../../_shared/conversationStore.js');
+    const conversations = await loadConversationsFromStore({
+      appUserId,
+      sourceEmail,
+      uploadId,
+      fromDate: opts?.fromDate,
+      toDate: opts?.toDate,
+      includeMigrated: !opts?.isResume,
+    });
+
+    if (!conversations || conversations.length === 0) {
+      result.errors.push(`No conversations found in conversationStore for ${sourceEmail}. The upload may have failed at ingest time — please re-upload the ZIP.`);
       return result;
     }
-
-    const { conversations, memory, projects } = getUserData(extractPath, sourceUuid);
     result.conversationsCount = conversations.length;
 
     const folderName = opts.folderName || 'ClaudeChats';
     const creator = new PagesCreator(null, folderName, appUserId);
 
-    // Apply date filter
-    let filteredConvs = conversations;
-    if (opts.fromDate || opts.toDate) {
-      const from = opts.fromDate ? new Date(opts.fromDate) : null;
-      const to   = opts.toDate   ? new Date(opts.toDate + 'T23:59:59Z') : null;
-      filteredConvs = conversations.filter(c => {
-        const d = new Date(c.created_at);
-        if (from && d < from) return false;
-        if (to   && d > to)   return false;
-        return true;
-      });
-    }
+    // Date filtering is already applied inside loadConversationsFromStore.
+    const filteredConvs = conversations;
 
     // One OneNote page per conversation
     let oneNoteBlocked = false;
@@ -67,32 +68,6 @@ export async function migrateUserPair({
         }
       }
     }
-
-    // Memory page (optional)
-    if (!oneNoteBlocked && opts.includeMemory !== false && memory?.conversations_memory) {
-      try {
-        await creator.createClaudeMemoryPage(destUserEmail, memory.conversations_memory, sourceDisplayName);
-        result.filesUploaded++;
-        result.files.push({ name: 'Claude Memory', type: 'onenote-page' });
-      } catch (err) {
-        result.errors.push(`Memory: ${err.message}`);
-      }
-    }
-
-    // Projects page (optional)
-    if (!oneNoteBlocked && opts.includeProjects !== false) {
-      const validProjects = projects.filter(p => p.name || (p.docs || []).length);
-      if (validProjects.length > 0) {
-        try {
-          await creator.createClaudeProjectsPage(destUserEmail, validProjects, sourceDisplayName);
-          result.filesUploaded++;
-          result.files.push({ name: 'Claude Projects', type: 'onenote-page' });
-        } catch (err) {
-          result.errors.push(`Projects: ${err.message}`);
-        }
-      }
-    }
-
   } catch (err) {
     result.errors.push(err.message || String(err));
   }

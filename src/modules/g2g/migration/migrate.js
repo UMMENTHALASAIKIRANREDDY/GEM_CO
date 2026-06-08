@@ -378,9 +378,23 @@ async function uploadFileToDrive(auth, fileName, mimeType, content, parentFolder
 }
 
 export async function runG2GMigration(
-  { vaultZipPath, extractPath, sourceAuth, destAuth, isDryRun, selectedUsers, userMappings, opts },
+  { vaultZipPath, extractPath, sourceAuth, destAuth, isDryRun, selectedUsers, userMappings, opts,
+    batchId, appUserId, sourceAccountId, destAccountId, uploadId: rawUploadId },
   onLog
 ) {
+  // The upload endpoint stores the raw filename hash as uploadId in conversationStore.
+  // G2G receives the full extractPath (e.g. ".../uploads/extracted_<hash>"). Derive
+  // the actual uploadId by stripping the "extracted_" prefix from the path basename,
+  // so DB-first read and status marking match the row keys.
+  let uploadId = rawUploadId;
+  if (uploadId && typeof uploadId === 'string') {
+    const base = path.basename(uploadId);
+    if (base.startsWith('extracted_')) {
+      uploadId = base.slice('extracted_'.length);
+    } else {
+      uploadId = base;
+    }
+  }
   const result = {
     conversationsCount: 0,
     filesUploaded: 0,
@@ -404,16 +418,30 @@ export async function runG2GMigration(
       usingTempDir = true;
     }
 
-    if (!readerPath) {
-      result.errors.push('No vault data path provided (extractPath or vaultZipPath required)');
-      onLog({ type: 'error', message: 'No vault data path provided' });
-      return result;
+    // After the move to DB-only storage, the disk extract is deleted at upload
+    // time. VaultReader is now only instantiated when the disk path actually
+    // exists (legacy uploads + dev/test); otherwise we use the upload metadata
+    // document for user discovery and conversationStore for conversation
+    // loading.
+    const diskAvailable = !!readerPath && fs.existsSync(readerPath);
+    const vaultReader = diskAvailable ? new VaultReader(readerPath) : null;
+
+    let allUsers;
+    if (vaultReader) {
+      onLog({ type: 'info', message: 'Reading conversations from Vault export...' });
+      allUsers = await vaultReader.discoverUsers();
+    } else {
+      // DB-only path: look up the upload doc for the user list
+      onLog({ type: 'info', message: 'Reading user list from upload metadata (DB-only mode)...' });
+      const { getDb } = await import('../../../db/mongo.js');
+      const uploadDoc = uploadId ? await getDb().collection('geminiUploads').findOne({ _id: uploadId }) : null;
+      if (!uploadDoc) {
+        result.errors.push(`Upload ${uploadId || '(none)'} not found in DB and disk extract is gone — please re-upload the Vault ZIP.`);
+        onLog({ type: 'error', message: result.errors[0] });
+        return result;
+      }
+      allUsers = (uploadDoc.users || []).map(u => ({ email: u.email, displayName: u.displayName, conversationCount: u.conversationCount }));
     }
-
-    onLog({ type: 'info', message: 'Reading conversations from Vault export...' });
-
-    const vaultReader = new VaultReader(readerPath);
-    const allUsers = await vaultReader.discoverUsers();
 
     if (!allUsers.length) {
       result.errors.push('No users found in Vault export');
@@ -464,6 +492,16 @@ export async function runG2GMigration(
         status: 'pending',
         pages_created: 0,
         files_created: 0,
+        // Total conversations read for this user (source count). Set after we
+        // load them below. Reports panel + CSV "Total Conversations" column.
+        conversations_processed: 0,
+        // Migrated conversations = how many actually made it into the DOCX(s)
+        // at the destination. <= conversations_processed.
+        migrated_conversations: 0,
+        // Attachment files only (images / PDFs uploaded as standalone files).
+        // The conversation DOCX is NOT counted here — it's the conversation
+        // container, not a "file" in the Reports/CSV sense.
+        files_uploaded: 0,
         error_count: 0,
         errors: [],
       };
@@ -472,12 +510,47 @@ export async function runG2GMigration(
       onLog({ type: 'user', message: sourceEmail });
 
       let conversations = [];
+      let userAlreadyFullyMigrated = false;
       try {
-        conversations = await vaultReader.loadUserConversations(
-          sourceEmail,
-          opts?.fromDate,
-          opts?.toDate
-        );
+        // DB-first: try conversationStore (populated at upload time)
+        if (appUserId && uploadId) {
+          try {
+            const { loadConversationsFromStore } = await import('../../_shared/conversationStore.js');
+            // On RESUME, only load unmigrated rows. If user has 0 unmigrated rows
+            // (already fully migrated), skip them. Fresh runs load everything.
+            const fromStore = await loadConversationsFromStore({
+              appUserId,
+              sourceEmail,
+              uploadId,
+              fromDate: opts?.fromDate,
+              toDate: opts?.toDate,
+              includeMigrated: !opts?.isResume,   // ← key change: resume skips already-done
+            });
+            if (fromStore && fromStore.length > 0) {
+              conversations = fromStore;
+              onLog({ type: 'info', message: `  Loaded ${conversations.length} conversations from conversationStore for ${sourceEmail}${opts?.isResume ? ' (RESUME)' : ''}` });
+            } else if (opts?.isResume) {
+              // Resume + empty result = this user pair is fully migrated already
+              userAlreadyFullyMigrated = true;
+              onLog({ type: 'info', message: `  Skipping ${sourceEmail} — all conversations already migrated (resume)` });
+            }
+          } catch (_) { /* fall through to disk */ }
+        }
+        // Disk fallback only when we actually have a disk reader (legacy uploads).
+        // After the DB-only move, vaultReader is null and the migration is
+        // entirely DB-driven — a 0-length result here means the conversationStore
+        // doesn't have this user's data, and we should fail loudly.
+        if (conversations.length === 0 && !userAlreadyFullyMigrated) {
+          if (vaultReader) {
+            conversations = await vaultReader.loadUserConversations(
+              sourceEmail,
+              opts?.fromDate,
+              opts?.toDate
+            );
+          } else {
+            onLog({ type: 'warn', message: `  No conversations in conversationStore for ${sourceEmail} — upload may need to be re-done.` });
+          }
+        }
       } catch (err) {
         const errMsg = `${sourceEmail}: load failed — ${err.message}`;
         result.errors.push(errMsg);
@@ -491,7 +564,10 @@ export async function runG2GMigration(
       }
 
       if (!conversations.length) {
-        onLog({ type: 'warn', message: `No conversations for ${sourceEmail}` });
+        const msg = userAlreadyFullyMigrated
+          ? `All conversations for ${sourceEmail} already migrated — skipping (resume)`
+          : `No conversations for ${sourceEmail}`;
+        onLog({ type: userAlreadyFullyMigrated ? 'info' : 'warn', message: msg });
         userRecord.status = 'success';
         result.users.push(userRecord);
         result.migratedUsers++;
@@ -500,6 +576,10 @@ export async function runG2GMigration(
       }
 
       result.conversationsCount += conversations.length;
+      userRecord.conversations_processed = conversations.length;
+
+      // Note: conversations already persisted to conversationStore at upload time
+      // (via the shared /api/upload endpoint that serves both G2C and G2G).
 
       if (isDryRun) {
         onLog({
@@ -508,6 +588,7 @@ export async function runG2GMigration(
         });
         userRecord.status = 'success';
         userRecord.pages_created = conversations.length;
+        userRecord.migrated_conversations = conversations.length;
         result.users.push(userRecord);
         result.migratedUsers++;
         emitProgress();
@@ -668,6 +749,8 @@ export async function runG2GMigration(
             }
             result.filesUploaded++;
             userRecord.files_created++;
+            // Real attachment (image regen) — counts toward "Files" in CSV/Reports.
+            userRecord.files_uploaded++;
             regeneratedCount++;
             onLog({ type: 'success', message: `  Gemini-regenerated: "${f.name}" (${buf.length} bytes) → ${mappedTo}'s Drive` });
           } catch (err) {
@@ -715,6 +798,10 @@ export async function runG2GMigration(
           result.filesUploaded++;
           userRecord.files_created++;
           userRecord.pages_created += batch.length;
+          // batch.length conversations just landed at the destination — that's
+          // what "Migrated Conversations" counts. The DOCX itself is NOT a file
+          // (it's the conversation container), so files_uploaded is not bumped here.
+          userRecord.migrated_conversations += batch.length;
 
           onLog({
             type: 'success',
@@ -744,6 +831,17 @@ export async function runG2GMigration(
         type: 'success',
         message: `Completed ${sourceEmail} → ${mappedTo}: ${userRecord.files_created} file(s) uploaded`
       });
+      // Mark conversationStore rows for this user pair (live runs only)
+      if (!isDryRun && batchId && appUserId) {
+        try {
+          const { markUserPairMigrated, markUserPairFailed } = await import('../../_shared/conversationStore.js');
+          if (userRecord.status === 'failed') {
+            await markUserPairFailed({ appUserId, uploadId, batchId, sourceEmail, error: `${userBatchErrors} batch error(s)` });
+          } else {
+            await markUserPairMigrated({ appUserId, uploadId, batchId, sourceEmail, destEmail: mappedTo });
+          }
+        } catch (_) { /* non-fatal */ }
+      }
       emitProgress();
     }
 
