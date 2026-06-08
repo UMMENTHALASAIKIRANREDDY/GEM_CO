@@ -278,9 +278,13 @@ export function createC2GRouter(deps) {
             } catch (e) { dbLog.warn(`Backfill actualFiles failed: ${e.message}`); }
 
             const dryConvsSum = reportUsers.reduce((s, u) => s + (u.conversations_processed || 0), 0);
+            // Dry-run: nothing was actually migrated. Force migrated to 0
+            // and keep totalConversations as the preview count.
             await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: {
               migDir: 'copilot-gemini', status: 'completed', endTime: new Date(), dryRun: true, totalUsers: migPairs.length,
-              migratedConversations: dryConvsSum, migratedUsers: reportUsers.filter(u => u.status === 'success').length,
+              totalConversations: dryConvsSum,
+              migratedConversations: 0,
+              migratedUsers: reportUsers.filter(u => u.status === 'success').length,
               failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors,
               report: {
                 summary: {
@@ -288,6 +292,7 @@ export function createC2GRouter(deps) {
                   total_pages_created: files,
                   total_errors: errors,
                   total_conversations: dryConvsSum,
+                  total_migrated_conversations: 0,
                 },
                 users: reportUsers,
               }
@@ -406,17 +411,20 @@ export function createC2GRouter(deps) {
           }
 
           const totalConvsSum = reportUsers.reduce((s, u) => s + (u.conversations_processed || 0), 0);
+          // Migrated = sum of per-user migrated_conversations (0 for failed
+          // users; equals conversations_processed for success/partial because
+          // the DOCX bundles them all). Distinct from totalConvsSum which is
+          // the source count.
+          const migratedConvSum = reportUsers.reduce((s, u) => s + (u.migrated_conversations || 0), 0);
           const reportUpdate = {
             status: errors > 0 && files === 0 ? 'failed' : 'completed', endTime: new Date(),
             totalUsers: migPairs.length,
-            // migratedConversations is the source of truth for the Reports panel
-            // and CSV exports — it must reflect actual conversation count, not
-            // the file count (a single DOCX may bundle many conversations).
-            migratedConversations: totalConvsSum,
+            totalConversations: totalConvsSum,
+            migratedConversations: migratedConvSum,
             migratedUsers: reportUsers.filter(u => u.status === 'success' || u.status === 'partial').length,
             failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors,
             report: {
-              summary: { total_users: migPairs.length, total_pages_created: files, total_errors: errors, total_conversations: totalConvsSum },
+              summary: { total_users: migPairs.length, total_pages_created: files, total_errors: errors, total_conversations: totalConvsSum, total_migrated_conversations: migratedConvSum },
               users: reportUsers,
             },
           };

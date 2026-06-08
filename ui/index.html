@@ -1267,8 +1267,13 @@ const StepMigrate=({stats,done,live,lastRunWasDry,batchId,onStartLive,onRunAnoth
               </div>
             );
           })()}
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:20}}>
-            {[{label:'Users',val:stats.users,icon:<IcoUser s={22}/>,color:C.primary},{label:'Conversations',val:stats.pages,icon:<IcoPage s={22}/>,color:C.success},{label:'Errors',val:stats.errors,icon:<IcoError s={22}/>,color:stats.errors>0?C.error:C.muted}].map((s,i)=>(
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:10,marginBottom:20}}>
+            {[
+              {label:'Users',val:stats.users,icon:<IcoUser s={22}/>,color:C.primary},
+              {label:'Total Convs',val:totalExpected||stats.pages||0,icon:<IcoPage s={22}/>,color:C.primary},
+              {label:lastRunWasDry?'Would Migrate':'Migrated',val:lastRunWasDry?(totalExpected||stats.pages||0):(stats.pages||0),icon:<IcoPage s={22}/>,color:C.success},
+              {label:'Errors',val:stats.errors,icon:<IcoError s={22}/>,color:stats.errors>0?C.error:C.muted},
+            ].map((s,i)=>(
               <Card key={i} className="scale-in" style={{animationDelay:`${i*80}ms`,textAlign:'center',padding:16}}>
                 <div style={{display:'flex',justifyContent:'center',marginBottom:6,color:s.color}}>{s.icon}</div>
                 <div style={{fontSize:28,fontWeight:700,color:s.color}}>{s.val}</div>
@@ -2238,7 +2243,12 @@ const StepC2GMigrate=({c2gStats,c2gDone,c2gBatchId,onRunAnother,onBack,onStart,c
             );
           })()}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:20}}>
-            {[{label:'Users Processed',val:c2gTotal>0?`${c2gStats.users}/${c2gTotal}`:c2gStats.users,c:'#0129AC'},{label:lastRunWasDry?'Conversations (preview)':'Conversations',val:c2gStats.convs??c2gStats.files??0,c:'#20CC83'},{label:'Errors',val:c2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
+            {[
+              {label:'Users Processed',val:c2gTotal>0?`${c2gStats.users}/${c2gTotal}`:c2gStats.users,c:'#0129AC'},
+              {label:'Total Convs',val:c2gStats.convs??0,c:'#0129AC'},
+              {label:lastRunWasDry?'Would Migrate':'Migrated',val:lastRunWasDry?(c2gStats.convs??0):(c2gStats.files??0),c:'#20CC83'},
+              {label:'Errors',val:c2gStats.errors,c:'#FF1F1F'},
+            ].map((e,i)=>(
               <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
                 <div style={{fontSize:22,fontWeight:700,color:e.c}}>{e.val}</div>
                 <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
@@ -3015,8 +3025,13 @@ const StepCL2GMigrate=({cl2gStats,cl2gDone,onRunAnother,onBack,onStart,cl2gLive,
               </div>
             );
           })()}
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:20}}>
-            {[{label:'Users Processed',val:cl2gTotal>0?`${cl2gStats.users}/${cl2gTotal}`:cl2gStats.users,c:'#0129AC'},{label:lastRunWasDry?'Conversations (preview)':'Conversations',val:cl2gStats.convs??cl2gStats.files??0,c:'#20CC83'},{label:'Errors',val:cl2gStats.errors,c:'#FF1F1F'}].map((e,i)=>(
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:10,marginBottom:20}}>
+            {[
+              {label:'Users Processed',val:cl2gTotal>0?`${cl2gStats.users}/${cl2gTotal}`:cl2gStats.users,c:'#0129AC'},
+              {label:'Total Convs',val:cl2gStats.convs??0,c:'#0129AC'},
+              {label:lastRunWasDry?'Would Migrate':'Migrated',val:lastRunWasDry?(cl2gStats.convs??0):(cl2gStats.files??0),c:'#20CC83'},
+              {label:'Errors',val:cl2gStats.errors,c:'#FF1F1F'},
+            ].map((e,i)=>(
               <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
                 <div style={{fontSize:22,fontWeight:700,color:e.c}}>{e.val}</div>
                 <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
@@ -3513,7 +3528,12 @@ const StepCL2CMigrate=({cl2cStats,cl2cDone,onRunAnother,onBack,onStart,cl2cLive,
             );
           })()}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:20}}>
-            {[{label:'Users Processed',val:cl2cTotal>0?`${cl2cStats.users}/${cl2cTotal}`:cl2cStats.users,c:'#0129AC'},{label:lastRunWasDry?'Conversations (preview)':'Conversations',val:cl2cStats.convs??cl2cStats.files??0,c:'#20CC83'},{label:'Errors',val:cl2cStats.errors,c:'#FF1F1F'}].map((e,i)=>(
+            {[
+              {label:'Users Processed',val:cl2cTotal>0?`${cl2cStats.users}/${cl2cTotal}`:cl2cStats.users,c:'#0129AC'},
+              {label:'Total Convs',val:cl2cStats.convs??0,c:'#0129AC'},
+              {label:lastRunWasDry?'Would Migrate':'Migrated',val:lastRunWasDry?(cl2cStats.convs??0):(cl2cStats.files??0),c:'#20CC83'},
+              {label:'Errors',val:cl2cStats.errors,c:'#FF1F1F'},
+            ].map((e,i)=>(
               <div key={i} style={{background:'white',borderRadius:10,padding:'12px 14px',border:`1px solid ${C.border}`,borderLeft:`3px solid ${e.c}`,textAlign:'center'}}>
                 <div style={{fontSize:22,fontWeight:700,color:e.c}}>{e.val}</div>
                 <div style={{fontSize:11,color:C.muted,textTransform:'uppercase',letterSpacing:.3}}>{e.label}</div>
@@ -4181,10 +4201,11 @@ const StepC2CMigrate=({c2cStats,c2cDone,c2cLive,onRunAnother,onBack,onChangeDire
               </div>
             );
           })()}
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:20}}>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:10,marginBottom:20}}>
             {[
               {label:'Users',val:c2cStats?.users||0,icon:<IcoUser s={22}/>,color:C.primary},
-              {label:'Conversations',val:c2cStats?.conversationCount||c2cStats?.files||0,icon:<IcoPage s={22}/>,color:C.success},
+              {label:'Total Convs',val:c2cStats?.conversationCount||0,icon:<IcoPage s={22}/>,color:C.primary},
+              {label:lastRunWasDry?'Would Migrate':'Migrated',val:lastRunWasDry?(c2cStats?.conversationCount||0):(c2cStats?.files||0),icon:<IcoPage s={22}/>,color:C.success},
               {label:'Errors',val:c2cStats?.errors||0,icon:<IcoError s={22}/>,color:c2cStats?.errors>0?C.error:C.muted},
             ].map((s,i)=>(
               <Card key={i} className="scale-in" style={{animationDelay:`${i*80}ms`,textAlign:'center',padding:16}}>
@@ -4914,7 +4935,12 @@ const StepG2GMigrate=({g2gStats,g2gDone,onRunAnother,onBack,onStart,g2gLive,onCh
             );
           })()}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:20}}>
-            {[{label:'Users',val:g2gStats?.users||0,icon:<IcoUser s={22}/>,color:C.primary},{label:'Conversations',val:g2gStats?.conversationCount||0,icon:<IcoPage s={22}/>,color:C.success},{label:'Files Created',val:g2gStats?.files||0,icon:<IcoPage s={22}/>,color:C.primaryL},{label:'Errors',val:g2gStats?.errors||0,icon:<IcoError s={22}/>,color:g2gStats?.errors>0?C.error:C.muted}].map((s,i)=>(
+            {[
+              {label:'Users',val:g2gStats?.users||0,icon:<IcoUser s={22}/>,color:C.primary},
+              {label:'Total Convs',val:g2gStats?.conversationCount||0,icon:<IcoPage s={22}/>,color:C.primary},
+              {label:lastRunWasDry?'Would Migrate':'Migrated',val:lastRunWasDry?(g2gStats?.conversationCount||0):(g2gStats?.errors>0?0:(g2gStats?.conversationCount||0)),icon:<IcoPage s={22}/>,color:C.success},
+              {label:'Errors',val:g2gStats?.errors||0,icon:<IcoError s={22}/>,color:g2gStats?.errors>0?C.error:C.muted},
+            ].map((s,i)=>(
               <Card key={i} className="scale-in" style={{animationDelay:`${i*80}ms`,textAlign:'center',padding:16}}>
                 <div style={{display:'flex',justifyContent:'center',marginBottom:6,color:s.color}}>{s.icon}</div>
                 <div style={{fontSize:28,fontWeight:700,color:s.color}}>{s.val}</div>
@@ -5117,10 +5143,16 @@ const ReportsPanel=({onClose,refreshKey=0,liveStats=null,liveBatchId=null,isLive
                       // be 0 (or "—"), not the total, otherwise the panel lies.
                       const userConvSum=(r.report?.users||r.users||[]).reduce((s,u)=>s+(u.conversations_processed||0),0);
                       const userMigratedSum=(r.report?.users||r.users||[]).reduce((s,u)=>s+(u.migrated_conversations??(u.status==='success'?(u.conversations_processed||0):(u.pages_created||0))),0);
+                      // Total uses || (a zero total means "no data found" — fall through is fine).
+                      // Migrated uses ?? because zero IS a meaningful value (failed run): we must
+                      // NOT fall through to r.migratedConversations, which historically was the
+                      // total count on older batches.
                       const totalConvs=r.report?.summary?.total_conversations||r.totalConversations||userConvSum||r.migratedConversations||0;
+                      const hasPerUserMigrated=(r.report?.users||r.users||[]).some(u=>u.migrated_conversations!==undefined);
+                      const finishedMigrated=hasPerUserMigrated?userMigratedSum:(r.migratedConversations??0);
                       const doneConvs=live?liveStats.pages
                         :(isRunningBatch?(r.progressConversations||r.progressPages||userMigratedSum||0)
-                        :(r.dryRun?0:(userMigratedSum||r.migratedConversations||0)));
+                        :(r.dryRun?0:finishedMigrated));
                       const doneErrors=live?liveStats.errors:(isRunningBatch?r.progressErrors:(r.totalErrors??r.report?.summary?.total_errors??0));
                       const totalUsers=r.totalUsers||0;
                       // Dry-run shows "—" for Migrated so users don't read 0 as

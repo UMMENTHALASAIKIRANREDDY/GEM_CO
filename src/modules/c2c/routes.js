@@ -717,11 +717,19 @@ export function createC2CRouter(deps) {
             }
           }
 
+          // Sum of per-user migrated_conversations (0 for failed users) — this
+          // is what's actually delivered. Distinct from totalConversations
+          // (= count found in source). For dry-runs, force migrated to 0 too
+          // since nothing was actually written.
+          const migratedConvSum = isDryRun
+            ? 0
+            : reportUsers.reduce((s, u) => s + (u.migrated_conversations || 0), 0);
           const reportUpdate = {
             status: errors > 0 && totalPages === 0 && !isDryRun ? 'failed' : 'completed',
             endTime: new Date(),
             totalUsers: migPairs.length,
-            migratedConversations: totalConversations,
+            totalConversations: totalConversations,
+            migratedConversations: migratedConvSum,
             migratedUsers: reportUsers.filter(u => u.status === 'success' || u.status === 'partial').length,
             failedUsers: reportUsers.filter(u => u.status === 'failed').length,
             filesUploaded: totalPages,
@@ -734,6 +742,7 @@ export function createC2CRouter(deps) {
                 total_pages_created: totalPages,
                 total_files_created: totalPages,
                 total_conversations: totalConversations,
+                total_migrated_conversations: migratedConvSum,
                 total_errors: errors,
               },
               users: reportUsers,

@@ -457,7 +457,12 @@ export function createCL2GRouter({ db }) {
           const finalStatus = errors > 0 && files === 0 ? 'failed' : 'completed';
           // Isolate the final DB write — a failure here must not hide the real file count
           const totalConvsSum = reportUsers.reduce((s, u) => s + (u.conversations_processed || 0), 0);
-          const finalUpdate = { migDir: 'claude-gemini', status: finalStatus, endTime: new Date(), migratedConversations: totalConvsSum, migratedUsers: reportUsers.filter(u => u.status !== 'failed').length, failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors, report: { summary: { total_users: pairs.length, total_pages_created: files, total_errors: errors, total_conversations: totalConvsSum }, users: reportUsers } };
+          // Migrated = sum of per-user migrated_conversations (0 for failed
+          // users). Dry-runs force 0 since nothing was actually written.
+          const migratedConvSum = isDryRun
+            ? 0
+            : reportUsers.reduce((s, u) => s + (u.migrated_conversations || 0), 0);
+          const finalUpdate = { migDir: 'claude-gemini', status: finalStatus, endTime: new Date(), totalConversations: totalConvsSum, migratedConversations: migratedConvSum, migratedUsers: reportUsers.filter(u => u.status !== 'failed').length, failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors, report: { summary: { total_users: pairs.length, total_pages_created: files, total_errors: errors, total_conversations: totalConvsSum, total_migrated_conversations: migratedConvSum }, users: reportUsers } };
           try {
             await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: finalUpdate });
           } catch (dbErr) {
