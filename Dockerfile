@@ -25,6 +25,13 @@ WORKDIR /app
 # --break-system-packages required on Ubuntu Noble because of PEP 668 marker.
 COPY requirements.txt ./
 RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
+# Verify every regen-critical Python lib actually imports. If pip silently
+# failed on one of these (e.g. weasyprint couldn't link to a native dep),
+# the build fails HERE rather than letting migrations silently skip files
+# at runtime with "missing library: <name>".
+RUN python -c "import sys; \
+    import weasyprint, pandas, numpy, openpyxl, xlsxwriter, docx, pptx, reportlab, PyPDF2, pypdf, PIL, matplotlib, seaborn, jinja2, bs4, lxml, markdown, yaml, toml, requests; \
+    print(f'Python regen libs OK on {sys.version.split()[0]} — weasyprint {weasyprint.__version__}')"
 
 # Node dependencies + Playwright Chromium
 COPY package*.json ./
