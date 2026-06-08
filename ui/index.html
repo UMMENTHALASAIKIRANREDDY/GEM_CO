@@ -1270,8 +1270,8 @@ const StepMigrate=({stats,done,live,lastRunWasDry,batchId,onStartLive,onRunAnoth
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:10,marginBottom:20}}>
             {[
               {label:'Users',val:stats.users,icon:<IcoUser s={22}/>,color:C.primary},
-              {label:'Total Convs',val:totalExpected||stats.pages||0,icon:<IcoPage s={22}/>,color:C.primary},
-              {label:lastRunWasDry?'Would Migrate':'Migrated',val:lastRunWasDry?(totalExpected||stats.pages||0):(stats.pages||0),icon:<IcoPage s={22}/>,color:C.success},
+              {label:'Total Convs',val:stats.conversationCount||totalExpected||stats.pages||0,icon:<IcoPage s={22}/>,color:C.primary},
+              {label:lastRunWasDry?'Would Migrate':'Migrated',val:lastRunWasDry?(stats.conversationCount||totalExpected||stats.pages||0):(stats.pages||0),icon:<IcoPage s={22}/>,color:C.success},
               {label:'Errors',val:stats.errors,icon:<IcoError s={22}/>,color:stats.errors>0?C.error:C.muted},
             ].map((s,i)=>(
               <Card key={i} className="scale-in" style={{animationDelay:`${i*80}ms`,textAlign:'center',padding:16}}>
@@ -5725,6 +5725,14 @@ function App(){
           setReportRefreshKey(p=>p+1);
           setAgentMode('done');
           if(d.message&&d.message.includes('DRY RUN')){const cm=d.message.match(/(\d+)\s+conversations/);if(cm){curStats.pages=parseInt(cm[1]);setStats({...curStats});}}
+          // Phase-2 emits authoritative stats in the done payload (the older
+          // string-match accumulator drifted because new messages don't say
+          // "Page created"). Prefer the payload values when present.
+          if(typeof d.users==='number')curStats.users=d.users;
+          if(typeof d.pages==='number')curStats.pages=d.pages;
+          if(typeof d.errors==='number')curStats.errors=d.errors;
+          if(typeof d.conversationCount==='number')curStats.conversationCount=d.conversationCount;
+          setStats({...curStats});
           const s={...curStats};
           setTimeout(()=>addAgentMsg('bot',
             s.errors>0

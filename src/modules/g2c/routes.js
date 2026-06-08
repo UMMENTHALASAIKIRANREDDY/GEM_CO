@@ -1390,7 +1390,17 @@ export function createG2CRouter(deps) {
 
       await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'gemini-copilot', ...reportUpdate } });
       dbLog.info(`migrationWorkspaces.update — batch ${batchId} status=completed (${reportUpdate.migratedConversations} pages, ${reportUpdate.totalUsers} users)`);
-      emit('done', `━━━ Migration complete! Reports saved. ━━━`, { batch_id: batchId });
+      // Final stats in the done payload so the UI doesn't have to string-match
+      // per-conversation messages to accumulate counts (post-Phase-2 the runner
+      // emits "Prepared:" / "Uploaded bundled DOCX" instead of the old
+      // "Page created" text, so the old UI accumulator drifted to 0).
+      emit('done', `━━━ Migration complete! Reports saved. ━━━`, {
+        batch_id: batchId,
+        users: reportUpdate.totalUsers || 0,
+        pages: reportUpdate.migratedConversations || 0,
+        errors: reportUpdate.totalErrors || 0,
+        conversationCount: reportUpdate.totalConversations || 0,
+      });
       currentBatchId = null;
       _currentAppUserId = null;
       stopHeartbeat(_heartbeatId);
