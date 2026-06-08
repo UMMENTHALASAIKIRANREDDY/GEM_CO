@@ -3,11 +3,11 @@ name: Deploy Dev (aimigration.cftools.live)
 on:
   push:
     branches:
-      - developerbranch
+      - dev
 
 jobs:
   deploy:
-    name: Deploy developerbranch to dev server
+    name: Deploy dev to dev server
     runs-on: ubuntu-latest
 
     steps:
@@ -28,10 +28,10 @@ jobs:
             cd /data/migration-combinations-dev
             git config --global --add safe.directory /data/migration-combinations-dev
 
-            echo "Pulling latest from developerbranch..."
+            echo "Pulling latest from dev..."
             git fetch origin
-            git checkout developerbranch
-            git pull origin developerbranch
+            git checkout dev
+            git pull origin dev
 
             echo "Stopping existing dev containers..."
             echo "${{ secrets.SSH_PASSWORD }}" | sudo -S docker compose -f docker-compose.dev.yml down
