@@ -4216,7 +4216,7 @@ const StepC2CMigrate=({c2cStats,c2cDone,c2cLive,onRunAnother,onBack,onChangeDire
 /* ════════════════════════════════════════════════════════════ */
 /* ═══   G2G STEP COMPONENTS - Same UI as G2C ═══ */
 /* ════════════════════════════════════════════════════════════ */
-const StepG2GUploadData=({g2gUploadData,setG2gUploadData,g2gSelectedUsers,setG2gSelectedUsers,g2gConfig,onNext,onBack,showToast,importTabSignal,exportTrigger})=>{
+const StepG2GUploadData=({g2gUploadData,setG2gUploadData,g2gSelectedUsers,setG2gSelectedUsers,g2gConfig,onNext,onBack,showToast,importTabSignal,exportTrigger,onExportComplete})=>{
   const [tab,setTab]=useState(g2gUploadData?'upload':'userwise');
   useEffect(()=>{ if(g2gUploadData) setTab('upload'); },[g2gUploadData]);
   // Respond to agent-driven tab switch requests (e.g. "I have a Vault ZIP" chip)
@@ -4296,7 +4296,7 @@ const StepG2GUploadData=({g2gUploadData,setG2gUploadData,g2gSelectedUsers,setG2g
     const check=async()=>{
       try{
         const res=await fetch('/api/google/vault-export/status');const data=await res.json();
-        if(data.status==='COMPLETED'&&data.users){clearInterval(elapsedRef.current);setExportStatus(`Done`);setExporting(false);setTimeout(()=>{setG2gUploadData(data);setG2gSelectedUsers(new Set(data.users.map(u=>u.email)));onNext()},600);return}
+        if(data.status==='COMPLETED'&&data.users){clearInterval(elapsedRef.current);setExportStatus(`Done`);setExporting(false);if(onExportComplete)onExportComplete(data);setTimeout(()=>{setG2gUploadData(data);setG2gSelectedUsers(new Set(data.users.map(u=>u.email)));onNext()},600);return}
         if(data.status==='FAILED'){clearInterval(elapsedRef.current);setExportStatus(`Failed: ${data.error||'Unknown'}`);setExporting(false);return}
         setExportStatus(`In progress (${data.status})...`);setTimeout(check,10000);
       }catch{setTimeout(check,15000)}
@@ -5619,6 +5619,19 @@ function App(){
 
   const addLog=(type,message)=>{const ts=new Date().toTimeString().slice(0,8);setLogs(p=>[...p,{type,message,ts}])};
 
+  // Shared: surface the Vault requested-vs-returned drop-off (G2C and G2G both
+  // use the same Vault export endpoint, so both can return empty_users).
+  const handleVaultExportComplete=data=>{
+    const empty=Array.isArray(data.empty_users)?data.empty_users:[];
+    setVaultEmptyUsers(empty);
+    if(empty.length>0)addLog('warn',`${empty.length} requested user${empty.length>1?'s':''} had no Gemini data: ${empty.join(', ')}`);
+    if(agentMode==='guide'&&empty.length>0){
+      const n=data.total_users||data.users?.length||0;
+      const req=data.requested_users||(n+empty.length);
+      addAgentMsg('bot',`Vault export done — you requested **${req}** user${req>1?'s':''}, but only **${n}** had Gemini conversation data in Vault. These had none, so there's nothing to migrate for them: ${empty.join(', ')}.`,{});
+    }
+  };
+
   const handleImportComplete=data=>{
     setUploadData(data);
     const empty=Array.isArray(data.empty_users)?data.empty_users:[];
@@ -6623,6 +6636,7 @@ function App(){
         // the agent think the user has already picked when they have not.
         ...(migDir==='gemini-gemini'?{
           g2g_done:g2gDone,g2g_live:g2gLive,g2g_stats:g2gStats,g2gLastDry:g2gLastDry,
+          vaultEmptyUsers,
           g2g_upload_users:g2gUploadData?.users?.length||g2gSelectedUsers.size||0,
           g2g_source_account_id: step>=2 ? (g2gConfig.sourceAccountId||'') : '',
           g2g_dest_account_id:   step>=2 ? (g2gConfig.destAccountId||'')   : '',
@@ -7047,7 +7061,7 @@ function App(){
                   {(step===5||step===6)&&migDir==='claude-gemini'&&<StepCL2GMigrate cl2gStats={cl2gStats} cl2gDone={cl2gDone} onRunAnother={()=>{setCl2gDone(false);setCl2gStats({users:0,files:0,errors:0});setCl2gOptions(p=>({...p,dryRun:true}));setStep(2);}} onBack={()=>setStep(4)} onStart={runCL2GMigration} cl2gLive={cl2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={cl2gLastDry} onStartLive={()=>runCL2GMigration(true)} cl2gTotal={cl2gTotal} folderName={cl2gConfig.folderName||'ClaudeChats'}/>}
                   {/* Gemini → Gemini steps */}
                   {step===2&&migDir==='gemini-gemini'&&<StepG2GCloudSelect g2gConfig={g2gConfig} setG2gConfig={setG2gConfig} googleAccounts={googleAccounts} onNext={()=>setStep(3)} onBack={()=>setStep(1)} showToast={showToast}/>}
-                  {step===3&&migDir==='gemini-gemini'&&<StepG2GUploadData g2gUploadData={g2gUploadData} setG2gUploadData={setG2gUploadData} g2gSelectedUsers={g2gSelectedUsers} setG2gSelectedUsers={setG2gSelectedUsers} g2gConfig={g2gConfig} onNext={()=>setStep(4)} onBack={()=>setStep(2)} showToast={showToast} importTabSignal={importTabSignal} exportTrigger={exportTrigger}/>}
+                  {step===3&&migDir==='gemini-gemini'&&<StepG2GUploadData g2gUploadData={g2gUploadData} setG2gUploadData={setG2gUploadData} g2gSelectedUsers={g2gSelectedUsers} setG2gSelectedUsers={setG2gSelectedUsers} g2gConfig={g2gConfig} onNext={()=>setStep(4)} onBack={()=>setStep(2)} showToast={showToast} importTabSignal={importTabSignal} exportTrigger={exportTrigger} onExportComplete={handleVaultExportComplete}/>}
                   {step===4&&migDir==='gemini-gemini'&&<StepG2GMap g2gUploadData={g2gUploadData} g2gConfig={g2gConfig} g2gMappings={g2gMappings} setG2gMappings={setG2gMappings} g2gSelectedUsers={g2gSelectedUsers} setG2gSelectedUsers={setG2gSelectedUsers} onNext={()=>setStep(5)} onBack={()=>setStep(3)} showToast={showToast}/>}
                   {step===5&&migDir==='gemini-gemini'&&<StepG2GOptions g2gConfig={g2gConfig} setG2gConfig={setG2gConfig} g2gOptions={g2gOptions} setG2gOptions={setG2gOptions} onRun={()=>{setStep(6);runG2GMigrationRef.current?.()}} onBack={()=>setStep(4)} showToast={showToast}/>}
                   {(step>=6)&&migDir==='gemini-gemini'&&<StepG2GMigrate g2gStats={g2gStats} g2gDone={g2gDone} onRunAnother={()=>{setG2gDone(false);setG2gStats({files:0,conversationCount:0,errors:0,users:0});setG2gOptions(p=>({...p,dryRun:true}));setStep(3);}} onBack={()=>setStep(5)} onStart={runG2GMigration} g2gLive={g2gLive} onChangeDirection={handleChangeDirection} lastRunWasDry={g2gLastDry} onStartLive={()=>runG2GMigration(true)} g2gTotal={g2gSelectedUsers.size} folderName={g2gConfig.gemName}/>}
