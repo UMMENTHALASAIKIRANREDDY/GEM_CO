@@ -1,6 +1,170 @@
 // src/agent/systemPrompt.js
 import { COMBINATIONS, listCombinations } from './combinations.js';
 
+// ── Direction-scoped reference blocks ───────────────────────────────────────
+// Only ONE migDir is active per turn, so we inject just that direction's panel
+// map / step count / source-step rules instead of all six every time. The live
+// panel state is already provided separately via buildPanelContext().
+
+// Panels for steps 0–1 are identical across every direction — always included.
+const COMMON_PANELS = `### Panel: "Connect Clouds" (screen shown when step=0)
+- **Title**: "Connect Clouds" — Connect source and destination cloud accounts with admin credentials.
+- **Two large clickable cards**:
+  - 🟦 **Google Workspace** card — click to open Google OAuth popup. Shows "Connected" with green tick when done. Has "Sign Out" link below when connected.
+  - 🟦 **Microsoft Teams / 365** card — click to open Microsoft OAuth popup. Same connected state.
+- **Warning banner** (red): "Google Workspace connection is required to proceed." — shown when Google not connected.
+- **"Continue →" button** — disabled until Google is connected. Clicking it goes to direction picker.
+- **Note**: Both clouds show "Click to connect" when not connected, "Connecting..." during OAuth, "Connected" when done.
+
+### Panel: "Choose Migration Direction" (screen shown when step=1)
+- **Title**: "Choose Migration Direction"
+- **Direction cards** (large buttons with icons):
+  - If BOTH Google + Microsoft connected: shows 3 cards — "Gemini → Copilot" (G→M), "Copilot → Gemini" (M→G), "Claude → Gemini" (Claude ZIP→G)
+  - If only Google connected (no Microsoft): shows only 1 card — "Claude → Gemini"
+  - If only Microsoft: shows nothing useful (Google required)
+- **Info note** (gray box): "Connect Microsoft 365 on the previous step to unlock G2C and C2G directions." — shown when MS not connected
+- **"← Back" button** — goes back to Connect Clouds`;
+
+// Per-direction panel maps (steps 2+). Keyed by migDir.
+const DIRECTION_PANELS = {
+  'gemini-copilot': `### Panel: "Import Data" — G2C (step=2)
+- **Title**: "Import Data" — Select users to export from Google Workspace, or upload a Vault ZIP file.
+- **Two tabs**: user list tab (Google users as checkboxes, "Select All" toggle) and "Upload ZIP" tab (drag-and-drop a Google Vault ZIP). Hamburger (≡) lists previously uploaded ZIPs.
+- **"Continue →"** enabled when at least one user selected or ZIP uploaded.
+
+### Panel: "Map Users" — G2C (step=3)
+- Maps each Google Workspace email → Microsoft 365 email. Table: Source (Google) | Destination (M365 dropdown/type). "Auto-map" + "Continue →" (enabled when ≥1 mapping has a destination).
+
+### Panel: "Migration Options" — G2C (step=4)
+- "File Name" field (default GeminiChats), Dry run checkbox (checked by default — recommended), optional From/To date range (blank = all data), "Start Dry Run"/"Start Migration" button.
+
+### Panel: "Migration Running / Done" — G2C (step=5 running, 6 done)
+- Real-time stats: Users, Pages created, Errors, Flagged. When done: "Start Live Migration" (if last was dry), "Run Another", "Download Report".`,
+
+  'copilot-gemini': `### Panel: "Map Users" — C2G (step=2)
+- Maps Microsoft 365 Copilot users → Google Workspace emails. Table: M365 email | Google email destination. Auto-map, Continue, Back buttons.
+
+### Panel: "Migration Options" — C2G (step=3)
+- "Migration Options (Copilot→Gemini)": Folder name, dry run checkbox, date range, Start button.
+
+### Panel: "Migration Running / Done" — C2G (step=4 running, 5 done)
+- Progress ring (per-conversation), stats: Users, Files Uploaded, Errors. When done: "Migration Complete!", Run Another.
+- ⚠️ C2G uses step=4 (running) and step=5 (done). Do NOT navigate to step 6 — no panel exists there. Use show_reports for reports.`,
+
+  'claude-gemini': `### Panel: "Upload ZIP" — CL2G (step=2)
+- "Upload Claude Export" — large drag-and-drop zone. Instructions: claude.ai → Settings → Export Data → download ZIP → upload here. Shows user list (name, email, conversation count) after upload. "Continue →" when ZIP loaded.
+
+### Panel: "Map Users" — CL2G (step=3)
+- Maps Claude users (from ZIP) → Google Workspace emails. Source: Claude display name + email. Destination: Google email (dropdown/type).
+
+### Panel: "Migration Options" — CL2G (step=4)
+- Folder name (default ClaudeChats), dry run, date range. Checkboxes: "Include Memory" and "Include Projects".
+
+### Panel: "Migration Running / Done" — CL2G (step=5+)
+- Same stats layout as G2C migration panel.`,
+
+  'gemini-gemini': `### Panel: "Select Accounts" — G2G (step=2)
+- Two dropdowns: Source Google Account, Destination Google Account. Cannot select same for both. "Continue →" disabled if source === destination or either blank.
+
+### Panel: "Upload Data" — G2G (step=3)
+- Upload Google Vault ZIP. Shows user list with conversation counts after upload. "Continue →" enabled when ZIP loaded.
+
+### Panel: "Map Users" — G2G (step=4)
+- Maps source Google users → destination Google emails. Auto-map, Continue, Back.
+
+### Panel: "Migration Options" — G2G (step=5)
+- Folder name (default: Gemini Conversations), dry run checkbox, date range.
+
+### Panel: "Migration Running / Done" — G2G (step=6 running, 7 done)
+- Progress ring, stats: Users, Files, Errors.`,
+
+  'claude-copilot': `### Panel: "Upload ZIP" — CL2C (step=2)
+- Upload Claude export ZIP (same flow as CL2G). Shows user list after upload.
+
+### Panel: "Map Users" — CL2C (step=3)
+- Maps Claude users → Microsoft 365 emails. Auto-map, Continue, Back.
+
+### Panel: "Migration Options" — CL2C (step=4)
+- Folder name (default ClaudeChats), dry run, date range. Checkboxes: Include Memory, Include Projects.
+
+### Panel: "Migration Running / Done" — CL2C (step=5+)
+- Progress stats: Users, Files, Errors.`,
+
+  'copilot-copilot': `### Panel: "Select Tenants" — C2C (step=2)
+- "Select Source & Destination Tenants" — admin consent–based, no OAuth. Two dropdowns: Source/Destination Tenant (only admin-consented tenants appear). Each row may show a "Grant Consent" button (opens MS admin-consent popup). Cannot select same tenant for both.
+- Use \`initiate_tenant_consent\` BEFORE \`select_c2c_tenants\` if either tenant is unconsented; \`select_c2c_tenants\` sets both tenant IDs once consented.
+
+### Panel: "Map Users" — C2C (step=3)
+- Maps source-tenant M365 users → destination-tenant M365 emails. Auto-map by email local-part.
+
+### Panel: "Migration Options" — C2C (step=4)
+- Folder name (default CopilotChats), dry run, date range.
+
+### Panel: "Migration Running / Done" — C2C (step=5+)
+- Progress stats: Users, Files, Errors. Runs cross-tenant (source admin → dest admin).`,
+};
+
+// Per-direction source-data-step guidance (what to do at the upload/import step).
+const SOURCE_STEP_RULES = {
+  'gemini-copilot': `### Source step (G2C — Import Data, step 2)
+The user has two paths: the **User's List** tab (sign in to Google, pick users, click "Export N Users" — server-side Vault export) OR the **Upload ZIP** tab (drop a pre-made Vault export ZIP). Ask: "Do you have a Vault ZIP ready, or want me to export from Vault for you?"
+- ⚠️ When the user wants to upload a ZIP, ALWAYS call \`show_upload_widget({widgetType:"zip", label:"Upload your Vault ZIP"})\` — EVERY time, even if a ZIP is already uploaded (they may want to replace it). Never reply "already uploaded". Phrases: "I have a Vault ZIP", "upload a different ZIP", "replace the ZIP", "open the upload area", "switch to upload tab".
+- ⚠️ NEVER call \`trigger_vault_export\` until you know the scope. A bare "Export from Google Vault" / "Export my Vault" does NOT say all-vs-specific. ASK first: "Export Vault for **all users**, or **specific users**? For specific, type their emails or tick them in the panel, then tell me to fetch."
+- Only call \`trigger_vault_export({scope:"all"})\` when the user EXPLICITLY confirms "all users"/"everyone". Call \`trigger_vault_export({scope:"selected", emails:[…]})\` once they name emails or say "I selected them — fetch"; echo the emails back.
+- "How do I export?" → walk through manual Vault steps (vault.google.com → Matter → Search → Export → Download ZIP → upload here).`,
+
+  'copilot-gemini': `### Source step (C2G — Copilot source, live API)
+No upload needed — Copilot conversations pull from Microsoft Graph automatically. C2G has no source-data step; step 2 is Map Users. Say: "I'll pull Copilot conversations from Microsoft Graph automatically — no upload needed. Ready to map users?" Do NOT call show_upload_widget with zip for C2G.`,
+
+  'claude-gemini': `### Source step (CL2G — Claude ZIP, step 2)
+"Please upload your Claude export ZIP. Need help exporting from claude.ai?" — then call \`show_upload_widget({widgetType:"zip"})\` so the user can drag the file. Call it every time the user asks to upload, even if one is loaded.`,
+
+  'claude-copilot': `### Source step (CL2C — Claude ZIP, step 2)
+"Please upload your Claude export ZIP. Need help exporting from claude.ai?" — then call \`show_upload_widget({widgetType:"zip"})\`. Call it every time the user asks to upload.`,
+
+  'gemini-gemini': `### Source step (G2G — Select Accounts then Upload, steps 2–3)
+⚠️ NEVER call \`select_g2g_accounts\` without explicit user confirmation. The user must NAME which account is source and which is destination — never pick the order yourself, even with only two accounts.
+1. "Continue to Select Accounts" → MUST call \`navigate_to_step({step:2})\` first (panel won't move without it). Do NOT call select_g2g_accounts yet.
+2. Ignore any stale \`g2g_source_account_id\`/\`g2g_dest_account_id\` — re-ask every time.
+3. After navigate, list every account in googleAccountsList: "Your accounts are: a@x, b@y. Which is source? Which is destination?"
+4. As soon as the user names both, IMMEDIATELY call \`select_g2g_accounts\` with the REAL accountId UUIDs from googleAccountsList (never the email or a placeholder). Match shorthand ("zara") to the entry whose email/displayName matches; if no unique match, ask for the full email.
+5. Phrases that map to the call: "X as source and Y as destination", "X is source, Y destination", "use X as source", "X → Y", "swap them" (reverse IDs).
+6. Then upload step (3): drop a Google Vault ZIP — call \`show_upload_widget({widgetType:"zip"})\`.`,
+
+  'copilot-copilot': `### Source step (C2C — Select Tenants, step 2)
+⚠️ Same as G2G — NEVER call \`select_c2c_tenants\` without explicit user confirmation of which tenant is source vs destination. Use \`msAccountsList\` (each entry's tenantId). If a tenant is unconsented, call \`initiate_tenant_consent\` first. Pass literal tenantId GUIDs, never emails.`,
+};
+
+// Step counts per direction (for navigate_to_step). Keyed by migDir.
+const STEP_COUNTS = {
+  'gemini-copilot': '**gemini-copilot (G2C)**: steps 0–6. 0=Connect, 1=Direction, 2=Import, 3=Map, 4=Options, 5=Running, 6=Done.',
+  'copilot-gemini': '**copilot-gemini (C2G)**: steps 0–5. 0=Connect, 1=Direction, 2=Map, 3=Options, 4=Running, 5=Done.',
+  'claude-gemini':  '**claude-gemini (CL2G)**: steps 0–6. 0=Connect, 1=Direction, 2=Upload ZIP, 3=Map, 4=Options, 5=Running, 6=Done.',
+  'gemini-gemini':  '**gemini-gemini (G2G)**: steps 0–7. 0=Connect, 1=Direction, 2=Select Accounts, 3=Upload, 4=Map, 5=Options, 6=Running, 7=Done.',
+  'claude-copilot': '**claude-copilot (CL2C)**: steps 0–6. 0=Connect, 1=Direction, 2=Upload ZIP, 3=Map, 4=Options, 5=Running, 6=Done.',
+  'copilot-copilot':'**copilot-copilot (C2C)**: steps 0–5. 0=Connect, 1=Direction, 2=Select Tenants, 3=Map, 4=Options, 5=Running.',
+};
+
+const ALL_STEP_COUNTS = Object.values(STEP_COUNTS).map(s => `- ${s}`).join('\n');
+
+// Compact one-line-per-direction overview, shown only while no direction is set
+// (the direction-picking phase). Full panel detail loads once a direction is chosen.
+const ALL_DIRECTIONS_OVERVIEW = `Available directions (full panel detail loads once one is selected):
+- **gemini-copilot (G2C)**: Google Workspace → Microsoft 365. Needs both clouds. Source = Vault export/ZIP.
+- **copilot-gemini (C2G)**: Microsoft 365 Copilot → Google Workspace. Needs both clouds. Source = live MS Graph (no upload).
+- **claude-gemini (CL2G)**: Claude AI → Google Workspace. Needs Google only. Source = Claude export ZIP.
+- **gemini-gemini (G2G)**: Google → Google. Needs 2 Google accounts. Source = Vault ZIP.
+- **claude-copilot (CL2C)**: Claude AI → Microsoft 365. Needs Microsoft only. Source = Claude export ZIP.
+- **copilot-copilot (C2C)**: Microsoft → Microsoft cross-tenant. Needs 2 consented tenants. Source = live MS Graph.`;
+
+/** Build the direction-scoped reference: panels + source-step rule + step count. */
+function buildDirectionReference(migDir) {
+  if (!migDir || !DIRECTION_PANELS[migDir]) {
+    return `## Migration Directions — overview\n${ALL_DIRECTIONS_OVERVIEW}\n\n## Combo-specific step counts (CRITICAL for navigate_to_step)\n${ALL_STEP_COUNTS}`;
+  }
+  return `## Active Direction: ${migDir} — UI Panels\n${COMMON_PANELS}\n\n${DIRECTION_PANELS[migDir]}\n\n## Source-step guidance for ${migDir}\n${SOURCE_STEP_RULES[migDir]}\n\n## Step count for ${migDir} (CRITICAL for navigate_to_step)\n- ${STEP_COUNTS[migDir]}\n(Other directions' steps differ — only this one applies now.)`;
+}
+
 export function buildSystemPrompt(migrationState, migrationLogs = [], { isReturningUser = false } = {}) {
   const {
     step = 0, migDir = null, live = false, migDone = false,
@@ -55,6 +219,10 @@ export function buildSystemPrompt(migrationState, migrationLogs = [], { isReturn
     : !!migDone;
 
   const panelContext = uiContext || buildPanelContext(migrationState);
+  // Direction-scoped reference (panels + source-step rule + step count). Only the
+  // active direction's block is injected — keeps the prompt small without losing
+  // any per-direction guidance.
+  const directionReference = buildDirectionReference(migDir);
 
   const logsSection = migrationLogs.length > 0
     ? `\nRecent migration logs (${migrationLogs.length}):\n${migrationLogs.slice(-20).join('\n')}\n`
@@ -135,70 +303,7 @@ ALWAYS call \`select_direction({migDir: "<new-direction>"})\` first, then briefl
 Read the **Current State** section above for the actual step number. Never say "you're on the Map Users step" when the state says step=0 (Connect Clouds). If you're unsure, call \`get_migration_status\` first.
 
 ### When direction is set and user is at the **source data** step
-- **G2C (Gemini source via Vault)**: At step 2 the user has two paths in the Import Data panel — the **User's List** tab (sign in to Google, pick users, click "Export N Users" — CloudFuze runs a server-side Vault export) OR the **Upload ZIP** tab (drop a pre-made Vault export ZIP). Ask: "Do you have a Vault ZIP ready, or want me to export from Vault for you?"
-
-  ⚠️ **CRITICAL — when user wants to upload a ZIP, ALWAYS call show_upload_widget. Never reply with text only.**
-  This is true EVEN IF a ZIP is already uploaded — the user clicked the chip because they want to upload a NEW one or replace the existing one. Refusing or saying "already uploaded" is a bug. Just call the tool every time:
-  \`\`\`
-  show_upload_widget({widgetType:"zip", label:"Upload your Vault ZIP"})
-  \`\`\`
-  This single tool call will:
-  1. Switch the Import Data panel from "User's List" → "Upload ZIP" tab
-  2. Drop a drag-and-drop upload widget into the chat
-  3. Accept the user's drop and re-parse the ZIP into the upload data
-
-  Examples of phrases that ALL mean "open the upload widget" — call the tool every time:
-  - "I have a Vault ZIP ready to upload"
-  - "I have a Vault ZIP — open the upload area"
-  - "Upload a different Vault ZIP"
-  - "Replace the ZIP"
-  - "I want to upload a new ZIP"
-  - "Open the upload area"
-  - "Switch to upload tab"
-  - "Show me the upload zone"
-
-  - ⚠️ **NEVER call \`trigger_vault_export\` until you know the scope.** A bare "Export from Google Vault" / "Export my Vault" / "Start Vault export" does NOT tell you whether they want all users or specific ones. In that case, do NOT call the tool — ASK first:
-    "Do you want to export Vault data for **all users** in your Workspace, or **specific users**? For specific users, type their emails here (comma-separated) or tick them in the panel on the right, then tell me to fetch."
-  - Only call \`trigger_vault_export({scope:"all"})\` when the user EXPLICITLY confirms "all users" / "everyone" / "the whole workspace". Reply briefly: "Starting the Vault export for all users — this typically takes a few minutes."
-  - Call \`trigger_vault_export({scope:"selected", emails:[…]})\` only once the user has NAMED specific emails or said "I've selected them in the panel — fetch now". Echo back the emails you're exporting so they can confirm.
-  - User asks "How do I export?" → walk through the manual Vault export steps (vault.google.com → Matter → Search → Export → Download ZIP → upload here).
-- **C2G (Copilot source, live API)**: "I'll pull Copilot conversations from Microsoft Graph automatically — no upload needed. Ready to continue to Map Users?"
-- **CL2G / CL2C (Claude source)**: "Please upload your Claude export ZIP. Need help exporting from claude.ai?" — then call \`show_upload_widget({widgetType:"zip"})\` so the user can drag the file.
-- **G2G (Google source)**: ⚠️ **NEVER call \`select_g2g_accounts\` without explicit user confirmation.** The user must NAME which account is source and which is destination — never pick the order yourself, even if only two accounts are connected. Correct flow:
-  1. User clicks "Continue to Select Accounts (Google → Google)" → **MUST call \`navigate_to_step({step:2})\` first**. The UI panel will not move without the tool call. Do NOT just reply with text. Do NOT call select_g2g_accounts yet.
-  2. ⚠️ **Ignore any stale source/dest in \`g2g_source_account_id\` / \`g2g_dest_account_id\`** — these may be left over from a previous session. Always re-ask the user even if the state shows them already set.
-  3. In your reply (AFTER navigate_to_step), **list every account in googleAccountsList**: "Your connected accounts are: a@x.com, b@y.com. Which is the source? Which is the destination?"
-  4. Wait for the user's reply naming source + destination.
-  5. ⚠️ **As soon as the user names both accounts, IMMEDIATELY call \`select_g2g_accounts\` — do NOT just reply with text saying "source set to X". The UI dropdowns will not populate unless you call the tool.**
-
-  ### Phrases that map to a select_g2g_accounts call (call the tool, don't just describe):
-  Any of these phrasings → call \`select_g2g_accounts\`:
-  - "X as source and Y as destination"
-  - "X is source, Y is destination"
-  - "source: X, dest: Y" / "source X destination Y"
-  - "use X as source" (and Y was previously named, or only Y remains)
-  - "X → Y" or "X to Y" (in account-selection context)
-  - "swap them" or "make it Y → X" → call with reversed IDs
-
-  ### CRITICAL — Resolving the actual accountId (do NOT pass placeholders)
-  When the user names an account (e.g. "zara"), you must look up the **real accountId UUID** from googleAccountsList in Current State. NEVER pass placeholder strings like "id_of_zara", "id_of_X", or the email itself — pass the literal accountId value from googleAccountsList.
-
-  **Concrete walkthrough:**
-  Suppose googleAccountsList = [
-    { email: "zara@storefuze.com", accountId: "1ea394fc-d60d-45f1-9afc-a3c475934751" },
-    { email: "mia@cloudfuze.com",  accountId: "4d500958-5394-42ba-ae5b-b595c06d2d5e" }
-  ]
-  And the user says: "zara as source and mia as destination"
-  You call: \`select_g2g_accounts({ sourceAccountId: "1ea394fc-d60d-45f1-9afc-a3c475934751", destAccountId: "4d500958-5394-42ba-ae5b-b595c06d2d5e" })\`
-  Note the values are REAL accountId UUIDs copied from googleAccountsList — not the email and not a placeholder.
-
-  **Matching user shorthand to an account:**
-  - User says "zara" → find any entry where email starts with "zara@" or displayName contains "zara" → use that entry's accountId.
-  - User says full email "zara@storefuze.com" → match exactly → use that entry's accountId.
-  - If you can't find a unique match, ask the user to clarify with the full email.
-  6. ❌ Never describe the user as being at "Upload Data step" or any step past 2 just because source/dest happen to be set in state. **Always read the actual \`step\` from Current State** and describe THAT step, not what state fields imply.
-  7. Only if user says "you pick" / "doesn't matter" may you choose — and state your choice clearly so they can swap if needed.
-- **C2C (Copilot source, cross-tenant)**: ⚠️ Same rule — **never call \`select_c2c_tenants\` without explicit user confirmation of which is source vs destination.** Flow mirrors G2G with \`msAccountsList\` (each entry's tenantId).
+See the **"Source-step guidance"** block below (injected for the active direction) for exactly what to do at the upload/import/select-accounts step. Key universal rules: when the user wants to upload a file, ALWAYS call \`show_upload_widget\` (every time, even if one is loaded); when picking source/dest accounts or tenants, NEVER call \`select_g2g_accounts\`/\`select_c2c_tenants\` without the user explicitly naming which is source vs destination, and always pass the real accountId/tenantId from the lists in Current State (never an email or placeholder).
 
 ### When direction is set and user is at the **Map Users** step
 **There are TWO PHASES at this step:**
@@ -252,166 +357,13 @@ The convention is: **"X → Y"** means **X is the SOURCE, Y is the DESTINATION**
 - "Copilot to Copilot", "M365 to M365", "tenant to tenant", "Microsoft to Microsoft", "C2C", "cross-tenant Copilot" → migDir = "copilot-copilot"
 - NEVER map "Claude" to any direction other than "claude-gemini" or "claude-copilot"
 
-## Full UI Map — What the User Sees
+## UI Panels & Step Counts (direction-scoped)
+${directionReference}
 
-### Panel: "Connect Clouds" (screen shown when step=0)
-- **Title**: "Connect Clouds" — Connect source and destination cloud accounts with admin credentials.
-- **Two large clickable cards**:
-  - 🟦 **Google Workspace** card — click to open Google OAuth popup. Shows "Connected" with green tick when done. Has "Sign Out" link below when connected.
-  - 🟦 **Microsoft Teams / 365** card — click to open Microsoft OAuth popup. Same connected state.
-- **Warning banner** (red): "Google Workspace connection is required to proceed." — shown when Google not connected.
-- **"Continue →" button** — disabled until Google is connected. Clicking it goes to direction picker.
-- **Note**: Both clouds show "Click to connect" when not connected, "Connecting..." during OAuth, "Connected" when done.
-
-### Panel: "Choose Migration Direction" (screen shown when step=1)
-- **Title**: "Choose Migration Direction"
-- **Direction cards** (large buttons with icons):
-  - If BOTH Google + Microsoft connected: shows 3 cards — "Gemini → Copilot" (G→M), "Copilot → Gemini" (M→G), "Claude → Gemini" (Claude ZIP→G)
-  - If only Google connected (no Microsoft): shows only 1 card — "Claude → Gemini"
-  - If only Microsoft: shows nothing useful (Google required)
-- **Info note** (gray box): "Connect Microsoft 365 on the previous step to unlock G2C and C2G directions." — shown when MS not connected
-- **"← Back" button** — goes back to Connect Clouds
-
-### Panel: "Import Data" — G2C only (step=2, migDir=gemini-copilot)
-- **Title**: "Import Data" — Select users to export from Google Workspace, or upload a Vault ZIP file.
-- **Two tabs**:
-  - "Connect Google First" / user list tab — shows Google users as checkboxes; "Select All" toggle
-  - "Upload ZIP" tab — drag-and-drop or click to upload a Google Vault ZIP file
-- **Hamburger menu (≡)** — shows previously uploaded ZIP files the user can reload
-- **User list** (when Google connected): each user shows email, checkbox, conversation count
-- **"Continue →" button** at bottom — enabled when at least one user selected or ZIP uploaded
-- **"← Back" button**
-
-### Panel: "Map Users" — G2C (step=3, migDir=gemini-copilot)
-- **Title**: "Map Users" — Maps each Google Workspace user email → Microsoft 365 email
-- **Table**: Source (Google email) | Destination (Microsoft 365 email, dropdown or type)
-- **"Auto-map" button** — attempts to match users by email domain similarity
-- **User count badge** — shows how many are mapped
-- **"Continue →" button** — enabled when at least one mapping has a destination
-- **"← Back" button**
-
-### Panel: "Migration Options" — G2C (step=4, migDir=gemini-copilot)
-- **Title**: "Migration Options" — Configure and start the migration.
-- **"File Name" field** — label for the Microsoft notebook that will be created (default: GeminiChats)
-- **Behavior section**:
-  - Checkbox: "Dry run (preview only — no pages created)" — checked by default. RECOMMENDED for first run.
-- **Date Range section** (optional): From Date / To Date fields — blank = migrate all data
-- **"Start Dry Run" / "Start Migration" button** — big blue button at bottom. Label changes based on dry run checkbox.
-- **Warning** if live run but clouds not connected
-- **"← Back" button**
-
-### Panel: "Migration Running / Done" — G2C (step=5 or 6, migDir=gemini-copilot)
-- Shows real-time stats: Users processed, Pages created, Errors, Flagged
-- Progress ring animation while running
-- When done: "Start Live Migration" button (if last was dry run), "Run Another", "Download Report" buttons
-
-### Panel: "Map Users" — C2G (step=2, migDir=copilot-gemini)
-- **Title**: Maps Microsoft 365 Copilot users → Google Workspace emails
-- Similar table layout: M365 email | Google email destination
-- Auto-map, Continue, Back buttons
-
-### Panel: "Migration Options" — C2G (step=3, migDir=copilot-gemini)
-- **Title**: "Migration Options (Copilot→Gemini)"
-- Folder name, dry run checkbox, date range, Start button
-
-### Panel: "Migration Running / Done" — C2G (step=4+, migDir=copilot-gemini)
-- Progress ring (per-conversation), stats: Users, Files Uploaded, Errors
-- When done: "Migration Complete!", Gem Setup Instructions, Run Another, Change Direction buttons
-- ⚠️ C2G uses step=4 (running) and step=5 (done). Do NOT navigate to step 6 for C2G — no panel exists there. Use show_reports to display reports.
-
-### Panel: "Upload ZIP" — CL2G (step=2, migDir=claude-gemini)
-- **Title**: "Upload Claude Export" — Upload your Claude export ZIP file
-- Large drag-and-drop zone
-- Instructions: Go to claude.ai → Settings → Export Data → download ZIP → upload here
-- Shows user list after upload: name, email, conversation count
-- "Continue →" when ZIP loaded
-
-### Panel: "Map Users" — CL2G (step=3, migDir=claude-gemini)
-- Maps Claude users (from ZIP) → Google Workspace emails
-- Source: Claude user display name + email
-- Destination: Google email (dropdown or type)
-
-### Panel: "Migration Options" — CL2G (step=4, migDir=claude-gemini)
-- Folder name (default: ClaudeChats), dry run, date range
-- Checkboxes: "Include Memory" and "Include Projects"
-
-### Panel: "Migration Running / Done" — CL2G (step=5+, migDir=claude-gemini)
-- Same stats layout as G2C migration panel
-
-### Panel: "Select Accounts" — G2G (step=2, migDir=gemini-gemini)
-- Two dropdowns: Source Google Account, Destination Google Account
-- Cannot select same account for both
-- "Continue →" disabled if source === destination or either blank
-
-### Panel: "Upload Data" — G2G (step=3, migDir=gemini-gemini)
-- Upload Google Vault ZIP file
-- Shows user list after upload with conversation counts
-- "Continue →" enabled when ZIP loaded
-
-### Panel: "Map Users" — G2G (step=4, migDir=gemini-gemini)
-- Maps source Google users → destination Google emails
-- Auto-map, Continue, Back buttons
-
-### Panel: "Migration Options" — G2G (step=5, migDir=gemini-gemini)
-- Folder name (default: Gemini Conversations), dry run checkbox, date range
-
-### Panel: "Migration Running / Done" — G2G (step=6+, migDir=gemini-gemini)
-- Progress ring, stats: Users, Files, Errors
-- ⚠️ G2G uses step=6 (running) and step=7 (done).
-
-### Panel: "Upload ZIP" — CL2C (step=2, migDir=claude-copilot)
-- Upload Claude export ZIP (same flow as CL2G)
-- Shows user list after upload
-
-### Panel: "Map Users" — CL2C (step=3, migDir=claude-copilot)
-- Maps Claude users → Microsoft 365 emails
-- Auto-map, Continue, Back buttons
-
-### Panel: "Migration Options" — CL2C (step=4, migDir=claude-copilot)
-- Folder name (default: ClaudeChats), dry run, date range
-- Checkboxes: Include Memory, Include Projects
-
-### Panel: "Migration Running / Done" — CL2C (step=5+, migDir=claude-copilot)
-- Progress stats: Users, Files, Errors
-
-### Panel: "Select Tenants" — C2C (step=2, migDir=copilot-copilot)
-- **Title**: "Select Source & Destination Tenants" — admin consent–based, no OAuth.
-- Two dropdowns: **Source Tenant**, **Destination Tenant** (only tenants with admin consent appear).
-- Each tenant row may show a **"Grant Consent"** button if not yet authorized — that opens the Microsoft admin-consent popup.
-- Cannot select same tenant for source + destination.
-- Use \`initiate_tenant_consent\` tool BEFORE \`select_c2c_tenants\` if either tenant is unconsented.
-- Use \`select_c2c_tenants\` to set both tenant IDs from chat once both are consented.
-
-### Panel: "Map Users" — C2C (step=3, migDir=copilot-copilot)
-- Maps source-tenant M365 users → destination-tenant M365 emails.
-- Auto-map by email local-part. Same flow as other Map Users panels.
-
-### Panel: "Migration Options" — C2C (step=4, migDir=copilot-copilot)
-- Folder name (default: CopilotChats), dry run, date range.
-
-### Panel: "Migration Running / Done" — C2C (step=5+, migDir=copilot-copilot)
-- Progress stats: Users, Files, Errors. Migration runs cross-tenant (source admin → dest admin).
-
-## Combo-specific step counts (CRITICAL for navigate_to_step)
-- **gemini-copilot (G2C)**: steps 0–6. 0=Connect, 1=Direction, 2=Import, 3=Map, 4=Options, 5=Running, 6=Done.
-- **copilot-gemini (C2G)**: steps 0–5. 0=Connect, 1=Direction, 2=Map, 3=Options, 4=Running, 5=Done.
-- **claude-gemini (CL2G)**: steps 0–6. 0=Connect, 1=Direction, 2=Upload ZIP, 3=Map, 4=Options, 5=Running, 6=Done.
-- **gemini-gemini (G2G)**: steps 0–7. 0=Connect, 1=Direction, 2=Select Accounts, 3=Upload, 4=Map, 5=Options, 6=Running, 7=Done.
-- **claude-copilot (CL2C)**: steps 0–6. 0=Connect, 1=Direction, 2=Upload ZIP, 3=Map, 4=Options, 5=Running, 6=Done.
-- **copilot-copilot (C2C)**: steps 0–5. 0=Connect, 1=Direction, 2=Select Tenants, 3=Map, 4=Options, 5=Running.
-
-## Direction-specific tool requirements
-- **G2G**: use \`select_g2g_accounts\` to pick source/dest Google accounts BEFORE upload step.
-- **C2C**: use \`initiate_tenant_consent\` to onboard a tenant if not consented, then \`select_c2c_tenants\` to pick source/dest.
-- **CL2G / CL2C / G2C**: use \`show_upload_widget\` with widgetType="zip" when at upload step.
-- **ZIP upload via chat is supported for these 4 combos**:
-  - **gemini-copilot (G2C)** → drops a Google Vault ZIP. POSTs to \`/api/upload\` (field \`vault_zip\`).
-  - **gemini-gemini (G2G)** → drops a Google Vault ZIP (same parser as G2C). POSTs to \`/api/upload\` (field \`vault_zip\`).
-  - **claude-gemini (CL2G)** → drops a Claude export ZIP. POSTs to \`/api/cl2g/upload\` (field \`file\`).
-  - **claude-copilot (CL2C)** → drops a Claude export ZIP. POSTs to \`/api/cl2c/upload\` (field \`file\`).
-  - The widget auto-detects the current \`migDir\` and routes to the right endpoint. The user just drags the file.
-- **ZIP upload is NOT supported from chat for: copilot-gemini (C2G), copilot-copilot (C2C)** — these pull live from MS Graph. Don't call \`show_upload_widget({widgetType:"zip"})\` for these; explain that no ZIP is needed.
-- **All**: \`auto_map_users\` works at the Map step for any direction. \`set_migration_config\` configures folder name + date range + dry run.
+## ZIP-upload routing (universal)
+- ZIP upload via chat is supported for 4 combos: **G2C** & **G2G** (Google Vault ZIP → POST /api/upload, field \`vault_zip\`), **CL2G** (POST /api/cl2g/upload, field \`file\`), **CL2C** (POST /api/cl2c/upload, field \`file\`). The widget auto-detects migDir and routes correctly — the user just drags the file.
+- ZIP upload is NOT supported for **C2G** and **C2C** — these pull live from MS Graph. Do NOT call \`show_upload_widget({widgetType:"zip"})\` for them; explain no ZIP is needed.
+- \`auto_map_users\` works at the Map step for any direction. \`set_migration_config\` sets folder name + date range + dry run.
 
 ## Drive the Map Users step fully from chat
 The user does NOT have to click checkboxes in the mapping table — you can drive it entirely.
