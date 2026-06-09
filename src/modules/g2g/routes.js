@@ -253,11 +253,20 @@ export function createG2GRouter(deps) {
                 sourceEmail: srcEmail,
                 destEmail: userMappings?.[srcEmail] || srcEmail,
               }));
+              // Look up the upload doc so checkVaultExtractValid can see the
+              // conversationsPersisted / totalConversations counts. Without
+              // this the validator falls through to the extractPath check,
+              // which is null for DB-only uploads, and fires a false
+              // "No Vault export found in DB and no disk extract" blocker.
+              const uploadDoc = uploadId
+                ? await db().collection('geminiUploads').findOne({ _id: uploadId })
+                : null;
               const dryRunReport = await runDryRunValidator({
                 migDir: 'gemini-gemini',
                 pairs: validatorPairs,
                 config: { folderName: g2gGemName, fromDate, toDate, dryRun: true },
                 appUserId,
+                uploadData: uploadDoc,
                 extractPath,
                 sourceAccountId, destAccountId,
               });
