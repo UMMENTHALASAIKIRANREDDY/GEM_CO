@@ -5496,7 +5496,16 @@ function App(){
             if(ui.c2cConfig) setC2cConfig(p=>({...p,...ui.c2cConfig}));
             // G2G unique state (was previously in g2gSessions collection)
             if(ui.g2gConfig) setG2gConfig(p=>({...p,...ui.g2gConfig}));
+            // Selected-user sets — persisted per direction so the table
+            // checkboxes survive page reload + server restart. Mappings
+            // themselves live in their own userMappings collection (saved
+            // by each direction's user-mappings endpoint).
             if(Array.isArray(ui.g2gSelectedUsers)) setG2gSelectedUsers(new Set(ui.g2gSelectedUsers));
+            if(Array.isArray(ui.selectedUsers)) setSelectedUsers(new Set(ui.selectedUsers));
+            if(Array.isArray(ui.c2gSelectedUsers)) setC2gSelectedUsers(new Set(ui.c2gSelectedUsers));
+            if(Array.isArray(ui.cl2gSelectedUuids)) setCl2gSelectedUuids(new Set(ui.cl2gSelectedUuids));
+            if(Array.isArray(ui.cl2cSelectedUuids)) setCl2cSelectedUuids(new Set(ui.cl2cSelectedUuids));
+            if(Array.isArray(ui.c2cSelectedUsers)) setC2cSelectedUsers(new Set(ui.c2cSelectedUsers));
           }
 
           // DB mappings override localStorage (DB is authoritative for mappings)
@@ -5650,11 +5659,19 @@ function App(){
         options, c2gOptions, cl2gOptions, cl2cOptions, c2cOptions,
         c2gConfig, cl2gConfig, cl2cConfig, c2cConfig,
         // G2G unique state that used to live in g2gSessions
-        g2gConfig, g2gSelectedUsers: [...g2gSelectedUsers],
+        g2gConfig,
+        // Per-direction selected-user sets so the table checkboxes survive
+        // page reload + server restart. Sets must be serialized as arrays.
+        g2gSelectedUsers: [...g2gSelectedUsers],
+        selectedUsers: [...selectedUsers],
+        c2gSelectedUsers: [...c2gSelectedUsers],
+        cl2gSelectedUuids: [...cl2gSelectedUuids],
+        cl2cSelectedUuids: [...cl2cSelectedUuids],
+        c2cSelectedUsers: [...c2cSelectedUsers],
       };
       fetch('/api/user-session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uiState})}).catch(()=>{});
     },1500);
-  },[wsLoaded,splitPct,panelSwapped,leftMode,step,migDir,currentBatchId,migDone,c2gDone,cl2gDone,g2gDone,cl2cDone,c2cDone,stats,c2gStats,cl2gStats,g2gStats,cl2cStats,c2cStats,lastRunWasDry,c2gLastDry,cl2gLastDry,g2gLastDry,cl2cLastDry,c2cLastDry,options,c2gOptions,cl2gOptions,cl2cOptions,c2cOptions,c2gConfig,cl2gConfig,cl2cConfig,c2cConfig,g2gConfig,g2gSelectedUsers]);
+  },[wsLoaded,splitPct,panelSwapped,leftMode,step,migDir,currentBatchId,migDone,c2gDone,cl2gDone,g2gDone,cl2cDone,c2cDone,stats,c2gStats,cl2gStats,g2gStats,cl2cStats,c2cStats,lastRunWasDry,c2gLastDry,cl2gLastDry,g2gLastDry,cl2cLastDry,c2cLastDry,options,c2gOptions,cl2gOptions,cl2cOptions,c2cOptions,c2gConfig,cl2gConfig,cl2cConfig,c2cConfig,g2gConfig,g2gSelectedUsers,selectedUsers,c2gSelectedUsers,cl2gSelectedUuids,cl2cSelectedUuids,c2cSelectedUsers]);
 
   // Mappings, upload state, and user config are persisted via their own DB
   // collections (userMappings, claudeUploads/geminiUploads, userConfig) — no
