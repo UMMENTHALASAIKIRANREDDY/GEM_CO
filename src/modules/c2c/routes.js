@@ -145,6 +145,13 @@ export function createC2CRouter(deps) {
         const { deleteByTenant } = await import('../_shared/conversationStore.js');
         await deleteByTenant(appUserId, tenantId);
       } catch (e) { /* non-fatal */ }
+      // Wipe the saved C2C mapping doc + C2C session state. The mapping doc
+      // stores sourceTenantId/destTenantId but the read endpoint doesn't
+      // filter by them, so leaving the doc behind causes the User Mapping
+      // screen to show stale destinations after the user reconnects a
+      // different tenant.
+      await db().collection('userMappings').deleteOne({ appUserId, migDir: 'copilot-copilot' });
+      await db().collection('c2cSessions').deleteOne({ appUserId });
       res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ error: e.message });
@@ -277,12 +284,16 @@ export function createC2CRouter(deps) {
     try {
       const { appUserId } = getWorkspaceContext(req);
       if (!appUserId) return res.json({ totalBatches: 0, totalConversations: 0, totalErrors: 0, liveBatches: 0 });
+      // No status filter — must match the LIST endpoint so the Overall
+      // Summary at the top of the Reports panel agrees with the visible
+      // batch rows. Earlier `status: 'completed'` excluded any batch in
+      // 'running' / 'failed' / legacy status states.
       const pipeline = [
-        { $match: { appUserId, migDir: 'copilot-copilot', status: 'completed' } },
+        { $match: { appUserId, migDir: 'copilot-copilot' } },
         { $group: {
           _id: null,
           totalBatches: { $sum: 1 },
-          totalConversations: { $sum: '$migratedConversations' },
+          totalConversations: { $sum: { $ifNull: ['$migratedConversations', 0] } },
           totalErrors: { $sum: { $ifNull: ['$totalErrors', 0] } },
           liveBatches: { $sum: { $cond: [{ $ne: ['$dryRun', true] }, 1, 0] } },
         }},
@@ -302,6 +313,10 @@ export function createC2CRouter(deps) {
       const users = (batch.users || batch.report?.users || []).map(u => ({
         email: u.email, destEmail: u.destEmail,
         status: u.status || 'pending',
+        conversations_processed: u.conversations_processed ?? u.pages_created ?? 0,
+        migrated_conversations: u.migrated_conversations
+          ?? (u.status === 'success' ? (u.conversations_processed ?? u.pages_created ?? 0) : (u.pages_created ?? 0)),
+        files_uploaded: u.files_uploaded ?? u.files_created ?? 0,
         pages_created: u.pages_created || u.files_created || 0,
         files_created: u.files_created || 0,
         error_count: u.error_count || (u.errors?.length || 0),
@@ -313,6 +328,7 @@ export function createC2CRouter(deps) {
         status: batch.status, dryRun: batch.dryRun,
         startTime: batch.startTime, endTime: batch.endTime,
         totalUsers: batch.totalUsers || 0,
+        totalConversations: batch.totalConversations || batch.migratedConversations || 0,
         migratedConversations: batch.migratedConversations || 0,
         filesUploaded: batch.filesUploaded || 0,
         totalErrors: batch.totalErrors || 0,
@@ -451,6 +467,7 @@ export function createC2CRouter(deps) {
               migDir: 'copilot-copilot', customerName: c2cFolderName, direction: 'c2c',
               sourceTenantId, destTenantId, startTime, status: 'running',
               dryRun: isDryRun, appUserId,
+              fromDate: fromDate || null, toDate: toDate || null,
               totalUsers: pairs.length, migratedConversations: 0, filesUploaded: 0, totalErrors: 0,
               lastHeartbeat: new Date(),
               resumeContext, ...(isResume ? { resumedAt: new Date() } : {}),
@@ -597,13 +614,21 @@ export function createC2CRouter(deps) {
               }
             );
 
+            const _convCount = r.conversationsCount || 0;
+            const _pagesCreated = r.pagesCreated || 0;
+            const _status = r.errors?.length ? (_pagesCreated > 0 ? 'partial' : 'failed') : 'success';
             const userReport = {
               email: pair.sourceEmail, destEmail: pair.destUserEmail,
               displayName: pair.sourceDisplayName,
-              status: r.errors?.length ? ((r.pagesCreated || 0) > 0 ? 'partial' : 'failed') : 'success',
-              pages_created: r.pagesCreated || 0,
-              conversations_processed: r.conversationsCount || 0,
+              status: _status,
+              pages_created: _pagesCreated,
+              conversations_processed: _convCount,
+              // OneNote pages == conversations migrated for C2C.
+              migrated_conversations: _pagesCreated,
               files_created: r.filesUploaded || 0,
+              // Attachment files only — r.filesUploaded counts attachments
+              // uploaded to OneDrive (separate from the OneNote pages).
+              files_uploaded: r.filesUploaded || 0,
               error_count: (r.errors || []).length,
               errors: (r.errors || []).map(e => ({ error_message: e })),
               files: r.pages || [],
@@ -667,11 +692,11 @@ export function createC2CRouter(deps) {
                   accountId: destDelegatedAuth.accountId,
                   agentName,
                   sourceLabel: sourceLabel || 'Copilot',
-                  notebookName: c2cFolderName,
-                  sectionName: `${c2cFolderName} Conversations`,
-                  // Must match the folder name created by migrate.js so the
-                  // agent's instructions point users to the right place.
-                  driveFolder: 'Migrated from Copilot',
+                  // Universal 2-subfolder layout (Phase 2):
+                  //   {c2cFolderName}/Conversations/...docx
+                  //   {c2cFolderName}/Migrated from Copilot/...attachments
+                  conversationsFolder: `${c2cFolderName}/Conversations`,
+                  attachmentsFolder: `${c2cFolderName}/Migrated from Copilot`,
                   declarativeAgentId: 'copilotConversationAgent',
                   starterTopic: `What did I discuss in my migrated Copilot conversations?`,
                   starterCompare: `Summarize my most recent migrated Copilot conversation`,
@@ -701,11 +726,19 @@ export function createC2CRouter(deps) {
             }
           }
 
+          // Sum of per-user migrated_conversations (0 for failed users) — this
+          // is what's actually delivered. Distinct from totalConversations
+          // (= count found in source). For dry-runs, force migrated to 0 too
+          // since nothing was actually written.
+          const migratedConvSum = isDryRun
+            ? 0
+            : reportUsers.reduce((s, u) => s + (u.migrated_conversations || 0), 0);
           const reportUpdate = {
             status: errors > 0 && totalPages === 0 && !isDryRun ? 'failed' : 'completed',
             endTime: new Date(),
             totalUsers: migPairs.length,
-            migratedConversations: totalConversations,
+            totalConversations: totalConversations,
+            migratedConversations: migratedConvSum,
             migratedUsers: reportUsers.filter(u => u.status === 'success' || u.status === 'partial').length,
             failedUsers: reportUsers.filter(u => u.status === 'failed').length,
             filesUploaded: totalPages,
@@ -718,6 +751,7 @@ export function createC2CRouter(deps) {
                 total_pages_created: totalPages,
                 total_files_created: totalPages,
                 total_conversations: totalConversations,
+                total_migrated_conversations: migratedConvSum,
                 total_errors: errors,
               },
               users: reportUsers,

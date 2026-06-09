@@ -124,72 +124,27 @@ export function createG2GRouter(deps) {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
-  // GET /api/g2g/session — get current G2G migration session state
-  router.get('/session', requireAuth, async (req, res) => {
-    try {
-      const { appUserId } = getWorkspaceContext(req);
-      const session = await db().collection('g2gSessions').findOne({ appUserId });
-      if (session) {
-        return res.json({ ...session, _id: undefined, appUserId: undefined });
-      }
-      res.json({});
-    } catch (err) {
-      console.error('[g2g/session]', err.message);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // POST /api/g2g/session — save G2G migration session state
-  router.post('/session', requireAuth, async (req, res) => {
-    try {
-      const { appUserId } = getWorkspaceContext(req);
-      const { g2gUploadData, g2gConfig, g2gMappings, g2gSelectedUsers, g2gOptions } = req.body;
-
-      await db().collection('g2gSessions').updateOne(
-        { appUserId },
-        { $set: {
-          appUserId,
-          g2gUploadData,
-          g2gConfig,
-          g2gMappings,
-          g2gSelectedUsers: Array.from(g2gSelectedUsers || []),
-          g2gOptions,
-          lastUpdated: new Date()
-        } },
-        { upsert: true }
-      );
-
-      res.json({ saved: true });
-    } catch (err) {
-      console.error('[g2g/session]', err.message);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // DELETE /api/g2g/session — clear G2G migration session
-  router.delete('/session', requireAuth, async (req, res) => {
-    try {
-      const { appUserId } = getWorkspaceContext(req);
-      await db().collection('g2gSessions').deleteOne({ appUserId });
-      res.json({ cleared: true });
-    } catch (err) {
-      console.error('[g2g/session delete]', err.message);
-      res.status(500).json({ error: err.message });
-    }
-  });
+  // G2G session endpoints removed — session state for all 6 directions now
+  // lives in the unified `userSessions` collection (saved via POST
+  // /api/user-session and loaded via GET /api/init). G2G's upload data,
+  // mappings, and selected users are stored in their respective collections
+  // (geminiUploads, userMappings) like every other direction.
 
   // POST /api/g2g/migrate — run Gemini→Gemini migration
   router.post('/migrate', requireAuth, async (req, res) => {
     try {
       const { appUserId } = getWorkspaceContext(req);
-      const { sourceAccountId, destAccountId, gemName, dryRun, extractPath, selectedUsers, userMappings, fromDate, toDate } = req.body;
+      const { sourceAccountId, destAccountId, gemName, dryRun, extractPath, uploadId, selectedUsers, userMappings, fromDate, toDate } = req.body;
 
       if (!sourceAccountId || !destAccountId) {
         return res.status(400).json({ error: 'sourceAccountId and destAccountId required' });
       }
 
-      if (!extractPath) {
-        return res.status(400).json({ error: 'extractPath required' });
+      // After the DB-only refactor, uploads have no extract_path on disk —
+      // conversations are loaded from conversationStore via uploadId. Require
+      // ONE of extractPath (legacy) or uploadId (new path).
+      if (!extractPath && !uploadId) {
+        return res.status(400).json({ error: 'uploadId required (re-upload the Vault ZIP and try again)' });
       }
 
       if (!selectedUsers || selectedUsers.length === 0) {
@@ -204,8 +159,6 @@ export function createG2GRouter(deps) {
       const batchId = `g2g_${Date.now()}`;
       const startTime = new Date();
 
-      // Save resume context BEFORE kicking off the migration so a server crash
-      // before the runner starts is still recoverable on boot.
       const resumeContext = {
         kind: 'g2g',
         appUserId,
@@ -213,7 +166,8 @@ export function createG2GRouter(deps) {
         destAccountId,
         g2gGemName,
         isDryRun,
-        extractPath,
+        extractPath: extractPath || null,
+        uploadId: uploadId || null,
         selectedUsers,
         userMappings,
         fromDate,
@@ -230,7 +184,7 @@ export function createG2GRouter(deps) {
   //   1. POST /api/g2g/migrate (fresh run)
   //   2. server.js boot-time orphan resume
   async function executeG2GMigration({ batchId, startTime, resumeContext, isResume }) {
-    const { appUserId, sourceAccountId, destAccountId, g2gGemName, isDryRun, extractPath, selectedUsers, userMappings, fromDate, toDate } = resumeContext;
+    const { appUserId, sourceAccountId, destAccountId, g2gGemName, isDryRun, extractPath, uploadId, selectedUsers, userMappings, fromDate, toDate } = resumeContext;
 
       setImmediate(async () => {
         let files = 0, errors = 0;
@@ -251,6 +205,8 @@ export function createG2GRouter(deps) {
               appUserId,
               sourceAccountId,
               destAccountId,
+              fromDate: fromDate || null,
+              toDate: toDate || null,
               totalUsers: selectedUsers?.length || 0,
               migratedConversations: 0,
               filesUploaded: 0,
@@ -297,11 +253,20 @@ export function createG2GRouter(deps) {
                 sourceEmail: srcEmail,
                 destEmail: userMappings?.[srcEmail] || srcEmail,
               }));
+              // Look up the upload doc so checkVaultExtractValid can see the
+              // conversationsPersisted / totalConversations counts. Without
+              // this the validator falls through to the extractPath check,
+              // which is null for DB-only uploads, and fires a false
+              // "No Vault export found in DB and no disk extract" blocker.
+              const uploadDoc = uploadId
+                ? await db().collection('geminiUploads').findOne({ _id: uploadId })
+                : null;
               const dryRunReport = await runDryRunValidator({
                 migDir: 'gemini-gemini',
                 pairs: validatorPairs,
                 config: { folderName: g2gGemName, fromDate, toDate, dryRun: true },
                 appUserId,
+                uploadData: uploadDoc,
                 extractPath,
                 sourceAccountId, destAccountId,
               });
@@ -329,7 +294,9 @@ export function createG2GRouter(deps) {
               appUserId,
               sourceAccountId,
               destAccountId,
-              uploadId: extractPath || null,  // G2G uses extractPath as the upload identifier
+              // Prefer explicit uploadId from the new DB-only flow; fall back
+              // to extractPath for legacy uploads that still have disk content.
+              uploadId: uploadId || extractPath || null,
             },
             (logEntry) => {
               g2gLog(logEntry.type, logEntry.message);
@@ -339,20 +306,36 @@ export function createG2GRouter(deps) {
           files = result.filesUploaded || 0;
           errors = result.errors?.length || 0;
 
+          // Split the two counts: totalConversations = how many were read from
+          // the source (result.conversationsCount), migratedConversations =
+          // how many actually landed at the destination (sum of per-user
+          // migrated_conversations, which was bumped on each successful DOCX
+          // upload). These are equal on a clean run, diverge on partial runs.
+          const totalConvSum = result.conversationsCount || 0;
+          const migratedConvSum = (result.users || []).reduce(
+            (s, u) => s + (u.migrated_conversations || 0), 0
+          );
+          // Attachment files only (NOT the DOCXs that wrap conversations).
+          const attachmentSum = (result.users || []).reduce(
+            (s, u) => s + (u.files_uploaded || 0), 0
+          );
+
           const reportUpdate = {
             status: errors > 0 && files === 0 && !isDryRun ? 'failed' : 'completed',
             endTime: new Date(),
-            migratedConversations: result.conversationsCount || 0,
+            totalConversations: totalConvSum,
+            migratedConversations: migratedConvSum,
             migratedUsers: result.migratedUsers || 0,
             totalUsers: selectedUsers?.length || 0,
-            filesUploaded: files,
+            filesUploaded: attachmentSum,
             totalErrors: errors,
             users: result.users || [],
             report: {
               summary: {
                 total_users: selectedUsers?.length || 0,
-                total_conversations: result.conversationsCount || 0,
-                total_files_created: files,
+                total_conversations: totalConvSum,
+                total_migrated_conversations: migratedConvSum,
+                total_files_uploaded: attachmentSum,
                 total_errors: errors
               },
               users: result.users || [],
@@ -398,18 +381,14 @@ export function createG2GRouter(deps) {
     try {
       const { appUserId } = getWorkspaceContext(req);
       if (!appUserId) {
-        dbLog.info('g2g/reports: no appUserId');
         return res.json([]);
       }
       const reports = await db().collection('migrationWorkspaces')
         .find({ appUserId, migDir: 'gemini-gemini' }, { projection: { report: 0 } })
         .sort({ startTime: -1 }).toArray();
-      // Only log when batches exist — this endpoint is polled every 3s by the
-      // Reports panel while ANY migration is running. Logging empty results
-      // every tick swamps the log file (~25 lines/min per user).
-      if (reports.length > 0) {
-        dbLog.info(`g2g/reports: found ${reports.length} batches for ${appUserId}`);
-      }
+      // No log line here — this endpoint is polled every ~3s by the Reports
+      // panel and the result is read-only/expected behavior. Logging every
+      // tick produces 20+ lines/minute of noise.
       res.json(reports);
     } catch (err) {
       dbLog.error('[g2g/reports]', err.message);
@@ -427,6 +406,10 @@ export function createG2GRouter(deps) {
         email: u.email,
         destEmail: u.destEmail,
         status: u.status || 'pending',
+        conversations_processed: u.conversations_processed ?? u.pages_created ?? 0,
+        migrated_conversations: u.migrated_conversations
+          ?? (u.status === 'success' ? (u.conversations_processed ?? u.pages_created ?? 0) : (u.pages_created ?? 0)),
+        files_uploaded: u.files_uploaded ?? 0,
         pages_created: u.pages_created || u.files_created || 0,
         files_created: u.files_created || 0,
         error_count: u.error_count || (u.errors?.length || 0),
@@ -442,6 +425,7 @@ export function createG2GRouter(deps) {
         startTime: batch.startTime,
         endTime: batch.endTime,
         totalUsers: batch.totalUsers || 0,
+        totalConversations: batch.totalConversations || batch.migratedConversations || 0,
         migratedConversations: batch.migratedConversations || 0,
         filesUploaded: batch.filesUploaded || 0,
         totalErrors: batch.totalErrors || 0,
@@ -490,16 +474,22 @@ export function createG2GRouter(deps) {
   });
 
   // GET /api/g2g/reports/aggregate — aggregate stats for G2G migrations
+  // NOTE: match condition mirrors the LIST endpoint at /reports — no
+  // status filter. The previous `status: 'completed'` filter excluded
+  // batches in any non-completed state ('running', 'failed', and
+  // legacy/historical batches that used other status values), which is
+  // why the Overall Summary at the top of the Reports panel was reading
+  // 0 even though batches were clearly visible below.
   router.get('/reports/aggregate', requireAuth, async (req, res) => {
     try {
       const { appUserId } = getWorkspaceContext(req);
       if (!appUserId) return res.json({ totalBatches: 0, totalConversations: 0, totalErrors: 0, liveBatches: 0 });
       const pipeline = [
-        { $match: { appUserId, migDir: 'gemini-gemini', status: 'completed' } },
+        { $match: { appUserId, migDir: 'gemini-gemini' } },
         { $group: {
           _id: null,
           totalBatches: { $sum: 1 },
-          totalConversations: { $sum: '$migratedConversations' },
+          totalConversations: { $sum: { $ifNull: ['$migratedConversations', 0] } },
           totalErrors: { $sum: { $ifNull: ['$totalErrors', 0] } },
           liveBatches: { $sum: { $cond: [{ $ne: ['$dryRun', true] }, 1, 0] } }
         }}

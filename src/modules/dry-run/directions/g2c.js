@@ -9,15 +9,18 @@ import {
   checkVaultExtractValid, checkVaultUserHasData,
 } from '../checks/vaultSource.js';
 import {
-  checkMsUserExists, checkMsLicenses, checkOneDriveQuota, checkOneNoteSectionAvailable,
+  checkMsUserExists, checkMsLicenses, checkOneDriveQuota, checkDestFolderAvailable,
 } from '../checks/msDestination.js';
 
 export async function validateG2C(ctx) {
   const { pairs = [], config = {}, uploadData, extractPath, appUserId, msAccountId } = ctx;
-  const sectionName = config.folderName || config.sectionName || 'CopilotChats';
+  // Top-level folder in each destination user's OneDrive (Phase 2 — DOCX layout).
+  const folderName = config.folderName || config.sectionName || 'CopilotChats';
 
-  // Global: extract path validity (one check shared across all pairs).
-  const extractChecks = checkVaultExtractValid(extractPath);
+  // Global: extract validity (one check shared across all pairs). Accepts
+  // either a disk extract OR DB-persisted conversations. Async because it
+  // may query conversationStore as a fallback for legacy uploads.
+  const extractChecks = await checkVaultExtractValid(extractPath, uploadData);
   const extractFatal = extractChecks.some(c => c.severity === 'blocker');
 
   // Destination Graph token (delegated, since UI side is delegated MS OAuth).
@@ -37,7 +40,7 @@ export async function validateG2C(ctx) {
       checks.push(...await checkMsUserExists(destToken, destEmail));
       checks.push(...await checkMsLicenses(destToken, destEmail));
       checks.push(...await checkOneDriveQuota(destToken, destEmail, p.expectedConversationCount || 25));
-      checks.push(...await checkOneNoteSectionAvailable(destToken, destEmail, sectionName));
+      checks.push(...await checkDestFolderAvailable(destToken, destEmail, folderName, 'Gemini'));
     } else {
       checks.push({
         id: 'dest.ms.no_token',

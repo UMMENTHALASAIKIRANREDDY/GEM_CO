@@ -473,6 +473,14 @@ app.post('/api/auth/google/disconnect', requireAuth, async (req, res) => {
     }
     if (!getGoogleAccounts(appUserId).length) {
       await db().collection('cloudMembers').deleteMany({ appUserId, source: 'google' });
+      // Same fix as MS disconnect — wipe saved mappings + C2C session UI
+      // state so a fresh Google connect into a different domain doesn't
+      // show stale destinations from the prior cloud.
+      const mapWipe = await db().collection('userMappings').deleteMany({ appUserId });
+      const sessWipe = await db().collection('c2cSessions').deleteMany({ appUserId });
+      if (mapWipe.deletedCount > 0 || sessWipe.deletedCount > 0) {
+        console.log(`[disconnect google] cleared ${mapWipe.deletedCount} userMappings + ${sessWipe.deletedCount} c2cSessions for appUserId=${appUserId}`);
+      }
       // Belt-and-suspenders: clear all vault-source conversationStore rows
       // when no Google account remains for this user.
       const { getDb } = await import('./src/db/mongo.js');
@@ -555,6 +563,16 @@ app.post('/api/auth/ms/disconnect', requireAuth, async (req, res) => {
       if (c2cWipe.modifiedCount > 0) {
         console.log(`[disconnect ms] soft-revoked ${c2cWipe.modifiedCount} C2C tenant consent(s) for appUserId=${appUserId}`);
       }
+      // Wipe ALL saved user-mapping docs + C2C session UI state. Mappings are
+      // keyed only by (appUserId, migDir) with no tenant scope, so without
+      // this they survive a reconnect into a different tenant and the User
+      // Mapping screen shows stale destinations from the prior cloud
+      // (the "gajha.com" bug).
+      const mapWipe = await db().collection('userMappings').deleteMany({ appUserId });
+      const sessWipe = await db().collection('c2cSessions').deleteMany({ appUserId });
+      if (mapWipe.deletedCount > 0 || sessWipe.deletedCount > 0) {
+        console.log(`[disconnect ms] cleared ${mapWipe.deletedCount} userMappings + ${sessWipe.deletedCount} c2cSessions for appUserId=${appUserId}`);
+      }
       // Belt-and-suspenders: clear all graph-source conversationStore rows
       // when no MS account remains (covers tenantId-less rows from prior sessions)
       const { getDb } = await import('./src/db/mongo.js');
@@ -602,33 +620,76 @@ app.put('/api/config', requireAuth, async (req, res) => {
 
 // ─── Migration workspace + job endpoints ─────────────────────────────────────
 
-// One-call state load on login — returns config, mappings, recent workspaces, recent uploads
+// One-call state load on login — returns config, mappings, recent workspaces,
+// recent uploads, chat messages, and UI session state. Loaded in parallel so
+// the UI can hydrate from a single round-trip on mount.
 app.get('/api/init', requireAuth, async (req, res) => {
   try {
     const { appUserId } = getWorkspaceContext(req);
     if (!appUserId) return res.status(401).json({ error: 'Session missing user id' });
-    const [config, mappings, recentWorkspaces, recentUploads, chatDoc] = await Promise.all([
+    const [config, mappings, recentWorkspaces, recentUploads, chatDoc, sessionDoc, msSession] = await Promise.all([
       db().collection('userConfig').findOne({ appUserId }),
       db().collection('userMappings').find({ appUserId }).toArray(),
       db().collection('migrationWorkspaces').find({ appUserId }).sort({ startTime: -1 }).limit(10).toArray(),
-      db().collection('uploads').find({ appUserId }).sort({ uploadTime: -1 }).limit(5).toArray(),
-      db().collection('chatHistory').findOne({ appUserId }),
+      db().collection('geminiUploads').find({ appUserId }).sort({ uploadTime: -1 }).limit(5).toArray(),
+      // chatHistory holds the consolidated {appUserId, messages: [...]} doc
+      // written by POST /api/chat-messages below. Per-message docs from
+      // src/agent/conversationHistory.js live in the same collection but
+      // have a different shape (no messages field on those) — the findOne
+      // here only matches our consolidated doc.
+      db().collection('chatHistory').findOne({ appUserId, messages: { $exists: true } }),
+      db().collection('userSessions').findOne({ appUserId }),
+      // Fall back: if userConfig has no tenantId yet (first-time user after
+      // the localStorage->DB migration), use the MS auth session's tenantId
+      // so /api/migrate doesn't 400 with "tenant_id is required".
+      db().collection('authSessions').findOne({ appUserId, provider: 'microsoft' }, { projection: { tenantId: 1 } }),
     ]);
-    res.json({ config, mappings, recentWorkspaces, recentUploads, chatMessages: chatDoc?.messages || [], uiState: chatDoc?.uiState || null });
+    const effectiveConfig = config || {};
+    if (!effectiveConfig.tenantId && msSession?.tenantId) {
+      effectiveConfig.tenantId = msSession.tenantId;
+    }
+    res.json({
+      config: effectiveConfig,
+      mappings,
+      recentWorkspaces,
+      recentUploads,
+      chatMessages: chatDoc?.messages || [],
+      uiState: sessionDoc?.uiState || null,
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Save chat messages + UI position for cross-device persistence
-app.post('/api/chat-history', requireAuth, async (req, res) => {
+// Save agent chat messages. Lives in chatHistory collection as a single doc
+// per user with a `messages` array — distinct from the per-message docs that
+// src/agent/conversationHistory.js writes to the same collection.
+app.post('/api/chat-messages', requireAuth, async (req, res) => {
   try {
     const { appUserId } = getWorkspaceContext(req);
     if (!appUserId) return res.status(401).json({ error: 'Not authenticated' });
-    const { messages, uiState } = req.body;
+    const { messages } = req.body;
     if (!Array.isArray(messages)) return res.status(400).json({ error: 'messages must be array' });
-    const update = { messages: messages.slice(-30), updatedAt: new Date() };
-    // uiState carries step, migDir, options — enough to restore left-panel position on any device
-    if (uiState && typeof uiState === 'object') update.uiState = uiState;
-    await db().collection('chatHistory').updateOne({ appUserId }, { $set: update }, { upsert: true });
+    await db().collection('chatHistory').updateOne(
+      { appUserId, messages: { $exists: true } },
+      { $set: { messages: messages.slice(-30), updatedAt: new Date() } },
+      { upsert: true }
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Save UI session state (step, migDir, options, configs, done flags, stats,
+// cosmetic UI prefs) for cross-device restore. One doc per user.
+app.post('/api/user-session', requireAuth, async (req, res) => {
+  try {
+    const { appUserId } = getWorkspaceContext(req);
+    if (!appUserId) return res.status(401).json({ error: 'Not authenticated' });
+    const { uiState } = req.body;
+    if (!uiState || typeof uiState !== 'object') return res.status(400).json({ error: 'uiState must be object' });
+    await db().collection('userSessions').updateOne(
+      { appUserId },
+      { $set: { uiState, updatedAt: new Date() } },
+      { upsert: true }
+    );
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -664,36 +725,6 @@ app.get('/api/workspaces', requireAuth, async (req, res) => {
       .limit(50)
       .toArray();
     res.json(workspaces);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Jobs for a specific workspace
-app.get('/api/jobs/:workspaceId', requireAuth, async (req, res) => {
-  try {
-    const { appUserId } = getWorkspaceContext(req);
-    if (!appUserId) return res.status(401).json({ error: 'Session missing user id' });
-    const jobs = await db().collection('migrationJobs')
-      .find({ workspaceId: req.params.workspaceId, appUserId })
-      .sort({ startTime: 1 })
-      .toArray();
-    res.json(jobs);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Retry a single failed job (marks it retried; actual re-run done by agent)
-app.post('/api/jobs/:jobId/retry', requireAuth, async (req, res) => {
-  try {
-    const { appUserId } = getWorkspaceContext(req);
-    if (!appUserId) return res.status(401).json({ error: 'Session missing user id' });
-    const job = await db().collection('migrationJobs')
-      .findOne({ jobId: req.params.jobId, appUserId });
-    if (!job) return res.status(404).json({ error: 'Job not found' });
-    if (job.status !== 'failed') return res.status(400).json({ error: 'Job is not failed' });
-    await db().collection('migrationJobs').updateOne(
-      { jobId: job.jobId },
-      { $set: { status: 'retried', retriedAt: new Date() } }
-    );
-    res.json({ ok: true, jobId: job.jobId });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -839,12 +870,9 @@ async function ensureIndexes(database) {
 
   await Promise.all([
     idx('migrationWorkspaces', { appUserId: 1, startTime: -1 }),
-    idx('migrationJobs',       { workspaceId: 1, appUserId: 1 }),
-    idx('migrationJobs',       { jobId: 1 }, { unique: true }),
     idx('userMappings',        { appUserId: 1, migDir: 1 }, { unique: true }),
     idx('uploads',             { appUserId: 1, uploadTime: -1 }),
     idx('userConfig',          { appUserId: 1 }, { unique: true }),
-    idx('cachedUsers',         { appUserId: 1, role: 1, migDir: 1 }),
   ]);
 }
 

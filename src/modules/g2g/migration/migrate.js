@@ -27,6 +27,10 @@ import {
   recoverFilesFromConversation,
   cleanupWorkDirs,
 } from '../../gemini/fileRegenerator.js';
+import {
+  CONVERSATIONS_SUBFOLDER,
+  attachmentsSubfolderName,
+} from '../../_shared/destinationFolders.js';
 
 // Google Docs editor MIME → export format
 const EXPORT_FORMATS = {
@@ -240,7 +244,7 @@ function buildDriveFileParagraphs(driveFiles) {
   return paras;
 }
 
-async function buildMergedBatchDocx(batch, userEmail, startConvIdx) {
+export async function buildMergedBatchDocx(batch, userEmail, startConvIdx) {
   const children = [];
 
   children.push(
@@ -270,6 +274,40 @@ async function buildMergedBatchDocx(batch, userEmail, startConvIdx) {
       })],
     })
   );
+
+  // ── Conversation Index (first page) ────────────────────────────────
+  // Lists every conversation title with its first-message timestamp and
+  // message count so the user can navigate the bundled DOCX at a glance.
+  // Matches the layout used by C2G and CL2G.
+  children.push(
+    new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      spacing: { before: 200, after: 160 },
+      children: [new TextRun({ text: 'CONVERSATION INDEX', bold: true, size: 26, color: '0B5394', allCaps: true })],
+    })
+  );
+  for (let i = 0; i < batch.length; i++) {
+    const c = batch[i];
+    const convIdx = startConvIdx + i;
+    const title = c.title || `Conversation ${convIdx}`;
+    const firstDate = c.turns?.[0]?.timestamp;
+    const dateStr = firstDate ? formatTimestamp(firstDate) : '';
+    const msgCount = (c.turns || []).length;
+
+    children.push(
+      new Paragraph({
+        spacing: { after: 60 },
+        children: [
+          new TextRun({ text: `${convIdx}.  `, bold: true, size: 20, color: '0B5394' }),
+          new TextRun({ text: title, size: 20, color: '1E3A5F', bold: true }),
+          new TextRun({ text: dateStr ? `\t${dateStr}` : '', size: 18, color: '999999' }),
+          new TextRun({ text: `  (${msgCount} msg${msgCount !== 1 ? 's' : ''})`, size: 17, color: 'AAAAAA' }),
+        ],
+      })
+    );
+  }
+  // Page break so conversations start on a fresh page
+  children.push(new Paragraph({ spacing: { before: 400 }, children: [new PageBreak()] }));
 
   let idx = startConvIdx;
   for (const conv of batch) {
@@ -347,12 +385,13 @@ async function buildMergedBatchDocx(batch, userEmail, startConvIdx) {
   return Packer.toBuffer(doc);
 }
 
-async function createDriveFolder(auth, folderName) {
+async function createDriveFolder(auth, folderName, parentFolderId) {
   const drive = google.drive({ version: 'v3', auth });
   const res = await drive.files.create({
     requestBody: {
       name: folderName,
       mimeType: 'application/vnd.google-apps.folder',
+      parents: parentFolderId ? [parentFolderId] : undefined,
     },
     fields: 'id, name, webViewLink',
   });
@@ -434,7 +473,7 @@ export async function runG2GMigration(
       // DB-only path: look up the upload doc for the user list
       onLog({ type: 'info', message: 'Reading user list from upload metadata (DB-only mode)...' });
       const { getDb } = await import('../../../db/mongo.js');
-      const uploadDoc = uploadId ? await getDb().collection('uploads').findOne({ _id: uploadId }) : null;
+      const uploadDoc = uploadId ? await getDb().collection('geminiUploads').findOne({ _id: uploadId }) : null;
       if (!uploadDoc) {
         result.errors.push(`Upload ${uploadId || '(none)'} not found in DB and disk extract is gone — please re-upload the Vault ZIP.`);
         onLog({ type: 'error', message: result.errors[0] });
@@ -492,6 +531,16 @@ export async function runG2GMigration(
         status: 'pending',
         pages_created: 0,
         files_created: 0,
+        // Total conversations read for this user (source count). Set after we
+        // load them below. Reports panel + CSV "Total Conversations" column.
+        conversations_processed: 0,
+        // Migrated conversations = how many actually made it into the DOCX(s)
+        // at the destination. <= conversations_processed.
+        migrated_conversations: 0,
+        // Attachment files only (images / PDFs uploaded as standalone files).
+        // The conversation DOCX is NOT counted here — it's the conversation
+        // container, not a "file" in the Reports/CSV sense.
+        files_uploaded: 0,
         error_count: 0,
         errors: [],
       };
@@ -566,6 +615,7 @@ export async function runG2GMigration(
       }
 
       result.conversationsCount += conversations.length;
+      userRecord.conversations_processed = conversations.length;
 
       // Note: conversations already persisted to conversationStore at upload time
       // (via the shared /api/upload endpoint that serves both G2C and G2G).
@@ -577,6 +627,7 @@ export async function runG2GMigration(
         });
         userRecord.status = 'success';
         userRecord.pages_created = conversations.length;
+        userRecord.migrated_conversations = conversations.length;
         result.users.push(userRecord);
         result.migratedUsers++;
         emitProgress();
@@ -599,12 +650,19 @@ export async function runG2GMigration(
         continue;
       }
 
-      // Create destination folder in the user's own Drive
+      // Create destination folder structure in the user's own Drive.
+      // Universal 2-subfolder pattern (see _shared/destinationFolders.js):
+      //   {folderName}/
+      //   ├── Conversations/          ← bundled DOCXs go here
+      //   └── Migrated from Gemini/   ← regenerated images / attachments
       const folderName = opts?.gemName || 'Gemini Conversations';
-      let mainFolder;
+      const filesSubfolderName = attachmentsSubfolderName('gemini');
+      let mainFolder, convoFolder, filesFolder;
       try {
         mainFolder = await createDriveFolder(destUserAuth, folderName);
-        onLog({ type: 'info', message: `Created folder "${folderName}" in ${mappedTo}'s Drive` });
+        convoFolder = await createDriveFolder(destUserAuth, CONVERSATIONS_SUBFOLDER, mainFolder.id);
+        filesFolder = await createDriveFolder(destUserAuth, filesSubfolderName, mainFolder.id);
+        onLog({ type: 'info', message: `Created folder layout in ${mappedTo}'s Drive: ${folderName}/ → ${CONVERSATIONS_SUBFOLDER}/, ${filesSubfolderName}/` });
       } catch (err) {
         const errMsg = `${sourceEmail}: folder create failed in ${mappedTo}'s Drive — ${err.message}`;
         result.errors.push(errMsg);
@@ -724,7 +782,7 @@ export async function runG2GMigration(
           }
           try {
             const buf = f.buffer || fs.readFileSync(f.fullPath);
-            const uploaded = await uploadFileToDrive(destUserAuth, f.name, f.mime, buf, mainFolder.id);
+            const uploaded = await uploadFileToDrive(destUserAuth, f.name, f.mime, buf, filesFolder.id);
             const turn = conv.turns?.[f.turnIndex];
             if (turn) {
               if (!turn.driveFiles) turn.driveFiles = [];
@@ -737,6 +795,8 @@ export async function runG2GMigration(
             }
             result.filesUploaded++;
             userRecord.files_created++;
+            // Real attachment (image regen) — counts toward "Files" in CSV/Reports.
+            userRecord.files_uploaded++;
             regeneratedCount++;
             onLog({ type: 'success', message: `  Gemini-regenerated: "${f.name}" (${buf.length} bytes) → ${mappedTo}'s Drive` });
           } catch (err) {
@@ -778,12 +838,16 @@ export async function runG2GMigration(
             docxName,
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             docxBuffer,
-            mainFolder.id
+            convoFolder.id
           );
 
           result.filesUploaded++;
           userRecord.files_created++;
           userRecord.pages_created += batch.length;
+          // batch.length conversations just landed at the destination — that's
+          // what "Migrated Conversations" counts. The DOCX itself is NOT a file
+          // (it's the conversation container), so files_uploaded is not bumped here.
+          userRecord.migrated_conversations += batch.length;
 
           onLog({
             type: 'success',

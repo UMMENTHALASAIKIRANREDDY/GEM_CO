@@ -10,14 +10,46 @@ import path from 'node:path';
 import { passingCheck, warningCheck, blockerCheck } from '../reportBuilder.js';
 
 /**
- * Verify the extracted vault export folder exists and has XML files.
+ * Verify the Vault export is migratable. Accepts any of these signals:
+ *   1. uploadData.conversationsPersisted > 0   → new uploads
+ *   2. uploadData.totalConversations > 0       → legacy uploads (pre-DB-only refactor)
+ *   3. conversationStore actually has rows     → most authoritative; queried as fallback
+ *   4. extractPath still on disk with XMLs     → very-legacy uploads
+ * A blocker only fires when ALL of these are missing.
+ *
+ * NOTE: this function is async now because option (3) queries the DB.
  */
-export function checkVaultExtractValid(extractPath) {
+export async function checkVaultExtractValid(extractPath, uploadData) {
+  const persisted = uploadData?.conversationsPersisted ?? 0;
+  const totalConvs = uploadData?.totalConversations ?? 0;
+  if (persisted > 0 || totalConvs > 0) {
+    return [passingCheck(
+      'source.vault.db_ready',
+      'Vault export',
+      { conversationsInDB: persisted || totalConvs }
+    )];
+  }
+  // Fallback: legacy uploads may have neither field on the upload doc but
+  // still have rows in conversationStore. Check that directly.
+  if (uploadData?._id) {
+    try {
+      const { getDb } = await import('../../../db/mongo.js');
+      const n = await getDb().collection('conversationStore')
+        .countDocuments({ uploadId: uploadData._id });
+      if (n > 0) {
+        return [passingCheck(
+          'source.vault.db_ready',
+          'Vault export',
+          { conversationsInDB: n, via: 'conversationStore.count' }
+        )];
+      }
+    } catch { /* fall through to disk check */ }
+  }
   if (!extractPath) {
     return [blockerCheck(
       'source.vault.no_extract',
       'Vault export',
-      'No Vault export extracted yet.',
+      'No Vault export found in DB and no disk extract.',
       'Upload a Google Vault ZIP file in the previous step.'
     )];
   }
@@ -26,8 +58,8 @@ export function checkVaultExtractValid(extractPath) {
       return [blockerCheck(
         'source.vault.extract_missing',
         'Vault export files',
-        `Extracted Vault folder no longer exists at ${extractPath}.`,
-        'The server may have been restarted and cleared the upload — re-upload the ZIP.'
+        `Extracted Vault folder no longer exists at ${extractPath} and no DB rows found.`,
+        'Re-upload the ZIP — it will be persisted to the database.'
       )];
     }
     const xmls = fs.readdirSync(extractPath).filter(f => f.toLowerCase().endsWith('.xml'));

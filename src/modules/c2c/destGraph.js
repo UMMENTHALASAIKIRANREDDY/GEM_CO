@@ -100,24 +100,52 @@ export async function listDestTenantUsers(destTenantId, opts = {}) {
  * @param {string} destTenantId
  * @param {string} destUserId   GUID of destination user (from resolveDestUser)
  * @param {string} folderName
+ * @param {string} [parentFolderId]   Optional parent folder ID. Omit to
+ *                                    create at OneDrive root.
  * @returns {Promise<{ id: string, name: string, webUrl: string }>}
  */
-export async function createOneDriveFolder(destTenantId, destUserId, folderName) {
+export async function createOneDriveFolder(destTenantId, destUserId, folderName, parentFolderId) {
   const token = await getTenantAccessToken(destTenantId);
 
-  // First, check if folder already exists
-  const lookup = await fetch(
-    `${GRAPH_BASE}/users/${destUserId}/drive/root:/${encodeURIComponent(folderName)}`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-  if (lookup.ok) {
-    const existing = await lookup.json();
-    logger.info(`Folder "${folderName}" already exists in user ${destUserId}'s OneDrive`);
-    return { id: existing.id, name: existing.name, webUrl: existing.webUrl };
+  // First, check if folder already exists (root-level lookup only — Graph
+  // doesn't have a clean "lookup by name + parent" endpoint without listing
+  // children, so for nested folders we rely on conflictBehavior:rename below).
+  if (!parentFolderId) {
+    const lookup = await fetch(
+      `${GRAPH_BASE}/users/${destUserId}/drive/root:/${encodeURIComponent(folderName)}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (lookup.ok) {
+      const existing = await lookup.json();
+      logger.info(`Folder "${folderName}" already exists in user ${destUserId}'s OneDrive`);
+      return { id: existing.id, name: existing.name, webUrl: existing.webUrl };
+    }
   }
 
-  // Create it
-  const res = await fetch(`${GRAPH_BASE}/users/${destUserId}/drive/root/children`, {
+  // For nested folders, look up by parent + name first (cheaper than relying
+  // on conflictBehavior:rename which would create a "Conversations 1" if a
+  // re-run hit the same parent).
+  if (parentFolderId) {
+    const childLookup = await fetch(
+      `${GRAPH_BASE}/users/${destUserId}/drive/items/${parentFolderId}/children?$filter=name eq '${folderName.replace(/'/g, "''")}'&$top=1`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (childLookup.ok) {
+      const data = await childLookup.json();
+      const existing = data.value?.[0];
+      if (existing) {
+        logger.info(`Folder "${folderName}" already exists under parent ${parentFolderId}`);
+        return { id: existing.id, name: existing.name, webUrl: existing.webUrl };
+      }
+    }
+  }
+
+  // Create. Endpoint differs based on whether we're creating at root or under
+  // an existing folder.
+  const createUrl = parentFolderId
+    ? `${GRAPH_BASE}/users/${destUserId}/drive/items/${parentFolderId}/children`
+    : `${GRAPH_BASE}/users/${destUserId}/drive/root/children`;
+  const res = await fetch(createUrl, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({

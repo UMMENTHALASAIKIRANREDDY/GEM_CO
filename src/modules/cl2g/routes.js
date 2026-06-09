@@ -147,6 +147,7 @@ export function createCL2GRouter({ db }) {
         else dbLog.info(`extractDir cleaned: ${extractDir}`);
       });
 
+      const now = new Date();
       const doc = {
         _id:                uploadId,
         appUserId,
@@ -155,14 +156,19 @@ export function createCL2GRouter({ db }) {
         // No extractPath — disk is gone; migration reads exclusively from conversationStore.
         ingestBatchId,
         conversationsPersisted: totalPersisted,
-        uploadTime:         new Date(),
+        uploadTime:         now,
+        // lastActiveAt tracks the user's currently-selected upload across
+        // restarts. Bumped on upload (this is the new active one) and again
+        // any time the user picks a different upload from the Saved Uploads
+        // menu (POST /uploads/:id/activate). GET /uploads sorts by this DESC.
+        lastActiveAt:       now,
         totalConversations: parsed.totalConversations,
         users:              parsed.users,
         status:             'ready',
       };
 
-      await db().collection('cl2gUploads').insertOne(doc);
-      dbLog.info(`cl2gUploads.insert — ${uploadId} (${parsed.users.length} users, ${parsed.totalConversations} convs, ${totalPersisted} in conversationStore)`);
+      await db().collection('claudeUploads').insertOne(doc);
+      dbLog.info(`claudeUploads.insert — ${uploadId} (${parsed.users.length} users, ${parsed.totalConversations} convs, ${totalPersisted} in conversationStore)`);
 
       res.json({ uploadId, users: parsed.users, totalConversations: parsed.totalConversations, conversations_persisted: totalPersisted, ingest_batch_id: ingestBatchId });
     } catch (err) {
@@ -173,12 +179,16 @@ export function createCL2GRouter({ db }) {
   });
 
   // ── GET /api/cl2g/uploads ─────────────────────────────────────────────────
+  // Sorted by lastActiveAt DESC so the user's last-selected (or last-uploaded)
+  // ZIP is index 0 — that's the one the App-level mount restore picks on
+  // server restart / browser refresh. Falls back to uploadTime for legacy
+  // rows that don't have lastActiveAt yet.
   router.get('/uploads', requireAuth, async (req, res) => {
     try {
       const { appUserId } = getCtx(req);
-      const uploads = await db().collection('cl2gUploads')
+      const uploads = await db().collection('claudeUploads')
         .find({ appUserId })
-        .sort({ uploadTime: -1 })
+        .sort({ lastActiveAt: -1, uploadTime: -1 })
         .toArray();
 
       // Auto-purge only LEGACY records that have an extractPath whose dir is
@@ -188,11 +198,27 @@ export function createCL2GRouter({ db }) {
         .filter(u => u.extractPath && !fs.existsSync(u.extractPath) && !u.conversationsPersisted)
         .map(u => u._id);
       if (staleIds.length) {
-        await db().collection('cl2gUploads').deleteMany({ _id: { $in: staleIds } });
-        dbLog.info(`cl2gUploads.purge — removed ${staleIds.length} legacy record(s) with no disk + no DB content`);
+        await db().collection('claudeUploads').deleteMany({ _id: { $in: staleIds } });
+        dbLog.info(`claudeUploads.purge — removed ${staleIds.length} legacy record(s) with no disk + no DB content`);
       }
 
       res.json(uploads.filter(u => !staleIds.includes(u._id)));
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── POST /api/cl2g/uploads/:id/activate ────────────────────────────────────
+  // Bumps lastActiveAt so the App-level mount restore picks this upload on
+  // next refresh / server restart. Called from the UI when the user clicks
+  // a different ZIP in the "Saved Uploads" menu.
+  router.post('/uploads/:id/activate', requireAuth, async (req, res) => {
+    try {
+      const { appUserId } = getCtx(req);
+      const r = await db().collection('claudeUploads').updateOne(
+        { _id: req.params.id, appUserId },
+        { $set: { lastActiveAt: new Date() } }
+      );
+      if (r.matchedCount === 0) return res.status(404).json({ error: 'Upload not found' });
+      res.json({ ok: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
@@ -200,7 +226,7 @@ export function createCL2GRouter({ db }) {
   router.delete('/uploads/:id', requireAuth, async (req, res) => {
     try {
       const { appUserId } = getCtx(req);
-      const doc = await db().collection('cl2gUploads').findOne({ _id: req.params.id, appUserId });
+      const doc = await db().collection('claudeUploads').findOne({ _id: req.params.id, appUserId });
       if (!doc) return res.status(404).json({ error: 'Upload not found' });
 
       // Delete extracted files from disk
@@ -208,7 +234,7 @@ export function createCL2GRouter({ db }) {
         fs.rm(doc.extractPath, { recursive: true, force: true }, () => {});
       }
 
-      await db().collection('cl2gUploads').deleteOne({ _id: req.params.id, appUserId });
+      await db().collection('claudeUploads').deleteOne({ _id: req.params.id, appUserId });
       res.json({ ok: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
@@ -255,7 +281,7 @@ export function createCL2GRouter({ db }) {
       if (!pairs?.length)  return res.status(400).json({ error: 'No user pairs provided' });
       if (!uploadId)       return res.status(400).json({ error: 'No uploadId provided' });
 
-      const uploadDoc = await db().collection('cl2gUploads').findOne({ _id: uploadId, appUserId });
+      const uploadDoc = await db().collection('claudeUploads').findOne({ _id: uploadId, appUserId });
       if (!uploadDoc) return res.status(404).json({ error: 'Upload not found' });
 
       const batchId     = `cl2g_${Date.now()}`;
@@ -280,7 +306,7 @@ export function createCL2GRouter({ db }) {
     const cl2gFolder = folderName || 'ClaudeChats';
 
     // Re-look up uploadDoc by id on resume (uploadDoc not in closure here)
-    const uploadDoc = await db().collection('cl2gUploads').findOne({ _id: uploadId, appUserId });
+    const uploadDoc = await db().collection('claudeUploads').findOne({ _id: uploadId, appUserId });
     if (!uploadDoc) {
       dbLog.error(`[CL2G] Upload ${uploadId} not found on ${isResume ? 'resume' : 'start'} — aborting batch ${batchId}`);
       await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { status: 'failed', endTime: new Date(), error: 'Upload doc missing' } }).catch(() => {});
@@ -289,20 +315,28 @@ export function createCL2GRouter({ db }) {
 
     {
         let files = 0, errors = 0;
+        // Declared at function scope so the catch handler can reference them.
+        let reportUsers = [];
         const { startHeartbeat, stopHeartbeat, markUserPairMigrated, markUserPairFailed } = await import('../_shared/conversationStore.js');
         let _heartbeatId = null;
 
         try {
           await db().collection('migrationWorkspaces').updateOne(
             { _id: batchId },
-            { $set: { migDir: 'claude-gemini', direction: 'claude-gemini', customerName: cl2gFolder, startTime, status: 'running', dryRun: isDryRun, appUserId, googleEmail, totalUsers: pairs.length, lastHeartbeat: new Date(), resumeContext, ...(isResume ? { resumedAt: new Date() } : {}) } },
+            { $set: { migDir: 'claude-gemini', direction: 'claude-gemini', customerName: cl2gFolder, startTime, status: 'running', dryRun: isDryRun, appUserId, googleEmail, fromDate: fromDate || null, toDate: toDate || null, totalUsers: pairs.length, lastHeartbeat: new Date(), resumeContext, ...(isResume ? { resumedAt: new Date() } : {}) } },
             { upsert: true }
           );
           _heartbeatId = startHeartbeat(batchId);
 
-          // Verify the extracted ZIP directory is still present on disk
-          if (!uploadDoc.extractPath || !fs.existsSync(uploadDoc.extractPath)) {
-            const msg = `Upload files not found on disk (${uploadDoc.extractPath}). The server may have restarted and lost the uploaded ZIP. Please re-upload the ZIP file and try again.`;
+          // After the DB-only refactor, uploadDoc.extractPath is intentionally
+          // missing on new uploads (conversations live in conversationStore).
+          // Only block if BOTH the disk extract AND DB content are missing —
+          // either source is enough to migrate from.
+          const hasDiskExtract = uploadDoc.extractPath && fs.existsSync(uploadDoc.extractPath);
+          const dbConvCount = await db().collection('conversationStore')
+            .countDocuments({ uploadId, appUserId });
+          if (!hasDiskExtract && dbConvCount === 0) {
+            const msg = `Upload has no data — no disk extract AND no conversations in DB. Re-upload the ZIP.`;
             dbLog.error(`[CL2G] ${msg}`);
             cl2gLog('error', msg);
             await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { migDir: 'claude-gemini', status: 'failed', endTime: new Date(), error: msg } }).catch(() => {});
@@ -311,9 +345,10 @@ export function createCL2GRouter({ db }) {
           }
 
           const { migrateUserPair } = await import('./migration/migrate.js');
-          const reportUsers = [];
+          // reportUsers declared at function scope above so catch can see it
+          reportUsers.length = 0;
 
-          dbLog.info(`[CL2G] Starting ${isDryRun ? 'dry run' : 'migration'} — ${pairs.length} user(s), uploadId=${uploadId}, extractPath=${uploadDoc.extractPath}`);
+          dbLog.info(`[CL2G] Starting ${isDryRun ? 'dry run' : 'migration'} — ${pairs.length} user(s), uploadId=${uploadId}, ${hasDiskExtract ? 'disk:' + uploadDoc.extractPath : 'DB-only (' + dbConvCount + ' convs)'}`);
           cl2gLog('info', `Starting CL2G ${isDryRun ? 'dry run' : 'migration'} for ${pairs.length} user(s)...`);
           cl2gLog('total', JSON.stringify({ total: pairs.length }));
 
@@ -342,17 +377,31 @@ export function createCL2GRouter({ db }) {
             cl2gLog('info', `Processing: ${pair.sourceDisplayName} → ${pair.destEmail}`);
 
             if (isDryRun) {
-              // Dry run: count merged files (max 3 per user: conversations, memory, projects)
-              const { getUserData } = await import('./zipParser.js');
-              const { conversations, memory, projects } = getUserData(uploadDoc.extractPath, pair.sourceUuid);
-              const validProjects = projects.filter(p => p.name || p.docs?.length);
-              const dryFiles =
-                (conversations.length > 0 ? 1 : 0) +
-                (memory?.conversations_memory ? 1 : 0) +
-                (validProjects.length > 0 ? 1 : 0);
-              cl2gLog('info', `  ${pair.sourceDisplayName}: ${conversations.length} conversations → 1 merged DOCX${memory?.conversations_memory ? ' + memory' : ''}${validProjects.length > 0 ? ' + projects' : ''}`);
-              reportUsers.push({ email: pair.sourceEmail, destEmail: pair.destEmail, displayName: pair.sourceDisplayName, status: 'success', pages_created: dryFiles, conversations_processed: conversations.length, error_count: 0, errors: [] });
+              // Dry run: count conversations from DB (preferred) or disk (legacy).
+              // Memory + projects are dropped after the DB-only refactor — they
+              // lived only on disk. Each user now produces at most 1 merged DOCX.
+              let convCount = 0;
+              if (hasDiskExtract) {
+                try {
+                  const { getUserData } = await import('./zipParser.js');
+                  const { conversations } = getUserData(uploadDoc.extractPath, pair.sourceUuid);
+                  convCount = conversations.length;
+                } catch (e) { cl2gLog('warn', `getUserData failed for ${pair.sourceEmail}: ${e.message}`); }
+              } else {
+                convCount = await db().collection('conversationStore').countDocuments({
+                  uploadId, appUserId, sourceEmail: pair.sourceEmail,
+                });
+              }
+              const dryFiles = convCount > 0 ? 1 : 0;
+              cl2gLog('info', `  ${pair.sourceDisplayName}: ${convCount} conversations → ${dryFiles ? '1 merged DOCX' : 'no data'}`);
+              reportUsers.push({ email: pair.sourceEmail, destEmail: pair.destEmail, displayName: pair.sourceDisplayName, status: 'success', pages_created: dryFiles, conversations_processed: convCount, migrated_conversations: convCount, files_uploaded: 0, error_count: 0, errors: [] });
               files += dryFiles;
+              // Emit progress so the UI stats card shows the real conversation
+              // count (not just the file count). Live path emits this after
+              // each migrated pair; dry-run was skipping it because of the
+              // `continue` below.
+              const cumulativeConvs = reportUsers.reduce((s, u) => s + (u.conversations_processed || 0), 0);
+              cl2gLog('progress', JSON.stringify({ files, convs: cumulativeConvs, errors, users: reportUsers.length, total: pairs.length }));
               continue;
             }
 
@@ -364,7 +413,13 @@ export function createCL2GRouter({ db }) {
             // Note: conversations already persisted to conversationStore at upload time.
 
             const status = r.errors?.length ? (r.filesUploaded > 0 ? 'partial' : 'failed') : 'success';
-            reportUsers.push({ email: pair.sourceEmail, destEmail: pair.destEmail, displayName: r.sourceDisplayName, status, pages_created: r.filesUploaded, conversations_processed: r.conversationsCount, error_count: r.errors.length, errors: r.errors.map(e => ({ error_message: e })), files: r.files });
+            // CL2G destination is a merged DOCX in Drive that contains all
+            // conversations — so on success/partial, all parsed conversations
+            // are considered migrated. files_uploaded counts standalone
+            // attachments (images, PDFs) regenerated alongside, NOT the DOCX.
+            const _migratedConvs = status === 'failed' ? 0 : (r.conversationsCount || 0);
+            const _attachmentCount = r.attachmentsUploaded || 0;
+            reportUsers.push({ email: pair.sourceEmail, destEmail: pair.destEmail, displayName: r.sourceDisplayName, status, pages_created: r.filesUploaded, conversations_processed: r.conversationsCount, migrated_conversations: _migratedConvs, files_uploaded: _attachmentCount, error_count: r.errors.length, errors: r.errors.map(e => ({ error_message: e })), files: r.files });
 
             // Mark conversationStore rows for this user pair
             if (status === 'failed') {
@@ -402,7 +457,12 @@ export function createCL2GRouter({ db }) {
           const finalStatus = errors > 0 && files === 0 ? 'failed' : 'completed';
           // Isolate the final DB write — a failure here must not hide the real file count
           const totalConvsSum = reportUsers.reduce((s, u) => s + (u.conversations_processed || 0), 0);
-          const finalUpdate = { migDir: 'claude-gemini', status: finalStatus, endTime: new Date(), migratedConversations: totalConvsSum, migratedUsers: reportUsers.filter(u => u.status !== 'failed').length, failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors, report: { summary: { total_users: pairs.length, total_pages_created: files, total_errors: errors, total_conversations: totalConvsSum }, users: reportUsers } };
+          // Migrated = sum of per-user migrated_conversations (0 for failed
+          // users). Dry-runs force 0 since nothing was actually written.
+          const migratedConvSum = isDryRun
+            ? 0
+            : reportUsers.reduce((s, u) => s + (u.migrated_conversations || 0), 0);
+          const finalUpdate = { migDir: 'claude-gemini', status: finalStatus, endTime: new Date(), totalConversations: totalConvsSum, migratedConversations: migratedConvSum, migratedUsers: reportUsers.filter(u => u.status !== 'failed').length, failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors, report: { summary: { total_users: pairs.length, total_pages_created: files, total_errors: errors, total_conversations: totalConvsSum, total_migrated_conversations: migratedConvSum }, users: reportUsers } };
           try {
             await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: finalUpdate });
           } catch (dbErr) {

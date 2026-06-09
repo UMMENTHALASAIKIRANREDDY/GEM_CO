@@ -8,12 +8,14 @@ import {
   checkCopilotSourceUser, checkCopilotLicense, checkCopilotInteractionsExist,
 } from '../checks/copilotSource.js';
 import {
-  checkMsUserExists, checkMsLicenses, checkOneDriveQuota, checkOneNoteSectionAvailable,
+  checkMsUserExists, checkMsLicenses, checkOneDriveQuota, checkDestFolderAvailable,
 } from '../checks/msDestination.js';
 
 export async function validateC2C(ctx) {
   const { pairs = [], config = {}, sourceTenantId, destTenantId, sourceToken, destToken } = ctx;
-  const sectionName = config.folderName || config.sectionName || 'CopilotChats';
+  // Top-level folder in each user's OneDrive. Post-Phase-2 the migration
+  // writes {folderName}/Conversations/{...}.docx + {folderName}/Migrated from Copilot/.
+  const folderName = config.folderName || config.sectionName || 'CopilotChats';
 
   const crossTenantCheck = (sourceTenantId && destTenantId && sourceTenantId === destTenantId)
     ? [blockerCheck(
@@ -50,7 +52,7 @@ export async function validateC2C(ctx) {
       checks.push(...await checkMsUserExists(destToken, p.destEmail));
       checks.push(...await checkMsLicenses(destToken, p.destEmail));
       checks.push(...await checkOneDriveQuota(destToken, p.destEmail, p.expectedConversationCount || 25));
-      checks.push(...await checkOneNoteSectionAvailable(destToken, p.destEmail, sectionName));
+      checks.push(...await checkDestFolderAvailable(destToken, p.destEmail, folderName, 'Copilot'));
     } else {
       checks.push(blockerCheck(
         'dest.c2c.no_token',
