@@ -31,6 +31,57 @@ function isFullMigrationIntent(message) {
 }
 
 /**
+ * Strip trailing ordering/filler words the chip model likes to append when the
+ * assistant asked "which first?" — "Connect Google Workspace first" should read
+ * "Connect Google Workspace". Keeps the action verb, drops the noise.
+ */
+function tidyChipText(chip) {
+  return (chip || '')
+    .trim()
+    .replace(/[\s,]+(first|now|next|right now|to continue|to proceed|to unlock more migrations)\s*[.?!]?$/i, '')
+    .trim();
+}
+
+/**
+ * Drop chips that name a real user (email / email local-part / first name from
+ * the fetched account list) who is NOT mentioned in the assistant's reply.
+ * The chip LLM sometimes pulls names from fetched_users (the full account list)
+ * to build chips even when the assistant already narrowed to specific users —
+ * producing chips for users that were never selected. We police only tokens that
+ * are actual users in the system, matched on word boundaries, so generic chip
+ * wording is never touched.
+ */
+function sanitizeChips(chips, agentReply, migrationState) {
+  const reply = (agentReply || '').toLowerCase();
+  const users = Array.isArray(migrationState?.availableUsers) ? migrationState.availableUsers : [];
+  if (!users.length) return chips;
+
+  const idents = new Set();
+  for (const u of users) {
+    const email = (u.email || '').toLowerCase();
+    if (email) {
+      idents.add(email);
+      const local = email.split('@')[0];
+      if (local && local.length >= 4) idents.add(local);
+    }
+    (u.name || '').toLowerCase().split(/\s+/).forEach(w => { if (w.length >= 4) idents.add(w); });
+  }
+  if (!idents.size) return chips;
+
+  const esc = t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // An identity token is "in" a string if it appears on a word boundary.
+  const has = (text, tok) => new RegExp(`(^|[^a-z0-9])${esc(tok)}([^a-z0-9]|$)`, 'i').test(text);
+
+  return chips.filter(chip => {
+    const c = chip.toLowerCase();
+    for (const tok of idents) {
+      if (has(c, tok) && !has(reply, tok)) return false; // names a user not in the reply
+    }
+    return true;
+  });
+}
+
+/**
  * Generate 3 contextual quick-reply chips using a fast LLM call.
  * Chips are based on the agent's last reply + current migration state.
  * Falls back to defaultChips on any error so the main flow is never blocked.
@@ -72,9 +123,11 @@ Rules:
 - Chip 1 = the single most likely NEXT STEP in the migration flow (answer the assistant's question if it asked one)
 - Chip 2 = the best alternative action
 - Chip 3 = a useful check/help action (e.g. "Show live progress", "Explain what happens next")
-- Max 6 words each, action-first phrasing
+- Max 6 words each, action-first phrasing. Do NOT append ordering/filler words like "first", "now", "next", "to continue" — say "Connect Google Workspace", not "Connect Google Workspace first"
 - Match the migration stage: if migration=running suggest progress/status chips; if migration=done suggest report/retry/new-batch chips; if a question was asked, the first 2 chips should be its possible answers
-- If fetched_users is present and the assistant is asking which users to pick/export, make chips CONCRETE: e.g. "Export all <N> users", "Export only <first user's name>", "Search for a user" — use the real emails/names from fetched_users. NEVER produce chips like "Provide full email for X" or "Confirm X exists" when X is already in fetched_users.
+- CONFIRMATION: if the assistant is confirming/asking yes-no about a SPECIFIC action it just described (phrases like "Confirming:", "Want me to", "Shall I", "ready to", ends with "?"), chip 1 MUST be the affirmative ("Yes, proceed" / "Yes, export both" / "Yes, run dry run"), chip 2 = modify/change selection, chip 3 = explain. Do NOT re-list or re-pick users here.
+- USER NAMES: only put a user's name/email in a chip if that user is named in the assistant's message. NEVER pull names from fetched_users to build a chip when the assistant already narrowed to specific users — fetched_users is the full account list, NOT the current selection, so reusing it invents wrong users.
+- If fetched_users is present and the assistant is asking which users to pick/export from the WHOLE list (no specific users chosen yet), make chips CONCRETE: e.g. "Export all <N> users", "Export only <first user's name>", "Search for a user". NEVER produce chips like "Provide full email for X" or "Confirm X exists" when X is already in fetched_users.
 - NEVER suggest actions that are already complete (check State) or unavailable at this stage
 - NEVER suggest "dry run" if just_started=dry_run — it is already running
 - No generic filler like "Tell me more" / "What next?"
@@ -92,9 +145,17 @@ Rules:
     if (match) {
       const chips = JSON.parse(match[0]);
       if (Array.isArray(chips) && chips.length > 0) {
-        const result = chips.slice(0, 4).map(c => String(c).trim()).filter(Boolean);
-        logger.info(`[agentLoop] generateChips OK: ${JSON.stringify(result)}`);
-        return result;
+        let result = chips.slice(0, 4).map(c => tidyChipText(String(c))).filter(Boolean);
+        const cleaned = sanitizeChips(result, agentReply, s);
+        if (cleaned.length !== result.length) {
+          logger.warn(`[agentLoop] generateChips: dropped hallucinated user chips ${JSON.stringify(result)} -> ${JSON.stringify(cleaned)}`);
+        }
+        result = cleaned;
+        if (result.length) {
+          logger.info(`[agentLoop] generateChips OK: ${JSON.stringify(result)}`);
+          return result;
+        }
+        return null; // everything got dropped — fall back to defaultChips
       }
       logger.warn(`[agentLoop] generateChips: invalid array in response: ${raw.slice(0, 100)}`);
     }
@@ -151,16 +212,16 @@ function defaultChips(migrationState) {
   const missingGoogle = needsGoogle && !googleAuthed;
   const missingMs = needsMs && !msAuthed;
   if (missingGoogle && missingMs) return [
-    'Connect Google Workspace first',
-    'Connect Microsoft 365 first',
+    'Connect Google Workspace',
+    'Connect Microsoft 365',
     'Tell me what each connection does',
   ];
   if (missingGoogle) return [
-    'Connect Google Workspace to continue',
+    'Connect Google Workspace',
     'Explain why Google Workspace is needed',
   ];
   if (missingMs) return [
-    'Connect Microsoft 365 to continue',
+    'Connect Microsoft 365',
     'Explain why Microsoft 365 is needed',
   ];
 

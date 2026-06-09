@@ -1338,9 +1338,16 @@ const BotMsg=({children,quickReplies,onQuickReply,statusCard,chips})=>(
       {statusCard&&<StatusCard {...statusCard}/>}
       {quickReplies&&quickReplies.length>0&&(
         <div style={{display:'flex',flexWrap:'wrap',gap:6,marginTop:8}}>
-          {quickReplies.map((qr,i)=>(
-            <button key={i} onClick={()=>onQuickReply&&onQuickReply(qr)} style={{background:'white',border:`1.5px solid ${C.primaryL}`,borderRadius:99,padding:'6px 14px',fontSize:12,color:C.primary,fontWeight:500,cursor:'pointer',fontFamily:'inherit',transition:'all .15s'}} onMouseEnter={e=>{e.target.style.background=C.tint;e.target.style.borderColor=C.primary}} onMouseLeave={e=>{e.target.style.background='white';e.target.style.borderColor=C.primaryL}}>{qr}</button>
-          ))}
+          {quickReplies.map((qr,i)=>{
+            // Action chips (Connect, Run, Start, Yes…) render as filled buttons;
+            // everything else stays an outline suggestion pill.
+            const isAction=/^(connect|run|start|yes|retry|download|export|upload|authorize|sign in)\b/i.test(qr);
+            return isAction?(
+              <button key={i} onClick={()=>onQuickReply&&onQuickReply(qr)} style={{background:C.primary,border:`1.5px solid ${C.primary}`,borderRadius:99,padding:'7px 16px',fontSize:12,color:'white',fontWeight:600,cursor:'pointer',fontFamily:'inherit',transition:'all .15s'}} onMouseEnter={e=>{e.target.style.background=C.primaryH;e.target.style.borderColor=C.primaryH}} onMouseLeave={e=>{e.target.style.background=C.primary;e.target.style.borderColor=C.primary}}>{qr}</button>
+            ):(
+              <button key={i} onClick={()=>onQuickReply&&onQuickReply(qr)} style={{background:'white',border:`1.5px solid ${C.primaryL}`,borderRadius:99,padding:'6px 14px',fontSize:12,color:C.primary,fontWeight:500,cursor:'pointer',fontFamily:'inherit',transition:'all .15s'}} onMouseEnter={e=>{e.target.style.background=C.tint;e.target.style.borderColor=C.primary}} onMouseLeave={e=>{e.target.style.background='white';e.target.style.borderColor=C.primaryL}}>{qr}</button>
+            );
+          })}
         </div>
       )}
     </div>
@@ -6694,6 +6701,10 @@ function App(){
               // Live token stream — create the bubble on first delta, append after.
               if(streamMsgId===null){
                 const id=Date.now()+Math.random();streamMsgId=id;
+                // Real tokens are now visible — hide the "generating" typing dots so the
+                // post-reply chip fetch (a separate LLM call) doesn't look like the bot
+                // is still producing another message.
+                setAgentTyping(false);
                 setAgentMsgs(prev=>{
                   // strip stale chips/widgets off prior messages so only the newest shows them
                   const cleaned=prev.map(m=>(m.widget||m.quickReplies)?{...m,widget:undefined,quickReplies:undefined}:m);
@@ -6754,9 +6765,15 @@ function App(){
     // + LLM recognise it and fire select_direction.
     if(G2C_CHIPS.includes(qr)||C2G_CHIPS.includes(qr)||CL2G_CHIPS.includes(qr)){sendToAgentRef.current&&sendToAgentRef.current(qr);return;}
 
-    // Auth chips — trigger sign-in directly without going through agent
-    if(['Connect Google Workspace','Connect Google','Sign in with Google','Connect Google Workspace first','Connect Google Workspace to continue'].includes(qr)){setStep(0);handleChatSignInGoogle&&handleChatSignInGoogle();return;}
-    if(['Connect Microsoft 365','Sign in with Microsoft','Connect Microsoft 365 first','Connect Microsoft 365 to continue','Connect Microsoft 365 to unlock more migrations','Connect Microsoft 365 to unlock more options'].includes(qr)){setStep(0);handleChatSignInMs&&handleChatSignInMs();return;}
+    // Auth chips — trigger sign-in directly without going through agent.
+    // Match on intent (connect/sign-in + cloud keyword) rather than an exact
+    // whitelist, so direction-specific labels like "Connect Microsoft Teams / 365"
+    // launch OAuth too instead of falling through to the agent (which opens a widget).
+    const isConnect=/\b(connect|sign\s*in)\b/i.test(qr);
+    const wantsGoogle=/\b(google|workspace|gemini)\b/i.test(qr);
+    const wantsMs=/\b(microsoft|m365|365|teams|copilot|outlook)\b/i.test(qr);
+    if(isConnect&&wantsGoogle&&!wantsMs){setStep(0);handleChatSignInGoogle&&handleChatSignInGoogle();return;}
+    if(isConnect&&wantsMs&&!wantsGoogle){setStep(0);handleChatSignInMs&&handleChatSignInMs();return;}
 
     // Navigation chips — sendToAgent renders the bubble itself, don't double-add
     if(qr==='Choose direction'||qr==="What's the difference?"){setStep(1);setTimeout(()=>sendToAgentRef.current&&sendToAgentRef.current(qr),300);return;}
