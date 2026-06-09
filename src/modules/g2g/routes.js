@@ -396,6 +396,36 @@ export function createG2GRouter(deps) {
     }
   });
 
+  // GET /api/g2g/reports/aggregate — aggregate stats for G2G migrations.
+  // MUST be declared BEFORE /reports/:id below, otherwise Express matches
+  // /reports/:id first (with id='aggregate'), looks up a batch with
+  // _id='aggregate', and returns 404 "Batch not found". The Overall
+  // Summary at the top of the Reports panel then reads 0 across the board
+  // while the list of batches renders correctly underneath.
+  router.get('/reports/aggregate', requireAuth, async (req, res) => {
+    try {
+      const { appUserId } = getWorkspaceContext(req);
+      if (!appUserId) return res.json({ totalBatches: 0, totalConversations: 0, totalErrors: 0, liveBatches: 0 });
+      const pipeline = [
+        { $match: { appUserId, migDir: 'gemini-gemini' } },
+        { $group: {
+          _id: null,
+          totalBatches: { $sum: 1 },
+          totalConversations: { $sum: { $ifNull: ['$migratedConversations', 0] } },
+          totalErrors: { $sum: { $ifNull: ['$totalErrors', 0] } },
+          liveBatches: { $sum: { $cond: [{ $ne: ['$dryRun', true] }, 1, 0] } }
+        }}
+      ];
+      const [agg] = await db().collection('migrationWorkspaces').aggregate(pipeline).toArray();
+      const result = agg || { totalBatches: 0, totalConversations: 0, totalErrors: 0, liveBatches: 0 };
+      delete result._id;
+      res.json(result);
+    } catch (err) {
+      console.error('[g2g/reports/aggregate]', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // GET /api/g2g/reports/:id — detail view of a single G2G batch (users + errors)
   router.get('/reports/:id', requireAuth, async (req, res) => {
     try {
@@ -469,37 +499,6 @@ export function createG2GRouter(deps) {
       res.send(csv);
     } catch (err) {
       console.error('[g2g/reports/:id/csv]', err.message);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // GET /api/g2g/reports/aggregate — aggregate stats for G2G migrations
-  // NOTE: match condition mirrors the LIST endpoint at /reports — no
-  // status filter. The previous `status: 'completed'` filter excluded
-  // batches in any non-completed state ('running', 'failed', and
-  // legacy/historical batches that used other status values), which is
-  // why the Overall Summary at the top of the Reports panel was reading
-  // 0 even though batches were clearly visible below.
-  router.get('/reports/aggregate', requireAuth, async (req, res) => {
-    try {
-      const { appUserId } = getWorkspaceContext(req);
-      if (!appUserId) return res.json({ totalBatches: 0, totalConversations: 0, totalErrors: 0, liveBatches: 0 });
-      const pipeline = [
-        { $match: { appUserId, migDir: 'gemini-gemini' } },
-        { $group: {
-          _id: null,
-          totalBatches: { $sum: 1 },
-          totalConversations: { $sum: { $ifNull: ['$migratedConversations', 0] } },
-          totalErrors: { $sum: { $ifNull: ['$totalErrors', 0] } },
-          liveBatches: { $sum: { $cond: [{ $ne: ['$dryRun', true] }, 1, 0] } }
-        }}
-      ];
-      const [agg] = await db().collection('migrationWorkspaces').aggregate(pipeline).toArray();
-      const result = agg || { totalBatches: 0, totalConversations: 0, totalErrors: 0, liveBatches: 0 };
-      delete result._id;
-      res.json(result);
-    } catch (err) {
-      console.error('[g2g/reports/aggregate]', err.message);
       res.status(500).json({ error: err.message });
     }
   });
