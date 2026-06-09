@@ -91,6 +91,20 @@ async function ensureCollections() {
       await _db.collection('uploads').rename('geminiUploads');
       logger.info('Renamed uploads -> geminiUploads');
     } catch (e) { logger.warn(`Rename uploads failed: ${e.message}`); }
+  } else if (existing.has('uploads') && existing.has('geminiUploads')) {
+    // Both exist — geminiUploads was created fresh while legacy uploads lingered,
+    // so the rename above was skipped. uploads is now orphaned (nothing reads it).
+    // Drop it if empty; if it somehow holds unique data, keep it and shout so we
+    // can merge by hand instead of silently losing exports.
+    try {
+      const n = await _db.collection('uploads').countDocuments();
+      if (n === 0) {
+        await _db.collection('uploads').drop();
+        logger.info('Dropped orphaned empty uploads collection');
+      } else {
+        logger.warn(`Orphaned uploads collection has ${n} doc(s) — NOT dropped; merge into geminiUploads manually`);
+      }
+    } catch (e) { logger.warn(`Orphaned uploads cleanup failed: ${e.message}`); }
   }
   if (!existing.has('claudeUploads') && !existing.has('cl2gUploads')) await _db.createCollection('claudeUploads');
   if (!existing.has('geminiUploads') && !existing.has('uploads')) await _db.createCollection('geminiUploads');

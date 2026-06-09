@@ -61,6 +61,11 @@ const C={primary:'#0129AC',primaryH:'#0C18D4',primaryL:'#809EFC',tint:'#E1ECFF',
    Only sentinel kept: gem_last_user, a one-key marker so we can wipe any
    leftover gem_* keys when a different user signs in on the same browser. */
 const lsClearAll=()=>{Object.keys(localStorage).filter(k=>k.startsWith('gem_')).forEach(k=>localStorage.removeItem(k))};
+// Restored localStorage cache layer (runs alongside DB persistence).
+const LS_PREFS   = 'gem_ui_prefs';       // cosmetic UI prefs + migration state
+const LS_CHAT    = 'gem_chat_history';   // last 30 agent messages (role, content, ts)
+const lsGet=(k,fb)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb}catch{return fb}};
+const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}};
 
 function parseCsvLine(line){
   const f=[];let cur='',inQ=false;
@@ -5452,7 +5457,7 @@ function App(){
   const [c2cStats,setC2cStats]=useState({users:0,files:0,errors:0,conversationCount:0});
   const [c2cDone,setC2cDone]=useState(false);
   const [c2cLive,setC2cLive]=useState(false);
-  const [c2cLastDry,setC2cLastDry]=useState(false);
+  const [c2cLastDry,setC2cLastDry]=useState(()=>lsGet(LS_PREFS,{}).c2cLastDry||false);
   // Gemini Insert state
   const [giSampleConvs,setGiSampleConvs]=useState('');
   const [giStats,setGiStats]=useState({done:0,total:0,inserted:0,failed:0});
@@ -5779,8 +5784,10 @@ function App(){
   },[config.tenantId,config.filePath,wsLoaded]);
 
   // Persist agent chat messages to chatMessages collection. Debounced 1.5s.
+  // Also cached to localStorage (restored alongside DB persistence).
   useEffect(()=>{
     if(!wsLoaded)return;
+    lsSet(LS_CHAT,agentMsgs.slice(-30));
     clearTimeout(window._chatSaveTimer);
     window._chatSaveTimer=setTimeout(()=>{
       const trimmed=agentMsgs.slice(-30);
@@ -6531,6 +6538,7 @@ function App(){
     setCl2cUploadData(null);setCl2cMappings({});setCl2cSelectedUuids(new Set());setCl2cDone(false);setCl2cStats({users:0,files:0,errors:0});setCl2cTotal(0);
     // Reset clears the React state above; the debounced userSessions save
     // will persist the cleared state to DB on the next save cycle.
+    fetch('/api/g2g/session',{method:'DELETE'}).catch(()=>{});
     setGiDone(false);setGiLive(false);setGiStats({done:0,total:0,inserted:0,failed:0});
     if(sseRef.current){sseRef.current.close();sseRef.current=null;}
     setLive(false);setC2gLive(false);setCl2gLive(false);setG2gLive(false);setCl2cLive(false);
@@ -7379,7 +7387,7 @@ function App(){
                 <span style={{fontSize:12,color:live?'#16a34a':C.muted,fontWeight:500}}>{live?'Migrating':'Ready'}</span>
               </div>
             </div>
-            <AgentChat msgs={agentMsgs} typing={agentTyping} input={agentInput} onInput={setAgentInput} onSend={()=>sendToAgent()} onLogLineClick={handleLogLineClick} onQuickReply={handleAgentQuickReply} widgetProps={widgetProps} onShowReports={()=>setShowReports(true)} onClearChat={()=>{setAgentMsgs([]);fetch('/api/chat-history',{method:'DELETE'}).catch(()=>{});}} onWidgetDone={(msgId,w,result)=>{
+            <AgentChat msgs={agentMsgs} typing={agentTyping} input={agentInput} onInput={setAgentInput} onSend={()=>sendToAgent()} onLogLineClick={handleLogLineClick} onQuickReply={handleAgentQuickReply} widgetProps={widgetProps} onShowReports={()=>setShowReports(true)} onClearChat={()=>{setAgentMsgs([]);lsSet(LS_CHAT,[]);fetch('/api/chat-history',{method:'DELETE'}).catch(()=>{});}} onWidgetDone={(msgId,w,result)=>{
   setAgentMsgs(prev=>prev.map(m=>m.id===msgId?{...m,content:{...m.content,done:true}}:m));
   // Sync React state with whatever the backend just stored — otherwise migration
   // reads empty React state and migrates 0 users.
