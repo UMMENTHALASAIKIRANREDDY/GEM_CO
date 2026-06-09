@@ -710,9 +710,14 @@ export function createG2CRouter(deps) {
   router.get('/reports/aggregate', async (req, res) => {
     const { appUserId } = getWorkspaceContext(req);
     if (!appUserId) return res.json({ totalBatches: 0, totalUsers: 0, totalPages: 0, totalErrors: 0, liveBatches: 0, dryRunBatches: 0 });
+    // No status filter — counts every batch under this user for G2C +
+    // CL2G/C2G/CL2C (everything except G2G and C2C, which have their own
+    // aggregates). The previous `status: 'completed'` filter caused the
+    // Overall Summary at the top of the Reports panel to read 0 when
+    // there were batches visible below.
     const pipeline = [
-      { $match: { status: 'completed', appUserId, migDir: { $nin: ['gemini-gemini', 'copilot-copilot'] } } },
-      { $group: { _id: null, totalBatches: { $sum: 1 }, totalUsers: { $sum: '$totalUsers' }, totalPages: { $sum: '$migratedConversations' }, totalErrors: { $sum: { $ifNull: ['$report.summary.total_errors', 0] } }, liveBatches: { $sum: { $cond: [{ $ne: ['$dryRun', true] }, 1, 0] } }, dryRunBatches: { $sum: { $cond: [{ $eq: ['$dryRun', true] }, 1, 0] } } } }
+      { $match: { appUserId, migDir: { $nin: ['gemini-gemini', 'copilot-copilot'] } } },
+      { $group: { _id: null, totalBatches: { $sum: 1 }, totalUsers: { $sum: { $ifNull: ['$totalUsers', 0] } }, totalPages: { $sum: { $ifNull: ['$migratedConversations', 0] } }, totalErrors: { $sum: { $ifNull: ['$totalErrors', { $ifNull: ['$report.summary.total_errors', 0] }] } }, liveBatches: { $sum: { $cond: [{ $ne: ['$dryRun', true] }, 1, 0] } }, dryRunBatches: { $sum: { $cond: [{ $eq: ['$dryRun', true] }, 1, 0] } } } }
     ];
     const [agg] = await db().collection('migrationWorkspaces').aggregate(pipeline).toArray();
     const result = agg || { totalBatches: 0, totalUsers: 0, totalPages: 0, totalErrors: 0, liveBatches: 0, dryRunBatches: 0 };

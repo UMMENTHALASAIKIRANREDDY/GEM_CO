@@ -284,12 +284,16 @@ export function createC2CRouter(deps) {
     try {
       const { appUserId } = getWorkspaceContext(req);
       if (!appUserId) return res.json({ totalBatches: 0, totalConversations: 0, totalErrors: 0, liveBatches: 0 });
+      // No status filter — must match the LIST endpoint so the Overall
+      // Summary at the top of the Reports panel agrees with the visible
+      // batch rows. Earlier `status: 'completed'` excluded any batch in
+      // 'running' / 'failed' / legacy status states.
       const pipeline = [
-        { $match: { appUserId, migDir: 'copilot-copilot', status: 'completed' } },
+        { $match: { appUserId, migDir: 'copilot-copilot' } },
         { $group: {
           _id: null,
           totalBatches: { $sum: 1 },
-          totalConversations: { $sum: '$migratedConversations' },
+          totalConversations: { $sum: { $ifNull: ['$migratedConversations', 0] } },
           totalErrors: { $sum: { $ifNull: ['$totalErrors', 0] } },
           liveBatches: { $sum: { $cond: [{ $ne: ['$dryRun', true] }, 1, 0] } },
         }},
