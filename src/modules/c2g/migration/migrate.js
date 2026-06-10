@@ -1271,8 +1271,11 @@ export async function migrateUserPair({
     const filesFolder = await createDriveFolder(auth, filesSubfolderName, mainFolder.id);
     console.log(`[C2G] Folder layout: ${folderName}/ → ${CONVERSATIONS_SUBFOLDER}/, ${filesSubfolderName}/`);
 
-    // ── Split conversations into batches (100 per file) for memory efficiency ──
-    const BATCH_SIZE = 100;
+    // ── Split conversations into batches (5000 per file) for memory efficiency ──
+    // Matches the cap used by every other direction (G2G, G2C, CL2G, CL2C, C2C)
+    // so a customer's user with N conversations gets the same number of DOCX
+    // files regardless of which direction they migrate in.
+    const BATCH_SIZE = 5000;
     const sessionArray = Array.from(sessions.entries());
     const batches = [];
     for (let i = 0; i < sessionArray.length; i += BATCH_SIZE) {
