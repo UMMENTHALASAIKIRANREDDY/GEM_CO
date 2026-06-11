@@ -5923,7 +5923,11 @@ function App(){
     sseRef.current.onmessage=e=>{
       try{
         const d=JSON.parse(e.data);
-        if(d.type==='success'&&d.message.includes('Page created'))curStats.pages++;
+        // Bump pages per-conversation so the progress ring moves smoothly
+        // during the run. Post-Phase-2 the G2C runner emits "Prepared:" per
+        // conversation (was "Page created" in the OneNote era). Accept both
+        // so old log lines from in-flight legacy batches still increment.
+        if(d.type==='success'&&(d.message.includes('Page created')||d.message.includes('Prepared:')))curStats.pages++;
         if(d.type==='error')curStats.errors++;
         if(d.type==='info'&&d.message.includes('Processing:'))curStats.users++;
         if(d.type==='user')curStats.users++;
