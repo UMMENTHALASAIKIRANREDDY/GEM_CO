@@ -203,8 +203,14 @@ app.use('/auth', (req, res, next) => {
 
 app.get('/auth/login', async (req, res) => {
   try {
-    const tenantId = req.query.tenant_id;
-    if (!tenantId) return res.status(400).send('tenant_id query parameter required');
+    // Default to Microsoft's multi-tenant `common` endpoint when no specific
+    // tenant_id is passed. The UI omits the query param the first time a
+    // user clicks "Connect Microsoft 365" (no saved tenant config yet);
+    // before this default, the route returned a hard 400 and the popup
+    // showed "tenant_id query parameter required" instead of the sign-in
+    // page. With `common`, any AAD user can sign in and we discover the
+    // tenant from the access token in the callback.
+    const tenantId = req.query.tenant_id || 'common';
     currentTenantId = tenantId;
     const appUserId = req.session.appUser?._id?.toString();
     const authUrl = await getAuthUrl(tenantId, appUserId);
