@@ -1211,8 +1211,12 @@ export function createG2CRouter(deps) {
                   let regenCount = 0;
                   for (const f of recovered) {
                     if (f._failed) {
-                      errors.push({ conversation: conv.title, error: `Gemini regen ${f.sourceTag}: ${f.reason}` });
-                      emit('warn', `    Gemini regen failed (${f.sourceTag}): ${f.reason}`);
+                      // Customer-facing reason. The sourceTag (`python-block-3-failed`)
+                      // is internal — customers don't care which block. Lead with the
+                      // human reason from classifyPythonError; the conversation column
+                      // already tells them WHERE it happened.
+                      errors.push({ conversation: conv.title, error: `Could not recover a file from this conversation — ${f.reason}` });
+                      emit('warn', `    File recovery skipped in "${conv.title}" — ${f.reason}`);
                       continue;
                     }
                     try {

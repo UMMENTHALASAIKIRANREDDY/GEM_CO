@@ -775,7 +775,7 @@ export async function runG2GMigration(
           if (f._failed) {
             userRecord.errors.push({
               conversation: conv.title,
-              error_message: `Could not regenerate file from ${f.sourceTag}: ${f.reason}. ${(f.stderr || '').slice(0, 100)}`,
+              error_message: `Could not recover a file from this conversation — ${f.reason}`,
             });
             onLog({ type: 'warn', message: `  Gemini regen failed in "${conv.title}" (${f.sourceTag}): ${f.reason}` });
             continue;

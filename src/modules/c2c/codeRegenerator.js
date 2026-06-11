@@ -135,23 +135,33 @@ export function sanitizePythonCode(rawCode) {
 /**
  * Classify Python stderr into a short, customer-readable reason for
  * migration reports. Used by both Copilot and Gemini regen paths.
+ *
+ * The wording is chosen so the customer reads it and immediately knows
+ * whether it's something they can do anything about (e.g. add a library,
+ * fix their data) vs. a Vault / Graph export limitation (the file was
+ * never recoverable to begin with).
  */
 export function classifyPythonError(stderr) {
   if (typeof stderr !== 'string') return 'unknown';
-  if (/IndentationError/i.test(stderr)) return 'IndentationError';
-  if (/SyntaxError.*invalid character/i.test(stderr)) return 'invalid character (smart quote / em dash)';
-  if (/SyntaxError/i.test(stderr)) return 'SyntaxError';
+  if (/IndentationError/i.test(stderr)) return 'invalid Python code (indentation)';
+  if (/SyntaxError.*invalid character/i.test(stderr)) return 'invalid Python code (smart quotes in source)';
+  if (/SyntaxError/i.test(stderr)) return 'invalid Python code (syntax)';
   if (/ModuleNotFoundError|No module named/i.test(stderr)) {
     const m = stderr.match(/No module named ['"]?([^'"\s]+)/i);
-    return m ? `missing library: ${m[1]}` : 'missing library';
+    return m ? `missing Python library: ${m[1]}` : 'missing Python library';
   }
-  if (/PermissionError/i.test(stderr)) return 'PermissionError';
-  if (/FileNotFoundError/i.test(stderr)) return 'FileNotFoundError (missing input)';
-  if (/NameError/i.test(stderr)) return 'NameError';
-  if (/KeyError/i.test(stderr)) return 'KeyError';
-  if (/ConnectionError|HTTPError|URLError|timeout/i.test(stderr)) return 'network call (needs credentials)';
-  if (/Killed|SIGKILL/i.test(stderr)) return 'execution timeout';
-  return 'runtime error';
+  if (/PermissionError/i.test(stderr)) return 'permission denied';
+  // FileNotFoundError almost always means: the conversation referenced
+  // a file the user had uploaded (e.g. data.csv) — Google Vault / MS
+  // Graph does NOT export user-uploaded session files, only the
+  // conversation transcript. The file was never recoverable. Phrase
+  // it that way so the customer doesn't think the tool is broken.
+  if (/FileNotFoundError/i.test(stderr)) return 'original input file not available (Vault / Copilot export does not include user-uploaded session files)';
+  if (/NameError/i.test(stderr)) return 'incomplete code in conversation (variable not defined)';
+  if (/KeyError/i.test(stderr)) return 'incomplete code in conversation (missing data key)';
+  if (/ConnectionError|HTTPError|URLError|timeout/i.test(stderr)) return 'code requires network credentials we cannot replay';
+  if (/Killed|SIGKILL/i.test(stderr)) return 'code took too long to run (timeout)';
+  return 'code execution error';
 }
 
 /**
