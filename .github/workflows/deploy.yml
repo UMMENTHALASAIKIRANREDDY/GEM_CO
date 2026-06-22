@@ -20,7 +20,7 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           port: ${{ secrets.SSH_PORT }}
           username: ${{ secrets.SSH_USER }}
-          password: ${{ secrets.SSH_PASSWORD }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             # Fix ownership so the SSH user can run git commands
             echo "${{ secrets.SSH_PASSWORD }}" | sudo -S chown -R $USER:$USER /data/migration-combinations
