@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Gemini Migration — CloudFuze</title>
+  <link rel="icon" type="image/png" href="/assets/CloudFuze blue.png"/>
+  <style>
+    @font-face{font-family:'Poppins';font-style:normal;font-weight:300;font-display:swap;src:url('/assets/fonts/poppins-300.woff2') format('woff2')}
+    @font-face{font-family:'Poppins';font-style:normal;font-weight:400;font-display:swap;src:url('/assets/fonts/poppins-400.woff2') format('woff2')}
+    @font-face{font-family:'Poppins';font-style:normal;font-weight:500;font-display:swap;src:url('/assets/fonts/poppins-500.woff2') format('woff2')}
+    @font-face{font-family:'Poppins';font-style:normal;font-weight:600;font-display:swap;src:url('/assets/fonts/poppins-600.woff2') format('woff2')}
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Poppins',system-ui,sans-serif;background:#F6F6F6;color:#2e2e2e;min-height:100vh;display:flex;align-items:center;justify-content:center}
+    .card{background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.08);padding:36px 40px;width:100%;max-width:520px}
+    .logo{display:flex;align-items:center;gap:10px;margin-bottom:28px}
+    .logo img{height:32px}
+    .logo span{font-size:16px;font-weight:600;color:#0129AC}
+    h1{font-size:20px;font-weight:700;color:#0f172a;margin-bottom:6px}
+    .sub{font-size:13px;color:#707070;margin-bottom:28px}
+    .checklist{list-style:none;margin-bottom:28px}
+    .checklist li{display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:1px solid #F0F0F0;font-size:13px}
+    .checklist li:last-child{border-bottom:none}
+    .dot{width:22px;height:22px;border-radius:50%;border:2px solid #EBEBEB;background:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;transition:all .3s}
+    .dot.active{border-color:#0129AC;background:#E1ECFF}
+    .dot.done{border-color:#20CC83;background:#20CC83}
+    .dot.done::after{content:'✓';color:#fff;font-size:11px;font-weight:700}
+    .dot.active::after{content:'';width:8px;height:8px;border-radius:50%;background:#0129AC;display:block}
+    .dot-num{font-size:11px;font-weight:700;color:#EBEBEB}
+    .dot.active .dot-num,.dot .dot-num{color:#ccc}
+    .step-label{font-weight:500;color:#2e2e2e;line-height:1.4}
+    .step-sub{font-size:11px;color:#707070;margin-top:2px}
+    .btn{width:100%;padding:13px;background:#0129AC;color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .2s;display:flex;align-items:center;justify-content:center;gap:8px}
+    .btn:hover:not(:disabled){background:#0C18D4}
+    .btn:disabled{opacity:.5;cursor:not-allowed}
+    .log-box{background:#0f172a;border-radius:10px;padding:16px;margin-top:20px;max-height:220px;overflow-y:auto;font-family:monospace;font-size:12px;line-height:1.7;display:none}
+    .log-line{margin:0}.log-line.info{color:#94a3b8}.log-line.success{color:#20CC83}.log-line.warn{color:#F59E0B}.log-line.error{color:#FF1F1F}.log-line.done{color:#809EFC}
+    .progress-bar{height:6px;background:#E1ECFF;border-radius:99px;margin-top:20px;overflow:hidden;display:none}
+    .progress-fill{height:100%;background:#0129AC;border-radius:99px;width:0%;transition:width .4s ease}
+    .result{display:none;margin-top:20px;padding:16px;border-radius:10px;background:#F0FFF4;border:1px solid #20CC83;font-size:13px;color:#0f172a}
+    .result.error{background:#FFF5F5;border-color:#FF1F1F;color:#991B1B}
+    .stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+    .stat{background:#fff;border-radius:8px;padding:10px 14px;border:1px solid #E2E8F0;text-align:center}
+    .stat-val{font-size:22px;font-weight:700;color:#0129AC}
+    .stat-val.green{color:#20CC83}.stat-val.red{color:#FF1F1F}
+    .stat-label{font-size:11px;color:#707070;text-transform:uppercase;letter-spacing:.3px}
+    .spinner{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .reset-link{display:block;text-align:center;margin-top:14px;font-size:11px;color:#707070;cursor:pointer;text-decoration:underline}
+    .reset-link:hover{color:#0129AC}
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <img src="/assets/CloudFuze blue.png" alt="CloudFuze" onerror="this.style.display='none'"/>
+    <span>CloudFuze</span>
+  </div>
+
+  <h1>Insert Conversations to Gemini</h1>
+  <p class="sub">Test migration — 3 sample conversations will be inserted into your Gemini sidebar.</p>
+
+  <ul class="checklist" id="checklist">
+    <li id="step1">
+      <div class="dot" id="d1"><span class="dot-num">1</span></div>
+      <div>
+        <div class="step-label">Browser opens — sign in to Gemini if prompted</div>
+        <div class="step-sub">A Chromium window will open automatically</div>
+      </div>
+    </li>
+    <li id="step2">
+      <div class="dot" id="d2"><span class="dot-num">2</span></div>
+      <div>
+        <div class="step-label">Session captured — probe message sent automatically</div>
+        <div class="step-sub">CloudFuze captures the Gemini API session</div>
+      </div>
+    </li>
+    <li id="step3">
+      <div class="dot" id="d3"><span class="dot-num">3</span></div>
+      <div>
+        <div class="step-label">Conversations inserted into your Gemini sidebar</div>
+        <div class="step-sub">3 test conversations will appear in your history</div>
+      </div>
+    </li>
+  </ul>
+
+  <div class="progress-bar" id="progressBar">
+    <div class="progress-fill" id="progressFill"></div>
+  </div>
+
+  <button class="btn" id="startBtn" onclick="startMigration()">
+    Start Gemini Insert Test
+  </button>
+
+  <div class="log-box" id="logBox"></div>
+
+  <div class="result" id="result"></div>
+
+  <span class="reset-link" onclick="resetProfile()">Reset Gemini profile (force re-login)</span>
+</div>
+
+<script>
+const TEST_CONVERSATIONS = [
+  {
+    title: "Cloud Storage Benefits",
+    messages: [
+      { role: "user", content: "What are the main benefits of cloud storage?" },
+      { role: "assistant", content: "Cloud storage offers accessibility from any device, automatic backups, scalable capacity, easy collaboration, and significant cost savings compared to on-premise infrastructure." },
+      { role: "user", content: "Which cloud storage is best for business?" },
+      { role: "assistant", content: "Google Drive, OneDrive, and Dropbox are top choices. Google Drive integrates best with Gemini AI. OneDrive fits Microsoft-centric organizations. Choice depends on your ecosystem." }
+    ]
+  },
+  {
+    title: "AI Tools Comparison",
+    messages: [
+      { role: "user", content: "How do Gemini and ChatGPT compare?" },
+      { role: "assistant", content: "Gemini integrates deeply with Google Workspace and has real-time web access. ChatGPT has a broader plugin ecosystem. Both excel at different tasks." },
+      { role: "user", content: "Which is better for coding?" },
+      { role: "assistant", content: "Both are strong. Gemini 1.5 Pro handles large codebases well due to its 1M token context window. GPT-4 has broad tool support. For Google Workspace automation, Gemini wins." }
+    ]
+  },
+  {
+    title: "Data Migration Best Practices",
+    messages: [
+      { role: "user", content: "What are best practices for cloud data migration?" },
+      { role: "assistant", content: "Plan thoroughly, validate data before and after, migrate in batches, maintain rollback options, and test with a pilot group first. Document everything." },
+      { role: "user", content: "How long does a typical migration take?" },
+      { role: "assistant", content: "Small orgs under 1TB typically take 1-2 weeks. Enterprise migrations with proper planning can take 2-6 months. CloudFuze automates the bulk of the work." }
+    ]
+  }
+];
+
+let sseSource = null;
+let done = 0, total = TEST_CONVERSATIONS.length;
+
+function log(type, msg) {
+  const box = document.getElementById('logBox');
+  box.style.display = 'block';
+  const line = document.createElement('div');
+  line.className = `log-line ${type}`;
+  line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
+}
+
+function setDot(id, state) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.className = 'dot ' + state;
+  if (state === 'done') el.innerHTML = '';
+  else if (state === 'active') el.innerHTML = '';
+  else el.innerHTML = `<span class="dot-num">${id.replace('d','')}</span>`;
+}
+
+function updateProgress(pct) {
+  document.getElementById('progressBar').style.display = 'block';
+  document.getElementById('progressFill').style.width = pct + '%';
+}
+
+async function startMigration() {
+  const btn = document.getElementById('startBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Opening browser...';
+  document.getElementById('result').style.display = 'none';
+  document.getElementById('logBox').innerHTML = '';
+  done = 0;
+
+  setDot('d1', 'active');
+  updateProgress(5);
+
+  // Connect SSE first
+  if (sseSource) sseSource.close();
+  sseSource = new EventSource('/api/gemini-insert/log');
+
+  sseSource.onmessage = (e) => {
+    try {
+      const d = JSON.parse(e.data);
+
+      if (d.type === 'info') {
+        log('info', d.message);
+        if (d.message.includes('Session captured') || d.message.includes('probe')) {
+          setDot('d1', 'done');
+          setDot('d2', 'active');
+          updateProgress(35);
+          btn.innerHTML = '<span class="spinner"></span> Inserting conversations...';
+        }
+        if (d.message.includes('Starting insertion')) {
+          setDot('d2', 'done');
+          setDot('d3', 'active');
+          updateProgress(50);
+        }
+      } else if (d.type === 'success') {
+        done++;
+        log('success', d.message);
+        updateProgress(50 + Math.round((done / total) * 45));
+      } else if (d.type === 'warn') {
+        log('warn', d.message);
+      } else if (d.type === 'error') {
+        log('error', d.message);
+      } else if (d.type === 'done') {
+        const p = JSON.parse(d.message);
+        setDot('d3', 'done');
+        updateProgress(100);
+        btn.disabled = false;
+        btn.innerHTML = 'Start Again';
+        sseSource.close();
+
+        const ok = p.inserted > 0;
+        const res = document.getElementById('result');
+        res.style.display = 'block';
+        res.className = ok ? 'result' : 'result error';
+        res.innerHTML = ok
+          ? `<strong>✅ Migration complete!</strong> Check your <a href="https://gemini.google.com" target="_blank" style="color:#0129AC">Gemini sidebar</a> for new conversations.
+             <div class="stats">
+               <div class="stat"><div class="stat-val green">${p.inserted}</div><div class="stat-label">Inserted</div></div>
+               <div class="stat"><div class="stat-val red">${p.failed}</div><div class="stat-label">Failed</div></div>
+             </div>`
+          : `<strong>❌ Migration failed.</strong> Check the logs below. Try resetting the Gemini profile and sign in again.`;
+      }
+    } catch {}
+  };
+
+  sseSource.onerror = () => {
+    log('warn', 'SSE connection lost — migration may still be running in background');
+  };
+
+  // Wait for SSE to connect
+  await new Promise(r => setTimeout(r, 800));
+
+  try {
+    const res = await fetch('/api/gemini-insert/migrate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversations: TEST_CONVERSATIONS })
+    });
+
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      const msg = d.error || `HTTP ${res.status}`;
+      if (msg === 'Not logged in') {
+        log('error', 'Not logged in to the portal. Please log in first at /');
+        document.getElementById('result').style.display = 'block';
+        document.getElementById('result').className = 'result error';
+        document.getElementById('result').innerHTML = '❌ <strong>Not logged in.</strong> <a href="/" style="color:#0129AC">Log in to the portal first</a>.';
+      } else {
+        log('error', 'Failed to start: ' + msg);
+      }
+      btn.disabled = false;
+      btn.innerHTML = 'Start Gemini Insert Test';
+      setDot('d1', '');
+      sseSource.close();
+    } else {
+      log('info', 'Migration job started — browser opening...');
+    }
+  } catch (err) {
+    log('error', 'Network error: ' + err.message);
+    btn.disabled = false;
+    btn.innerHTML = 'Start Gemini Insert Test';
+    sseSource.close();
+  }
+}
+
+async function resetProfile() {
+  if (!confirm('Reset Gemini browser profile? You will need to sign in to Gemini again on the next run.')) return;
+  const res = await fetch('/api/gemini-insert/profile', { method: 'DELETE' });
+  if (res.ok) alert('Profile reset. Next run will prompt for Gemini sign-in.');
+  else {
+    const d = await res.json().catch(() => ({}));
+    if (d.error === 'Not logged in') alert('Log in to the portal first at /');
+    else alert('Reset failed: ' + (d.error || 'unknown'));
+  }
+}
+</script>
+</body>
+</html>
