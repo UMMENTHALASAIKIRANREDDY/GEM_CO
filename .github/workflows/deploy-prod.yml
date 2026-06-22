@@ -20,7 +20,7 @@ jobs:
           host: ${{ secrets.PROD_SSH_HOST }}
           port: ${{ secrets.PROD_SSH_PORT }}
           username: ${{ secrets.PROD_SSH_USER }}
-          password: ${{ secrets.PROD_SSH_PASSWORD }}
+          key: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
           script: |
             # Create directory if first deploy
             if [ ! -d /data/aitoolsmigration ]; then
