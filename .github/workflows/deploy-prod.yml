@@ -1,4 +1,4 @@
-name: Deploy to aitoolsmigration (prod branch)
+name: Deploy to aitoolsmigration — prod branch
 
 on:
   push:
