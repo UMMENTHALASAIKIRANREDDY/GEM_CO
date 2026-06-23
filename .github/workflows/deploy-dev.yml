@@ -1,4 +1,4 @@
-name: Deploy Dev (aimigration.cftools.live)
+name: Deploy Dev — aimigration.cftools.live
 
 on:
   push:
