@@ -47,6 +47,15 @@ export async function getAuthUrl(tenantId, appUserId) {
   const url = await msalApp.getAuthCodeUrl({
     scopes: DELEGATED_SCOPES,
     redirectUri: `${baseUrl}/auth/callback`,
+    // 'consent' (main's choice) forces Microsoft's consent screen on every
+    // sign-in. Admin users see a "Consent on behalf of your organization"
+    // checkbox — ticking it grants BOTH delegated AND app-only permissions
+    // in a single popup. That's what makes "Connect Microsoft" one prompt.
+    //
+    // We tried 'select_account' earlier so "+ Add Another" could show the
+    // account picker — but it skipped the consent screen, which then forced
+    // the server's auto-chain to open a SECOND admin-consent popup. Two
+    // popups felt broken to users, so reverting to 'consent'.
     prompt: 'consent',
     state,
   });

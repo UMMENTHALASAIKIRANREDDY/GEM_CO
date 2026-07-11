@@ -1,19 +1,50 @@
 /**
- * CL2C (Claude → Copilot/OneNote) migration runner.
- * Reads Claude export ZIP and creates OneNote pages in each target user's M365 account.
- * Reuses PagesCreator from g2c and zipParser from cl2g.
+ * CL2C (Claude → Copilot/M365) migration runner.
+ *
+ * Phase 2 of the OneNote → DOCX migration: this no longer creates OneNote
+ * pages. Instead, all of a user's conversations are bundled into a single
+ * DOCX file and uploaded to the destination user's OneDrive, in the
+ * universal 2-subfolder layout used by every direction:
+ *
+ *   {folderName}/
+ *   ├── Conversations/{displayName}_Conversations.docx
+ *   └── Migrated from Claude/      ← empty for now (Claude inlines media)
+ *
+ * Why: OneNote requires a per-user admin-console step to provision the
+ * default notebook (`ONENOTE_NOT_PROVISIONED` error). OneDrive auto-
+ * provisions on first write, so dropping OneNote entirely removes that
+ * manual step.
+ *
+ * Reuses CL2G's `buildAllConversationsDocx` (same Claude source schema).
+ * Talks to Microsoft Graph via a delegated token from the app user (admin
+ * who connected M365 in GEM_CO).
  */
 
-import fs from 'node:fs';
-import { PagesCreator } from '../../g2c/pagesCreator.js';
-import { getUserData } from '../../cl2g/zipParser.js';
+import { buildAllConversationsDocx } from '../../cl2g/migration/migrate.js';
+import { getValidToken } from '../../../core/auth/microsoft.js';
+import {
+  createOneDriveFolderDelegated,
+  uploadFileToOneDriveDelegated,
+} from '../../_shared/oneDriveDelegated.js';
+import {
+  CONVERSATIONS_SUBFOLDER,
+  attachmentsSubfolderName,
+  docxFileName,
+} from '../../_shared/destinationFolders.js';
+
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+// Same per-DOCX cap as CL2G. Bundles up to 5000 conversations per file; if
+// the user has more, they get _Part1, _Part2, etc.
+const BATCH_SIZE = 5000;
 
 export async function migrateUserPair({
   sourceUuid,
   sourceDisplayName,
   destUserEmail,
-  extractPath,
   appUserId,
+  uploadId,
+  sourceEmail,
 }, opts = {}) {
   const result = {
     sourceUuid,
@@ -21,78 +52,79 @@ export async function migrateUserPair({
     destUserEmail,
     conversationsCount: 0,
     filesUploaded: 0,
+    attachmentsUploaded: 0,  // always 0 for CL2C — Claude inlines media
     errors: [],
     files: [],
   };
 
   try {
-    if (!fs.existsSync(extractPath)) {
-      result.errors.push(`Upload directory not found: ${extractPath}. The uploaded ZIP was likely lost after a server restart. Please re-upload the ZIP file.`);
+    const { loadConversationsFromStore } = await import('../../_shared/conversationStore.js');
+    const conversations = await loadConversationsFromStore({
+      appUserId,
+      sourceEmail,
+      uploadId,
+      fromDate: opts?.fromDate,
+      toDate: opts?.toDate,
+      includeMigrated: !opts?.isResume,
+    });
+
+    if (!conversations || conversations.length === 0) {
+      result.errors.push(`No conversations found in conversationStore for ${sourceEmail}. The upload may have failed at ingest time — please re-upload the ZIP.`);
       return result;
     }
-
-    const { conversations, memory, projects } = getUserData(extractPath, sourceUuid);
     result.conversationsCount = conversations.length;
 
+    // Date filtering already applied inside loadConversationsFromStore.
+    const filteredConvs = conversations;
+
+    // Folder layout in destination user's OneDrive
     const folderName = opts.folderName || 'ClaudeChats';
-    const creator = new PagesCreator(null, folderName, appUserId);
+    const filesSubfolderName = attachmentsSubfolderName('claude');
 
-    // Apply date filter
-    let filteredConvs = conversations;
-    if (opts.fromDate || opts.toDate) {
-      const from = opts.fromDate ? new Date(opts.fromDate) : null;
-      const to   = opts.toDate   ? new Date(opts.toDate + 'T23:59:59Z') : null;
-      filteredConvs = conversations.filter(c => {
-        const d = new Date(c.created_at);
-        if (from && d < from) return false;
-        if (to   && d > to)   return false;
-        return true;
-      });
+    const token = await getValidToken(appUserId);
+    const mainFolder = await createOneDriveFolderDelegated(token, destUserEmail, folderName);
+    const convoFolder = await createOneDriveFolderDelegated(token, destUserEmail, CONVERSATIONS_SUBFOLDER, mainFolder.id);
+    // Files folder is created for layout parity even though Claude doesn't
+    // produce standalone attachments today (media is inlined into the DOCX).
+    // eslint-disable-next-line no-unused-vars
+    const filesFolder = await createOneDriveFolderDelegated(token, destUserEmail, filesSubfolderName, mainFolder.id);
+    console.log(`[CL2C] Folder layout in ${destUserEmail}'s OneDrive: ${folderName}/ → ${CONVERSATIONS_SUBFOLDER}/, ${filesSubfolderName}/ (empty)`);
+
+    // Build + upload bundled DOCX(s)
+    const batches = [];
+    for (let i = 0; i < filteredConvs.length; i += BATCH_SIZE) {
+      batches.push(filteredConvs.slice(i, i + BATCH_SIZE));
     }
 
-    // One OneNote page per conversation
-    let oneNoteBlocked = false;
-    for (const conv of filteredConvs) {
-      if (oneNoteBlocked) break;
+    for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
+      const batch = batches[batchIdx];
+      const startIdx = batchIdx * BATCH_SIZE + 1;
+      const endIdx = Math.min((batchIdx + 1) * BATCH_SIZE, filteredConvs.length);
+      const docxName = docxFileName(sourceEmail || sourceDisplayName, batchIdx + 1, batches.length);
+
       try {
-        await creator.createClaudePage(destUserEmail, conv);
+        console.log(`[CL2C] Building DOCX batch ${batchIdx + 1}/${batches.length} (${startIdx}-${endIdx} of ${filteredConvs.length})...`);
+        const buffer = await buildAllConversationsDocx(batch, sourceDisplayName);
+
+        // Refresh token per batch — large bundles can blow past the
+        // 60-min delegated token TTL.
+        const freshToken = await getValidToken(appUserId);
+        const uploaded = await uploadFileToOneDriveDelegated(
+          freshToken, destUserEmail, convoFolder.id, docxName, DOCX_MIME, buffer
+        );
+
         result.filesUploaded++;
-        result.files.push({ name: conv.name || 'Untitled', type: 'onenote-page' });
+        result.files.push({
+          name: docxName,
+          oneDriveItemId: uploaded.id,
+          webUrl: uploaded.webUrl,
+          batchInfo: { part: batchIdx + 1, totalParts: batches.length, conversationRange: [startIdx, endIdx, filteredConvs.length] },
+        });
+        console.log(`[CL2C] Uploaded: ${docxName} (${buffer.length} bytes)`);
       } catch (err) {
-        if (err.message.startsWith('ONENOTE_NOT_PROVISIONED:')) {
-          oneNoteBlocked = true;
-          result.errors.push(err.message.replace(/^ONENOTE_NOT_PROVISIONED:[^\s]+ — /, ''));
-        } else {
-          result.errors.push(`Conversation "${(conv.name || 'Untitled').slice(0, 60)}": ${err.message}`);
-        }
+        result.errors.push(`Conversations batch ${batchIdx + 1}: ${err.message}`);
       }
     }
-
-    // Memory page (optional)
-    if (!oneNoteBlocked && opts.includeMemory !== false && memory?.conversations_memory) {
-      try {
-        await creator.createClaudeMemoryPage(destUserEmail, memory.conversations_memory, sourceDisplayName);
-        result.filesUploaded++;
-        result.files.push({ name: 'Claude Memory', type: 'onenote-page' });
-      } catch (err) {
-        result.errors.push(`Memory: ${err.message}`);
-      }
-    }
-
-    // Projects page (optional)
-    if (!oneNoteBlocked && opts.includeProjects !== false) {
-      const validProjects = projects.filter(p => p.name || (p.docs || []).length);
-      if (validProjects.length > 0) {
-        try {
-          await creator.createClaudeProjectsPage(destUserEmail, validProjects, sourceDisplayName);
-          result.filesUploaded++;
-          result.files.push({ name: 'Claude Projects', type: 'onenote-page' });
-        } catch (err) {
-          result.errors.push(`Projects: ${err.message}`);
-        }
-      }
-    }
-
   } catch (err) {
     result.errors.push(err.message || String(err));
   }

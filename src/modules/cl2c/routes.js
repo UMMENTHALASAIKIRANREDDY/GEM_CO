@@ -7,12 +7,12 @@
 import express  from 'express';
 import multer   from 'multer';
 import fs       from 'node:fs';
+import os       from 'node:os';
 import path     from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EventEmitter }  from 'events';
 import { getLogger }     from '../../utils/logger.js';
 import { getTenantForUser } from '../../core/auth/microsoft.js';
-import { IndexWriter } from '../../agent/indexWriter.js';
 
 const dbLog    = getLogger('db:cl2c');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -21,7 +21,11 @@ const ROOT_DIR  = path.resolve(__dirname, '../../../');
 export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurrentTenantId }) {
   const router = express.Router();
 
-  const uploadsDir = path.join(ROOT_DIR, 'uploads', 'cl2c');
+  // Multer scratch space — OS temp dir. The raw ZIP and the extracted JSONs
+  // live here only for the few seconds it takes to parse them into
+  // conversationStore, then both are deleted. The project's old uploads/
+  // folder is no longer used.
+  const uploadsDir = path.join(os.tmpdir(), 'gemco-cl2c');
   fs.mkdirSync(uploadsDir, { recursive: true });
 
   const upload = multer({
@@ -110,24 +114,67 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
 
       const parsed = parseClaudeExport(extractDir);
 
+      // Persist all Claude conversations to conversationStore at upload time.
+      // This is FATAL — if it fails we don't keep the upload because the disk
+      // extract is about to be deleted (we're moving to DB-only storage).
+      const ingestBatchId = `ingest_${uploadId}`;
+      let totalPersisted = 0;
+      const { getUserData } = await import('../cl2g/zipParser.js');
+      const { persistSourceConversations, SOURCE_TYPE } = await import('../_shared/conversationStore.js');
+      for (const u of parsed.users) {
+        const { conversations: userConvs } = getUserData(extractDir, u.uuid);
+        if (!userConvs?.length) continue;
+        const r = await persistSourceConversations(
+          {
+            batchId: ingestBatchId,
+            appUserId,
+            migDir: 'claude-copilot',
+            sourceType: SOURCE_TYPE.CLAUDE,
+            sourceEmail: u.email_address,
+            sourceUserId: u.uuid,
+            sourceDisplayName: u.full_name || u.name,
+            uploadId,
+          },
+          userConvs.map(c => ({
+            sessionId: c.uuid || c.id || `${u.uuid}::${c.name || 'untitled'}`,
+            title: c.name || c.title || 'Untitled',
+            createdDateTime: c.created_at || c.createdDateTime,
+            payload: c,
+          }))
+        );
+        totalPersisted += r.inserted;
+      }
+      dbLog.info(`conversationStore.upsert — ${totalPersisted} Claude conversations persisted at upload time for ${req.file.originalname}`);
+
+      // DB now has every conversation. Delete the disk extract so the uploads/
+      // folder doesn't grow indefinitely. Memory + project documents that
+      // existed only on disk are intentionally dropped — see scope decision.
+      fs.rm(extractDir, { recursive: true, force: true }, (err) => {
+        if (err) dbLog.warn(`Failed to clean up extractDir ${extractDir}: ${err.message}`);
+        else dbLog.info(`extractDir cleaned: ${extractDir}`);
+      });
+
+      const now = new Date();
       const doc = {
         _id:                uploadId,
         appUserId,
         msEmail,
         fileName:           req.file.originalname,
-        extractPath:        extractDir,
-        uploadTime:         new Date(),
+        // No extractPath — disk content has been deleted; migration reads
+        // exclusively from conversationStore.
+        ingestBatchId,
+        conversationsPersisted: totalPersisted,
+        uploadTime:         now,
+        lastActiveAt:       now,
         totalConversations: parsed.totalConversations,
-        totalMemories:      parsed.totalMemories,
-        totalProjects:      parsed.totalProjects,
         users:              parsed.users,
         status:             'ready',
       };
 
-      await db().collection('cl2cUploads').insertOne(doc);
-      dbLog.info(`cl2cUploads.insert — ${uploadId} (${parsed.users.length} users, ${parsed.totalConversations} convs)`);
+      await db().collection('claudeUploads').insertOne(doc);
+      dbLog.info(`claudeUploads.insert — ${uploadId} (${parsed.users.length} users, ${parsed.totalConversations} convs, ${totalPersisted} in conversationStore)`);
 
-      res.json({ uploadId, users: parsed.users, totalConversations: parsed.totalConversations, totalMemories: parsed.totalMemories, totalProjects: parsed.totalProjects });
+      res.json({ uploadId, users: parsed.users, totalConversations: parsed.totalConversations, conversations_persisted: totalPersisted, ingest_batch_id: ingestBatchId });
     } catch (err) {
       fs.rm(extractDir, { recursive: true, force: true }, () => {});
       fs.unlink(req.file.path, () => {});
@@ -136,23 +183,39 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
   });
 
   // ── GET /api/cl2c/uploads ─────────────────────────────────────────────────
+  // Sorted by lastActiveAt DESC so the user's last-selected (or last-uploaded)
+  // ZIP is index 0 — that's what the App-level mount restore picks. Falls
+  // back to uploadTime for legacy rows without lastActiveAt.
   router.get('/uploads', requireAuth, async (req, res) => {
     try {
       const { appUserId } = getCtx(req);
-      const uploads = await db().collection('cl2cUploads')
+      const uploads = await db().collection('claudeUploads')
         .find({ appUserId })
-        .sort({ uploadTime: -1 })
+        .sort({ lastActiveAt: -1, uploadTime: -1 })
         .toArray();
 
       const staleIds = uploads
-        .filter(u => u.extractPath && !fs.existsSync(u.extractPath))
+        .filter(u => u.extractPath && !fs.existsSync(u.extractPath) && !u.conversationsPersisted)
         .map(u => u._id);
       if (staleIds.length) {
-        await db().collection('cl2cUploads').deleteMany({ _id: { $in: staleIds } });
-        dbLog.info(`cl2cUploads.purge — removed ${staleIds.length} stale record(s)`);
+        await db().collection('claudeUploads').deleteMany({ _id: { $in: staleIds } });
+        dbLog.info(`claudeUploads.purge — removed ${staleIds.length} legacy record(s) with no disk + no DB content`);
       }
 
       res.json(uploads.filter(u => !staleIds.includes(u._id)));
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── POST /api/cl2c/uploads/:id/activate ────────────────────────────────────
+  router.post('/uploads/:id/activate', requireAuth, async (req, res) => {
+    try {
+      const { appUserId } = getCtx(req);
+      const r = await db().collection('claudeUploads').updateOne(
+        { _id: req.params.id, appUserId },
+        { $set: { lastActiveAt: new Date() } }
+      );
+      if (r.matchedCount === 0) return res.status(404).json({ error: 'Upload not found' });
+      res.json({ ok: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
@@ -160,10 +223,10 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
   router.delete('/uploads/:id', requireAuth, async (req, res) => {
     try {
       const { appUserId } = getCtx(req);
-      const doc = await db().collection('cl2cUploads').findOne({ _id: req.params.id, appUserId });
+      const doc = await db().collection('claudeUploads').findOne({ _id: req.params.id, appUserId });
       if (!doc) return res.status(404).json({ error: 'Upload not found' });
       if (doc.extractPath) fs.rm(doc.extractPath, { recursive: true, force: true }, () => {});
-      await db().collection('cl2cUploads').deleteOne({ _id: req.params.id, appUserId });
+      await db().collection('claudeUploads').deleteOne({ _id: req.params.id, appUserId });
       res.json({ ok: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
@@ -210,28 +273,60 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
       if (!pairs?.length)  return res.status(400).json({ error: 'No user pairs provided' });
       if (!uploadId)       return res.status(400).json({ error: 'No uploadId provided' });
 
-      const uploadDoc = await db().collection('cl2cUploads').findOne({ _id: uploadId, appUserId });
+      const uploadDoc = await db().collection('claudeUploads').findOne({ _id: uploadId, appUserId });
       if (!uploadDoc) return res.status(404).json({ error: 'Upload not found' });
 
-      const isDryRun   = dryRun === true;
-      const cl2cFolder = folderName || 'ClaudeChats';
       const batchId    = `cl2c_${Date.now()}`;
       const startTime  = new Date();
+      const resumeContext = {
+        kind: 'cl2c',
+        appUserId, msEmail,
+        pairs, uploadId, folderName, dryRun, fromDate, toDate, includeMemory, includeProjects,
+      };
 
       res.json({ started: true, batchId });
 
-      setImmediate(async () => {
+      setImmediate(() => executeCL2CMigration({ batchId, startTime, resumeContext, isResume: false }));
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  async function executeCL2CMigration({ batchId, startTime, resumeContext, isResume }) {
+    const { appUserId, msEmail, pairs, uploadId, folderName, dryRun, fromDate, toDate, includeMemory, includeProjects } = resumeContext;
+    const isDryRun   = dryRun === true;
+    const cl2cFolder = folderName || 'ClaudeChats';
+
+    const uploadDoc = await db().collection('claudeUploads').findOne({ _id: uploadId, appUserId });
+    if (!uploadDoc) {
+      dbLog.error(`[CL2C] Upload ${uploadId} not found on ${isResume ? 'resume' : 'start'} — aborting batch ${batchId}`);
+      await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { status: 'failed', endTime: new Date(), error: 'Upload doc missing' } }).catch(() => {});
+      return;
+    }
+
+    {
         let files = 0, errors = 0;
+        // Declared at function scope so the catch handler can reference it.
+        let reportUsers = [];
+        const { startHeartbeat, stopHeartbeat, markUserPairMigrated, markUserPairFailed } = await import('../_shared/conversationStore.js');
+        let _heartbeatId = null;
 
         try {
           await db().collection('migrationWorkspaces').updateOne(
             { _id: batchId },
-            { $set: { migDir: 'claude-copilot', customerName: cl2cFolder, startTime, status: 'running', dryRun: isDryRun, appUserId, msEmail, totalUsers: pairs.length } },
+            { $set: { migDir: 'claude-copilot', customerName: cl2cFolder, startTime, status: 'running', dryRun: isDryRun, appUserId, msEmail, fromDate: fromDate || null, toDate: toDate || null, totalUsers: pairs.length, lastHeartbeat: new Date(), resumeContext, ...(isResume ? { resumedAt: new Date() } : {}) } },
             { upsert: true }
           );
+          _heartbeatId = startHeartbeat(batchId);
 
-          if (!uploadDoc.extractPath || !fs.existsSync(uploadDoc.extractPath)) {
-            const msg = `Upload files not found on disk (${uploadDoc.extractPath}). The server may have restarted and lost the uploaded ZIP. Please re-upload the ZIP file and try again.`;
+          // After the DB-only refactor, new uploads have no disk extract —
+          // conversations live in conversationStore. Only block if BOTH are
+          // missing. Either source is sufficient to migrate from.
+          const hasDiskExtract = uploadDoc.extractPath && fs.existsSync(uploadDoc.extractPath);
+          const dbConvCount = await db().collection('conversationStore')
+            .countDocuments({ uploadId, appUserId });
+          if (!hasDiskExtract && dbConvCount === 0) {
+            const msg = `Upload has no data — no disk extract AND no conversations in DB. Re-upload the ZIP.`;
             dbLog.error(`[CL2C] ${msg}`);
             cl2cLog('error', msg);
             await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: { status: 'failed', endTime: new Date(), error: msg } }).catch(() => {});
@@ -240,73 +335,141 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
           }
 
           const { migrateUserPair } = await import('./migration/migrate.js');
-          const reportUsers = [];
+          // reportUsers declared at function scope above; reset for this run
+          reportUsers.length = 0;
 
           dbLog.info(`[CL2C] Starting ${isDryRun ? 'dry run' : 'migration'} — ${pairs.length} user(s), uploadId=${uploadId}`);
           cl2cLog('info', `Starting CL2C ${isDryRun ? 'dry run' : 'migration'} for ${pairs.length} user(s)...`);
           cl2cLog('total', JSON.stringify({ total: pairs.length }));
 
+          // Pre-flight validator (only on dry-run; additive)
+          if (isDryRun) {
+            try {
+              const { runDryRunValidator } = await import('../dry-run/validator.js');
+              const dryRunReport = await runDryRunValidator({
+                migDir: 'claude-copilot',
+                pairs: pairs.map(p => ({ sourceEmail: p.sourceEmail, sourceUuid: p.sourceUuid, destEmail: p.destEmail, expectedConversationCount: p.conversationCount || 0 })),
+                config: { folderName: cl2cFolder, dryRun: true },
+                appUserId, msEmail,
+                msAccountId: req.body?.msAccountId || null,
+                uploadData: uploadDoc,
+              });
+              await db().collection('migrationWorkspaces').updateOne(
+                { _id: batchId },
+                { $set: { dryRunReport } }
+              ).catch(() => {});
+              cl2cLog('info', `Dry-run validator: ${dryRunReport.summary.ready} ready · ${dryRunReport.summary.warning} warning · ${dryRunReport.summary.blocker} blocker`);
+            } catch (e) {
+              cl2cLog('warn', `Dry-run validator failed: ${e.message}`);
+            }
+          }
+
           for (const pair of pairs) {
             cl2cLog('info', `Processing: ${pair.sourceDisplayName} → ${pair.destEmail}`);
 
             if (isDryRun) {
-              const { getUserData } = await import('../cl2g/zipParser.js');
-              const { conversations, memory, projects } = getUserData(uploadDoc.extractPath, pair.sourceUuid);
-
-              // Apply same date filter as live migration
-              let filteredConvs = conversations;
-              if (fromDate || toDate) {
-                const from = fromDate ? new Date(fromDate) : null;
-                const to   = toDate   ? new Date(toDate + 'T23:59:59Z') : null;
-                filteredConvs = conversations.filter(c => {
-                  const d = new Date(c.created_at);
-                  if (from && d < from) return false;
-                  if (to   && d > to)   return false;
-                  return true;
+              // Count conversations: prefer DB (post-refactor), fall back to
+              // disk for legacy uploads. Memory/projects dropped after
+              // the DB-only refactor (they lived only on disk).
+              let convCount = 0;
+              const hasDisk = uploadDoc.extractPath && fs.existsSync(uploadDoc.extractPath);
+              if (hasDisk) {
+                try {
+                  const { getUserData } = await import('../cl2g/zipParser.js');
+                  const { conversations } = getUserData(uploadDoc.extractPath, pair.sourceUuid);
+                  let filtered = conversations;
+                  if (fromDate || toDate) {
+                    const from = fromDate ? new Date(fromDate) : null;
+                    const to   = toDate   ? new Date(toDate + 'T23:59:59Z') : null;
+                    filtered = conversations.filter(c => {
+                      const d = new Date(c.created_at);
+                      if (from && d < from) return false;
+                      if (to   && d > to)   return false;
+                      return true;
+                    });
+                  }
+                  convCount = filtered.length;
+                } catch (e) { cl2cLog('warn', `getUserData failed for ${pair.sourceEmail}: ${e.message}`); }
+              } else {
+                convCount = await db().collection('conversationStore').countDocuments({
+                  uploadId, appUserId, sourceEmail: pair.sourceEmail,
                 });
               }
 
-              const validProjects  = projects.filter(p => p.name || p.docs?.length);
-              const hasMemoryPage  = includeMemory  !== false && !!memory?.conversations_memory;
-              const hasProjectPage = includeProjects !== false && validProjects.length > 0;
-              const dryPages = filteredConvs.length + (hasMemoryPage ? 1 : 0) + (hasProjectPage ? 1 : 0);
-
-              cl2cLog('info', `  ${pair.sourceDisplayName}: ${filteredConvs.length} conversations → ${filteredConvs.length} pages${hasMemoryPage ? ' + memory page' : ''}${hasProjectPage ? ' + projects page' : ''}`);
-              reportUsers.push({ email: pair.sourceEmail, destEmail: pair.destEmail, displayName: pair.sourceDisplayName, status: 'success', pages_created: dryPages, conversations_processed: filteredConvs.length, error_count: 0, errors: [] });
-              files += dryPages;
+              cl2cLog('info', `  ${pair.sourceDisplayName}: ${convCount} conversation${convCount===1?'':'s'} → ${convCount} OneNote page${convCount===1?'':'s'}`);
+              reportUsers.push({ email: pair.sourceEmail, destEmail: pair.destEmail, displayName: pair.sourceDisplayName, status: 'success', pages_created: convCount, conversations_processed: convCount, migrated_conversations: convCount, files_uploaded: 0, error_count: 0, errors: [] });
+              files += convCount;
+              // Emit progress so the UI sees the real conversation count
+              // during dry-run (not just the file count).
+              const cumulativeConvs = reportUsers.reduce((s, u) => s + (u.conversations_processed || 0), 0);
+              cl2cLog('progress', JSON.stringify({ files, convs: cumulativeConvs, errors, users: reportUsers.length, total: pairs.length }));
               continue;
             }
 
             const r = await migrateUserPair(
-              { sourceUuid: pair.sourceUuid, sourceDisplayName: pair.sourceDisplayName, destUserEmail: pair.destEmail, extractPath: uploadDoc.extractPath, appUserId },
-              { folderName: cl2cFolder, fromDate, toDate, includeMemory, includeProjects }
+              { sourceUuid: pair.sourceUuid, sourceDisplayName: pair.sourceDisplayName, destUserEmail: pair.destEmail, extractPath: uploadDoc.extractPath, appUserId, uploadId, sourceEmail: pair.sourceEmail },
+              { folderName: cl2cFolder, fromDate, toDate, includeMemory, includeProjects, isResume }
             );
 
+            // Note: conversations already persisted to conversationStore at upload time.
+
             const status = r.errors?.length ? (r.filesUploaded > 0 ? 'partial' : 'failed') : 'success';
-            reportUsers.push({ email: pair.sourceEmail, destEmail: pair.destEmail, displayName: r.sourceDisplayName, status, pages_created: r.filesUploaded, conversations_processed: r.conversationsCount, error_count: r.errors.length, errors: r.errors.map(e => ({ error_message: e })), files: r.files });
+            // CL2C bundles all conversations into ONE DOCX per user (or split
+            // into _Part1/_Part2 if >5000 convs). r.filesUploaded counts the
+            // DOCX file(s), NOT individual conversations. Migrated conversation
+            // count == the total count if status is success/partial (since the
+            // DOCX contains all of them) or 0 if failed.
+            const _attachmentCount = r.attachmentsUploaded || 0;
+            const _migratedConvs = status === 'failed' ? 0 : (r.conversationsCount || 0);
+            reportUsers.push({ email: pair.sourceEmail, destEmail: pair.destEmail, displayName: r.sourceDisplayName, status, pages_created: r.filesUploaded, conversations_processed: r.conversationsCount, migrated_conversations: _migratedConvs, files_uploaded: _attachmentCount, error_count: r.errors.length, errors: r.errors.map(e => ({ error_message: e })), files: r.files });
+
+            // Mark conversationStore rows
+            if (status === 'failed') {
+              await markUserPairFailed({ appUserId, uploadId, batchId, sourceEmail: pair.sourceEmail, error: r.errors[0] || 'unknown' });
+            } else {
+              await markUserPairMigrated({ appUserId, uploadId, batchId, sourceEmail: pair.sourceEmail, destEmail: pair.destEmail });
+            }
 
             if (r.errors.length) r.errors.forEach(e => { cl2cLog('warn', e); dbLog.warn(`[CL2C] ${r.sourceDisplayName}: ${e}`); });
             files  += r.filesUploaded;
             errors += r.errors.length;
             dbLog.info(`[CL2C] ${r.sourceDisplayName} → ${pair.destEmail}: ${r.filesUploaded} pages created, ${r.errors.length} error(s)`);
             cl2cLog(status === 'failed' ? 'warn' : 'success', `${r.sourceDisplayName} → ${pair.destEmail}: ${r.filesUploaded} pages, ${r.errors.length} error(s)`);
-            cl2cLog('progress', JSON.stringify({ files, errors, users: reportUsers.length, total: pairs.length }));
+            const cumulativeConvs = reportUsers.reduce((s, u) => s + (u.conversations_processed || 0), 0);
+            cl2cLog('progress', JSON.stringify({ files, convs: cumulativeConvs, errors, users: reportUsers.length, total: pairs.length }));
+
+            // Incremental progress write — Reports polling sees live progress.
+            await db().collection('migrationWorkspaces').updateOne(
+              { _id: batchId },
+              {
+                $set: {
+                  progressUsers: reportUsers.length,
+                  progressPages: files,
+                  progressConversations: reportUsers.reduce((s, u) => s + (u.conversations_processed || 0), 0),
+                  progressErrors: errors,
+                  users: reportUsers,
+                  lastProgressAt: new Date(),
+                },
+              }
+            ).catch(() => {});
           }
 
           const finalStatus = errors > 0 && files === 0 ? 'failed' : 'completed';
 
           // Isolated final DB write
+          const totalConvsSum = reportUsers.reduce((s, u) => s + (u.conversations_processed || 0), 0);
+          // Migrated = sum of per-user migrated_conversations (0 for failed
+          // users). For dry-runs, force 0 since nothing was actually written.
+          const migratedConvSum = isDryRun
+            ? 0
+            : reportUsers.reduce((s, u) => s + (u.migrated_conversations || 0), 0);
+          const finalUpdate = { migDir: 'claude-copilot', status: finalStatus, endTime: new Date(), totalConversations: totalConvsSum, migratedConversations: migratedConvSum, migratedUsers: reportUsers.filter(u => u.status !== 'failed').length, failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors, report: { summary: { total_users: pairs.length, total_pages_created: files, total_errors: errors, total_conversations: totalConvsSum, total_migrated_conversations: migratedConvSum }, users: reportUsers } };
           try {
-            await db().collection('migrationWorkspaces').updateOne(
-              { _id: batchId },
-              { $set: { migDir: 'claude-copilot', status: finalStatus, endTime: new Date(), migratedConversations: files, migratedUsers: reportUsers.filter(u => u.status !== 'failed').length, failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors, report: { summary: { total_users: pairs.length, total_pages_created: files, total_errors: errors }, users: reportUsers } } }
-            );
+            await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: finalUpdate });
           } catch (dbErr) {
             dbLog.error(`[CL2C] Final report DB write failed: ${dbErr.message}. Retrying...`);
-            await db().collection('migrationWorkspaces').updateOne(
-              { _id: batchId },
-              { $set: { migDir: 'claude-copilot', status: finalStatus, endTime: new Date(), migratedConversations: files, migratedUsers: reportUsers.filter(u => u.status !== 'failed').length, failedUsers: reportUsers.filter(u => u.status === 'failed').length, totalErrors: errors, report: { summary: { total_users: pairs.length, total_pages_created: files, total_errors: errors }, users: reportUsers } } }
-            ).catch(e2 => dbLog.error(`[CL2C] Retry also failed: ${e2.message}`));
+            await db().collection('migrationWorkspaces').updateOne({ _id: batchId }, { $set: finalUpdate })
+              .catch(e2 => dbLog.error(`[CL2C] Retry also failed: ${e2.message}`));
           }
 
           // Deploy Claude Conversation Agent (once per tenant)
@@ -327,8 +490,10 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
                 const deployer = new AgentDeployer(cl2cFolder, tenantId, {
                   agentName: 'Claude Conversation Agent',
                   sourceLabel: 'Claude',
-                  notebookName: cl2cFolder,
-                  sectionName: `${cl2cFolder} Conversations`,
+                  // Universal 2-subfolder layout — agent searches the DOCX
+                  // inside the Conversations subfolder.
+                  conversationsFolder: `${cl2cFolder}/Conversations`,
+                  attachmentsFolder: `${cl2cFolder}/Migrated from Claude`,
                   appId: existingDeployment?.appId || undefined, // reuse stored GUID
                 }, appUserId);
 
@@ -361,34 +526,9 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
             }
           }
 
-          // Write GemCo/index.json to each target user's OneDrive (non-fatal)
-          if (!isDryRun) {
-            try {
-              const indexWriter = new IndexWriter(appUserId);
-              const pages = await db().collection('conversationPages').find({
-                provider: 'claude',
-                batchFolder: cl2cFolder,
-              }).toArray();
-              const byEmail = {};
-              for (const p of pages) {
-                if (!p.targetEmail || !p.oneNotePageId) continue;
-                if (!byEmail[p.targetEmail]) byEmail[p.targetEmail] = [];
-                byEmail[p.targetEmail].push({
-                  title: p.title || 'Untitled',
-                  pageId: p.oneNotePageId,
-                  migratedAt: p.migratedAt?.toISOString?.() || new Date().toISOString(),
-                });
-              }
-              for (const [email, conversations] of Object.entries(byEmail)) {
-                await indexWriter.writeIndex(email, {
-                  source: 'Claude',
-                  notebookName: cl2cFolder,
-                  sectionName: `${cl2cFolder} Conversations`,
-                  conversations,
-                }).catch(() => {});
-              }
-            } catch {}
-          }
+          // Phase 2 (OneNote -> DOCX): no migration-time index file. The
+          // conversationPages collection is no longer populated, and the
+          // agent reads the DOCX directly from "{cl2cFolder}/Conversations/".
 
           cl2cLog('done', JSON.stringify({ files, errors, users: pairs.length, batchId }));
 
@@ -398,16 +538,16 @@ export function createCL2CRouter({ db, isAuthenticated, getValidToken, getCurren
           cl2cLog('error', e.message || String(e));
           await db().collection('migrationWorkspaces').updateOne(
             { _id: batchId },
-            { $set: { migDir: 'claude-copilot', status: files > 0 ? 'completed' : 'failed', endTime: new Date(), migratedConversations: files, totalErrors: errors + 1, error: e.message } }
+            { $set: { migDir: 'claude-copilot', status: files > 0 ? 'completed' : 'failed', endTime: new Date(), migratedConversations: reportUsers.reduce((s, u) => s + (u.conversations_processed || 0), 0) || files, totalErrors: errors + 1, error: e.message } }
           ).catch(() => {});
           cl2cLog('done', JSON.stringify({ files, errors: errors + 1, users: pairs.length, batchId }));
+        } finally {
+          stopHeartbeat(_heartbeatId);
         }
-      });
+      }
+  }
 
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+  router.executeCL2CMigration = executeCL2CMigration;
 
   return router;
 }

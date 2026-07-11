@@ -21,8 +21,18 @@ import {
   createDriveFolder,
   uploadFileToDrive,
 } from "../googleService.js";
+import {
+  CONVERSATIONS_SUBFOLDER,
+  attachmentsSubfolderName,
+} from "../../_shared/destinationFolders.js";
 import { getCopilotInteractionsForUser } from "../copilotService.js";
 import { createSourceGraphClient } from "../copilotService.js";
+import {
+  regenerateFilesFromInteraction,
+  pickRegeneratedFileByName,
+  cleanupRegen,
+} from "../../c2c/codeRegenerator.js";
+import fs from "fs";
 
 // ── Download a binary file from a URL (Graph or public) ──────────────
 
@@ -677,7 +687,7 @@ async function buildConversationDocx(items, convIdx, userName, downloadedImages,
 
 // ── Build merged DOCX for batch of conversations ──────────────────────
 
-async function buildMergedBatchDocx(batchEntries, userName, uploadedFileLinks, startConvIdx) {
+export async function buildMergedBatchDocx(batchEntries, userName, uploadedFileLinks, startConvIdx) {
   const children = [];
 
   // Cover page
@@ -855,10 +865,41 @@ function conversationTitle(items) {
 
 // ── Download all attachments for a conversation ──────────────────────
 
-async function downloadConversationAssets(items, accessToken, sourceUserId, userDelegatedToken = null) {
+async function downloadConversationAssets(items, accessToken, sourceUserId, userDelegatedToken = null, uploadedFileLinks = null) {
   const downloadedImages = new Map();
   const filesToUpload = [];
   const seen = new Set();
+
+  // Session-scoped Python regen cache. Copilot's Analysis-tool outputs are
+  // served from asyncgw URLs that are locked behind Teams session auth. When
+  // every other download attempt fails (delegated token, OneDrive search,
+  // Graph shares), the Python source code Copilot used to generate the file
+  // is embedded in the adaptive card — re-running it locally produces the
+  // same file bytes. Runs once per session, used for any number of attachments.
+  let sessionRegen = null;
+  let sessionRegenAttempted = false;
+  const usedRegenPaths = new Set();
+  async function tryRegenFallback(att) {
+    if (!sessionRegenAttempted) {
+      sessionRegenAttempted = true;
+      try {
+        sessionRegen = await regenerateFilesFromInteraction(items);
+      } catch (e) {
+        console.warn(`[Migration] Session regen failed: ${e.message}`);
+      }
+    }
+    if (!sessionRegen || !sessionRegen.files || sessionRegen.files.length === 0) return null;
+    const lastSeg = att.url?.split("/").pop()?.split("?")[0] || "";
+    const expectedName = (lastSeg && lastSeg.includes(".")) ? lastSeg : (att.name || "");
+    let match = pickRegeneratedFileByName(sessionRegen, expectedName);
+    if (!match) {
+      match = sessionRegen.files.find(f => !usedRegenPaths.has(f.fullPath));
+      if (match) console.log(`[Migration] Regen name match failed for "${expectedName}", using unmatched file "${match.name}"`);
+    }
+    if (!match) return null;
+    usedRegenPaths.add(match.fullPath);
+    return match;
+  }
 
   // Search the user's OneDrive by file name as a fallback
   async function searchUserDrive(fileName) {
@@ -884,6 +925,14 @@ async function downloadConversationAssets(items, accessToken, sourceUserId, user
     for (const att of attachments) {
       const key = att.url || att.attachmentId || att.driveItemId || att.name;
       if (seen.has(key)) continue;
+      // Cross-session dedup: if a previous conversation in this run already
+      // uploaded this exact URL to Drive, skip download+upload entirely.
+      // The DOCX renderer will still pick up the existing webViewLink from
+      // uploadedFileLinks for the hyperlink.
+      if (att.url && uploadedFileLinks?.has(att.url)) {
+        seen.add(key);
+        continue;
+      }
       seen.add(key);
 
       let downloadUrl = att.url;
@@ -947,6 +996,22 @@ async function downloadConversationAssets(items, accessToken, sourceUserId, user
               originalUrl: att.url || downloadUrl,
             });
             console.log(`[Migration] Image downloaded: ${att.name || downloadUrl}`);
+          } else if (isAsyncGwUrl) {
+            // Final fallback: Python regen for ephemeral asyncgw images
+            const regenFile = await tryRegenFallback(att);
+            if (regenFile) {
+              const buf = fs.readFileSync(regenFile.fullPath);
+              downloadedImages.set(att.url || downloadUrl, buf);
+              const ext = guessExtension("", regenFile.name);
+              filesToUpload.push({
+                name: regenFile.name || `image${downloadedImages.size}${ext}`,
+                buffer: buf, mime: guessMime(ext), type: "image",
+                originalUrl: att.url || downloadUrl,
+              });
+              console.log(`[Migration] Image regenerated via Python: ${regenFile.name} (${regenFile.size} bytes)`);
+            } else {
+              console.warn(`[Migration] Image download returned empty: ${att.name || downloadUrl}`);
+            }
           } else {
             console.warn(`[Migration] Image download returned empty: ${att.name || downloadUrl}`);
           }
@@ -981,6 +1046,7 @@ async function downloadConversationAssets(items, accessToken, sourceUserId, user
           } else {
             console.warn(`[Migration] File download returned empty: ${att.name} — trying OneDrive search`);
             const fallbackUrl = await searchUserDrive(att.name);
+            let recovered = false;
             if (fallbackUrl) {
               const result2 = await downloadBinary(fallbackUrl, accessToken);
               if (result2) {
@@ -990,16 +1056,56 @@ async function downloadConversationAssets(items, accessToken, sourceUserId, user
                 const name2 = dispositionName2 || (att.name?.includes(".") ? att.name : (att.name || "file") + ext2);
                 filesToUpload.push({ name: name2, buffer: buf2, mime: resCt2 || guessMime(ext2), type: "file", originalUrl: att.url || fallbackUrl });
                 console.log(`[Migration] Downloaded "${name2}" via OneDrive search fallback`);
-              } else {
-                console.warn(`[Migration] OneDrive search fallback also failed for "${att.name}"`);
+                recovered = true;
               }
+            }
+            // Final fallback: Python regen for ephemeral asyncgw files
+            if (!recovered && isAsyncGwUrl) {
+              const regenFile = await tryRegenFallback(att);
+              if (regenFile) {
+                const buf = fs.readFileSync(regenFile.fullPath);
+                const ext = guessExtension("", regenFile.name);
+                filesToUpload.push({
+                  name: regenFile.name,
+                  buffer: buf,
+                  mime: guessMime(ext),
+                  type: "file",
+                  originalUrl: att.url || downloadUrl,
+                });
+                console.log(`[Migration] File regenerated via Python: ${regenFile.name} (${regenFile.size} bytes)`);
+                recovered = true;
+              }
+            }
+            if (!recovered) {
+              console.warn(`[Migration] All fallbacks exhausted for "${att.name}"`);
             }
           }
         } catch (e) {
           console.warn(`[Migration] File download error for ${att.name}: ${e.message}`);
         }
       } else if (!downloadUrl && att.name) {
-        console.warn(`[Migration] No download URL for attachment "${att.name}" — skipping`);
+        // No URL at all — but it might still be an asyncgw attachment whose
+        // download URL we couldn't resolve. If isAsyncGw flag was set during
+        // extraction, try Python regen.
+        if (att.isAsyncGw) {
+          const regenFile = await tryRegenFallback(att);
+          if (regenFile) {
+            const buf = fs.readFileSync(regenFile.fullPath);
+            const ext = guessExtension("", regenFile.name);
+            filesToUpload.push({
+              name: regenFile.name,
+              buffer: buf,
+              mime: guessMime(ext),
+              type: "file",
+              originalUrl: att.url || `regen:${regenFile.name}`,
+            });
+            console.log(`[Migration] File regenerated via Python (no URL): ${regenFile.name} (${regenFile.size} bytes)`);
+          } else {
+            console.warn(`[Migration] No download URL for "${att.name}" — skipping`);
+          }
+        } else {
+          console.warn(`[Migration] No download URL for attachment "${att.name}" — skipping`);
+        }
       }
     }
 
@@ -1016,6 +1122,9 @@ async function downloadConversationAssets(items, accessToken, sourceUserId, user
       });
     }
   }
+
+  // Cleanup Python regen temp dir (best-effort)
+  if (sessionRegen) cleanupRegen(sessionRegen);
 
   return { downloadedImages, filesToUpload };
 }
@@ -1045,19 +1154,49 @@ export async function migrateUserPair({
     console.log(`[Migration] Fetching Copilot data for userId="${sourceUserId}", displayName="${sourceDisplayName}"`);
 
     let interactions;
-    try {
-      interactions = await getCopilotInteractionsForUser(accessToken, sourceUserId, {});
-    } catch (fetchErr) {
-      const msg = fetchErr.message || String(fetchErr);
-      console.error(`[Migration] Failed to fetch for ${sourceDisplayName}: ${msg}`);
-      if (msg.includes("Copilot license")) {
-        result.errors.push(`User does not have a valid Microsoft 365 Copilot license. Please assign a Copilot license and wait 15-30 minutes for it to propagate.`);
-      } else if (msg.includes("403")) {
-        result.errors.push(`Access denied (403): ${msg}`);
-      } else {
-        result.errors.push(`Failed to fetch Copilot data: ${msg}`);
+    // DB-first: try to load previously-fetched conversations from conversationStore.
+    // For C2G this is used on RETRY — first run writes to DB, retry reads from DB.
+    let dbConversations = null;
+    if (opts?.batchId && opts?.appUserId && opts?.sourceEmail) {
+      try {
+        const { loadConversationsFromStore } = await import('../../_shared/conversationStore.js');
+        const fromStore = await loadConversationsFromStore({
+          appUserId: opts.appUserId,
+          sourceEmail: opts.sourceEmail,
+          batchId: opts.batchId,
+          fromDate: opts.fromDate,
+          toDate: opts.toDate,
+          includeMigrated: !opts?.isResume,
+        });
+        if (fromStore && fromStore.length > 0) {
+          dbConversations = fromStore;
+          console.log(`[Migration] Loaded ${fromStore.length} conversations from conversationStore for ${sourceDisplayName}`);
+          // Flatten back to interactions[] format that the rest of the code expects
+          // (each conv.payload contains { interactions: [...] })
+          interactions = [];
+          for (const conv of fromStore) {
+            if (conv.interactions && Array.isArray(conv.interactions)) {
+              interactions.push(...conv.interactions);
+            }
+          }
+        }
+      } catch (_) { /* fall through to Graph fetch */ }
+    }
+    if (!interactions) {
+      try {
+        interactions = await getCopilotInteractionsForUser(accessToken, sourceUserId, {});
+      } catch (fetchErr) {
+        const msg = fetchErr.message || String(fetchErr);
+        console.error(`[Migration] Failed to fetch for ${sourceDisplayName}: ${msg}`);
+        if (msg.includes("Copilot license")) {
+          result.errors.push(`User does not have a valid Microsoft 365 Copilot license. Please assign a Copilot license and wait 15-30 minutes for it to propagate.`);
+        } else if (msg.includes("403")) {
+          result.errors.push(`Access denied (403): ${msg}`);
+        } else {
+          result.errors.push(`Failed to fetch Copilot data: ${msg}`);
+        }
+        return result;
       }
-      return result;
     }
 
     console.log(`[Migration] Got ${interactions.length} interactions for ${sourceDisplayName}`);
@@ -1091,11 +1230,52 @@ export async function migrateUserPair({
       return result;
     }
 
+    // Persist Copilot interactions to conversationStore (additive).
+    // Each session becomes one row keyed by (batchId, sessionId).
+    if (opts?.batchId && opts?.appUserId) {
+      try {
+        const { persistSourceConversations, SOURCE_TYPE } = await import('../../_shared/conversationStore.js');
+        const conversationDocs = Array.from(sessions.entries()).map(([sid, items]) => ({
+          sessionId: sid,
+          title: items[0]?.responseEnvelope?.title || items[0]?.body?.content?.slice(0, 80) || 'Untitled Copilot conversation',
+          createdDateTime: items[0]?.createdDateTime,
+          payload: { interactions: items },
+        }));
+        await persistSourceConversations(
+          {
+            batchId: opts.batchId,
+            appUserId: opts.appUserId,
+            migDir: 'copilot-gemini',
+            sourceType: SOURCE_TYPE.GRAPH,
+            sourceTenantId: opts.sourceTenantId || null,
+            sourceUserId,
+            sourceEmail: opts.sourceEmail || null,
+            sourceDisplayName,
+            destEmail: destUserEmail,
+          },
+          conversationDocs
+        );
+      } catch (persistErr) {
+        console.warn(`[C2G] conversationStore persist (non-fatal): ${persistErr.message}`);
+      }
+    }
+
     const auth = getServiceAccountAuth(destUserEmail);
     const mainFolder = await createDriveFolder(auth, folderName);
+    // Universal 2-subfolder pattern (see _shared/destinationFolders.js):
+    // - "Conversations/" → bundled DOCXs (one per user)
+    // - "Migrated from Copilot/" → attachment files + regenerated images
+    // The DOCX hyperlinks cross-link the two via Google Drive webViewLinks.
+    const filesSubfolderName = attachmentsSubfolderName('copilot');
+    const convoFolder = await createDriveFolder(auth, CONVERSATIONS_SUBFOLDER, mainFolder.id);
+    const filesFolder = await createDriveFolder(auth, filesSubfolderName, mainFolder.id);
+    console.log(`[C2G] Folder layout: ${folderName}/ → ${CONVERSATIONS_SUBFOLDER}/, ${filesSubfolderName}/`);
 
-    // ── Split conversations into batches (100 per file) for memory efficiency ──
-    const BATCH_SIZE = 100;
+    // ── Split conversations into batches (5000 per file) for memory efficiency ──
+    // Matches the cap used by every other direction (G2G, G2C, CL2G, CL2C, C2C)
+    // so a customer's user with N conversations gets the same number of DOCX
+    // files regardless of which direction they migrate in.
+    const BATCH_SIZE = 5000;
     const sessionArray = Array.from(sessions.entries());
     const batches = [];
     for (let i = 0; i < sessionArray.length; i += BATCH_SIZE) {
@@ -1103,6 +1283,18 @@ export async function migrateUserPair({
     }
 
     console.log(`[C2G] Processing ${sessions.size} conversation(s) in ${batches.length} batch(es) for ${sourceDisplayName}...`);
+
+    // Cross-session dedup: a single source URL referenced in N conversations
+    // should download + upload ONCE. The map's webViewLink is reused for the
+    // hyperlink in every conversation's DOCX. Lives for the whole user-pair
+    // migration, not just one batch.
+    const uploadedFileLinks = new Map();
+    // Content-hash dedup: the same file is often referenced through several
+    // different URL forms (direct path, _layouts/15/Doc.aspx?sourcedoc=...
+    // viewer, Graph /shares/u!... shares endpoint). URL dedup doesn't catch
+    // these. Hashing the downloaded bytes does.
+    const uploadedByContentHash = new Map(); // sha256 hex → { webViewLink }
+    const { createHash } = await import("node:crypto");
 
     let totalConvIdx = 0;
     for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
@@ -1112,7 +1304,6 @@ export async function migrateUserPair({
 
       try {
         // Download assets + build DOCX for all conversations in this batch
-        const uploadedFileLinks = new Map();
         let batchDocxChildren = [];
         const batchTitle = `Copilot Conversations Batch ${batchIdx + 1}`;
 
@@ -1126,12 +1317,22 @@ export async function migrateUserPair({
             : "unknown";
 
           console.log(`[C2G] Batch ${batchIdx + 1}/${batches.length}, Conv ${i + 1}/${batch.length} (overall ${convIdx}/${sessions.size}): downloading assets...`);
-          const { downloadedImages, filesToUpload } = await downloadConversationAssets(items, accessToken, sourceUserId, userDelegatedToken);
+          const { downloadedImages, filesToUpload } = await downloadConversationAssets(items, accessToken, sourceUserId, userDelegatedToken, uploadedFileLinks);
 
-          // Upload attachments
+          // Upload attachments → Migrated from Copilot folder
           for (const asset of filesToUpload) {
             try {
-              const uploaded = await uploadFileToDrive(auth, asset.name, asset.mime, asset.buffer, mainFolder.id);
+              // Content-hash dedup: skip if identical bytes already uploaded
+              // under a different URL earlier in this run.
+              const hash = createHash("sha256").update(asset.buffer).digest("hex");
+              const existing = uploadedByContentHash.get(hash);
+              if (existing) {
+                if (asset.originalUrl) uploadedFileLinks.set(asset.originalUrl, existing.webViewLink);
+                console.log(`[C2G] Dedup by content: "${asset.name}" matches earlier upload, link reused`);
+                continue;
+              }
+              const uploaded = await uploadFileToDrive(auth, asset.name, asset.mime, asset.buffer, filesFolder.id);
+              uploadedByContentHash.set(hash, { webViewLink: uploaded.webViewLink });
               result.filesUploaded++;
               result.files.push({
                 name: asset.name,
@@ -1146,6 +1347,9 @@ export async function migrateUserPair({
               result.errors.push(`Asset ${asset.name}: ${uploadErr.message}`);
             }
           }
+          // Emit progress AFTER each conversation so the UI ring updates
+          // smoothly instead of jumping only between batch boundaries.
+          if (onProgress) onProgress({ filesUploaded: result.filesUploaded, convIdx: totalConvIdx, totalConvs: sessions.size });
         }
 
         // Build merged DOCX for entire batch
@@ -1153,11 +1357,12 @@ export async function migrateUserPair({
         const partLabel = batches.length > 1 ? `_Part${batchIdx + 1}` : '';
         const docxName = `${sourceDisplayName}_Copilot_Conversations${partLabel}.docx`;
 
+        // Conversation DOCX → Copilot Conversations folder
         const docxFile = await uploadFileToDrive(
           auth, docxName,
           "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
           docxBuffer,
-          mainFolder.id
+          convoFolder.id
         );
 
         result.filesUploaded++;

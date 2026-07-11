@@ -48,7 +48,7 @@ function getServiceAccountKeyPath() {
   );
 }
 
-export function getServiceAccountAuth(userEmail) {
+export function getServiceAccountAuth(userEmail, scopes = ['https://www.googleapis.com/auth/drive']) {
   // Priority 1: inline JSON in env var (base64 or raw) — works on cloud deployments
   const inlineJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_JSON;
   if (inlineJson) {
@@ -62,7 +62,7 @@ export function getServiceAccountAuth(userEmail) {
     }
     return new GoogleAuth({
       credentials,
-      scopes: ['https://www.googleapis.com/auth/drive'],
+      scopes,
       clientOptions: { subject: userEmail },
     });
   }
@@ -78,9 +78,93 @@ export function getServiceAccountAuth(userEmail) {
   }
   return new GoogleAuth({
     keyFile: keyPath,
-    scopes: ['https://www.googleapis.com/auth/drive'],
+    scopes,
     clientOptions: { subject: userEmail },
   });
+}
+
+/**
+ * Service-account auth scoped for Google Vault. Service account must have
+ * domain-wide delegation enabled and the ediscovery scope authorized in
+ * the customer's Workspace admin console. With DWD there's no admin-side
+ * reauthentication required — the JWT we sign refreshes itself forever.
+ */
+export function getVaultServiceAccountAuth(adminEmail) {
+  return getServiceAccountAuth(adminEmail, [
+    'https://www.googleapis.com/auth/ediscovery',
+    'https://www.googleapis.com/auth/devstorage.read_only',
+  ]);
+}
+
+/**
+ * Service-account scope sets. Each must be authorized in the customer's
+ * Domain-Wide Delegation allowlist (admin.google.com → Security → API controls
+ * → Manage Domain-wide Delegation). Google REJECTS the entire JWT request with
+ * "unauthorized_client" if ANY requested scope is missing from the allowlist,
+ * so we keep these sets as tight as possible per operation.
+ */
+export const SCOPES_LIST_USERS = [
+  'https://www.googleapis.com/auth/admin.directory.user.readonly',
+];
+
+export const SCOPES_DRIVE = [
+  'https://www.googleapis.com/auth/drive',
+];
+
+export const SCOPES_DRIVE_READONLY = [
+  'https://www.googleapis.com/auth/drive.readonly',
+];
+
+export const SCOPES_AUDIT_LOG = [
+  'https://www.googleapis.com/auth/admin.reports.audit.readonly',
+];
+
+export const SCOPES_VAULT = [
+  'https://www.googleapis.com/auth/ediscovery',
+  'https://www.googleapis.com/auth/devstorage.read_only',
+];
+
+// Convenience superset for the full G2C / G2G migration pipeline which needs
+// everything. Customers running these migrations must have all of these
+// allow-listed; otherwise migration fails. List-users is split off because
+// most customers haven't allow-listed Vault/Audit just to browse users.
+export const ALL_SCOPES = [
+  ...SCOPES_DRIVE,
+  'https://www.googleapis.com/auth/drive.readonly',
+  ...SCOPES_LIST_USERS,
+  ...SCOPES_AUDIT_LOG,
+  ...SCOPES_VAULT,
+  'https://www.googleapis.com/auth/ediscovery.readonly',
+];
+
+/**
+ * Get a service-account auth client impersonating the Google admin signed in
+ * for (appUserId, accountId). Falls back to the first connected account if
+ * accountId is omitted.
+ *
+ * This is the canonical replacement for getGoogleOAuth2Client() in any API
+ * call path (Drive, Admin Directory, Reports, Vault, etc). User OAuth is
+ * still used for the initial sign-in flow only — once we know which admin
+ * connected, all subsequent API calls use this service-account auth, which
+ * never expires and is immune to Google's reauthentication policy.
+ *
+ * Result: the user's "Sign-in expired" reauth banner never fires for these
+ * downstream API operations.
+ */
+export async function getServiceAccountAuthForUser(appUserId, accountId = null, scopes = SCOPES_LIST_USERS) {
+  const { getGoogleAccounts } = await import('../../core/auth/googleOAuth.js');
+  const accounts = getGoogleAccounts(appUserId);
+  if (!accounts || accounts.length === 0) {
+    throw new Error('No Google account connected for this user. Sign in with Google first.');
+  }
+  const picked = accountId ? accounts.find(a => a.accountId === accountId) : accounts[0];
+  if (!picked) {
+    throw new Error(`Google account ${accountId} not connected. Sign in with this account first.`);
+  }
+  if (!picked.email) {
+    throw new Error(`Google account ${accountId || '(default)'} has no email recorded. Reconnect required.`);
+  }
+  return getServiceAccountAuth(picked.email, scopes);
 }
 
 // ── Drive helpers ────────────────────────────────────────────────────

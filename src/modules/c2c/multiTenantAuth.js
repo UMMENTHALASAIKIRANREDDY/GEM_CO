@@ -22,19 +22,25 @@ const GRAPH_SCOPE = 'https://graph.microsoft.com/.default';
 const _tokenCache = new Map();
 
 function _resolveClientCreds() {
+  // C2C admin-consent MUST use the same Azure app as delegated sign-in
+  // (AZURE_CLIENT_ID = CloudFuze_Migrations). Falling back to
+  // SOURCE_AZURE_CLIENT_ID points the popup at the C2G source-reader app
+  // (which shows up as "AllProjects" in the consent screen) — wrong app,
+  // and that app lacks OneNote/OneDrive write permissions C2C needs.
+  //
+  // C2C_AZURE_CLIENT_ID stays as an OPTIONAL override only — set it in
+  // .env if you need C2C to use a different Azure app than the primary.
+  // Otherwise we default to AZURE_CLIENT_ID.
   const clientId =
     process.env.C2C_AZURE_CLIENT_ID?.trim() ||
-    process.env.SOURCE_AZURE_CLIENT_ID?.trim() ||
     process.env.AZURE_CLIENT_ID?.trim();
   const clientSecret =
     process.env.C2C_AZURE_CLIENT_SECRET?.trim() ||
-    process.env.SOURCE_AZURE_CLIENT_SECRET?.trim() ||
     process.env.AZURE_CLIENT_SECRET?.trim();
   if (!clientId || !clientSecret) {
     throw new Error(
-      'Missing Azure app credentials. Set C2C_AZURE_CLIENT_ID + C2C_AZURE_CLIENT_SECRET ' +
-      '(or fall back to SOURCE_AZURE_CLIENT_ID / SOURCE_AZURE_CLIENT_SECRET, ' +
-      'or AZURE_CLIENT_ID / AZURE_CLIENT_SECRET).'
+      'Missing Azure app credentials. Set AZURE_CLIENT_ID + AZURE_CLIENT_SECRET ' +
+      'in .env (the CloudFuze multi-tenant app — must have OneNote/OneDrive write permissions).'
     );
   }
   return { clientId, clientSecret };

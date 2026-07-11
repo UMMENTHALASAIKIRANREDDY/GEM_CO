@@ -66,8 +66,48 @@ async function ensureCollections() {
   } catch {}
   await _db.collection('cloudMembers').createIndex({ appUserId: 1, email: 1, source: 1 }, { unique: true });
 
-  // 3. uploads
-  if (!existing.has('uploads')) await _db.createCollection('uploads');
+  // 3. Source-scoped upload metadata collections.
+  //    - claudeUploads: every Claude ZIP (regardless of CL2C/CL2G destination)
+  //    - geminiUploads: every Vault ZIP / Vault API export (regardless of G2C/G2G destination)
+  //    - (future) chatgptUploads: ChatGPT exports
+  // Legacy collections being migrated:
+  //    cl2gUploads -> claudeUploads   (rename, data preserved)
+  //    cl2cUploads -> dropped         (cl2g data wins per user decision)
+  //    uploads     -> geminiUploads   (rename, data preserved)
+  if (existing.has('cl2gUploads') && !existing.has('claudeUploads')) {
+    try {
+      await _db.collection('cl2gUploads').rename('claudeUploads');
+      logger.info('Renamed cl2gUploads -> claudeUploads');
+    } catch (e) { logger.warn(`Rename cl2gUploads failed: ${e.message}`); }
+  }
+  if (existing.has('cl2cUploads')) {
+    try {
+      await _db.collection('cl2cUploads').drop();
+      logger.info('Dropped cl2cUploads (cl2g data wins, per consolidation plan)');
+    } catch (e) { logger.warn(`Drop cl2cUploads failed: ${e.message}`); }
+  }
+  if (existing.has('uploads') && !existing.has('geminiUploads')) {
+    try {
+      await _db.collection('uploads').rename('geminiUploads');
+      logger.info('Renamed uploads -> geminiUploads');
+    } catch (e) { logger.warn(`Rename uploads failed: ${e.message}`); }
+  } else if (existing.has('uploads') && existing.has('geminiUploads')) {
+    // Both exist — geminiUploads was created fresh while legacy uploads lingered,
+    // so the rename above was skipped. uploads is now orphaned (nothing reads it).
+    // Drop it if empty; if it somehow holds unique data, keep it and shout so we
+    // can merge by hand instead of silently losing exports.
+    try {
+      const n = await _db.collection('uploads').countDocuments();
+      if (n === 0) {
+        await _db.collection('uploads').drop();
+        logger.info('Dropped orphaned empty uploads collection');
+      } else {
+        logger.warn(`Orphaned uploads collection has ${n} doc(s) — NOT dropped; merge into geminiUploads manually`);
+      }
+    } catch (e) { logger.warn(`Orphaned uploads cleanup failed: ${e.message}`); }
+  }
+  if (!existing.has('claudeUploads') && !existing.has('cl2gUploads')) await _db.createCollection('claudeUploads');
+  if (!existing.has('geminiUploads') && !existing.has('uploads')) await _db.createCollection('geminiUploads');
 
   // 4. userMappings — one mapping doc per migDir+user
   if (!existing.has('userMappings')) await _db.createCollection('userMappings');
@@ -82,10 +122,36 @@ async function ensureCollections() {
   if (!existing.has('migrationWorkspaces')) await _db.createCollection('migrationWorkspaces');
   await _db.collection('migrationWorkspaces').createIndex({ appUserId: 1, startTime: -1 });
 
-  // 5b. migrationJobs — one doc per user per run (live runs only)
-  if (!existing.has('migrationJobs')) await _db.createCollection('migrationJobs');
-  await _db.collection('migrationJobs').createIndex({ workspaceId: 1, appUserId: 1 });
-  await _db.collection('migrationJobs').createIndex({ jobId: 1 }, { unique: true });
+  // Deprecated collections — dropped on boot so they don't linger in the DB.
+  // migrationJobs: per-user status now lives in conversationStore.
+  // cachedUsers:   was never wired up in code; only existed in old docs.
+  // g2gSessions:   absorbed into userSessions (every direction now uses the
+  //                same per-user session collection — no per-direction
+  //                sessions collection anymore).
+  for (const dead of ['migrationJobs', 'cachedUsers', 'g2gSessions']) {
+    if (existing.has(dead)) {
+      try {
+        await _db.collection(dead).drop();
+        logger.info(`Dropped ${dead} (deprecated)`);
+      } catch (e) { logger.warn(`Drop ${dead} failed: ${e.message}`); }
+    }
+  }
+
+  // If a previous boot renamed chatHistory -> chatMessages, undo it.
+  // chatHistory has TWO writers with different doc shapes:
+  //   (a) the server's POST /api/chat-history writes ONE doc per user with
+  //       a messages[] array (this was split out into userSessions for the
+  //       uiState piece; chat messages stay in chatHistory)
+  //   (b) src/agent/conversationHistory.js writes ONE doc per message with
+  //       fields {role, content, timestamp}
+  // Renaming the collection broke (b). Reverting the rename so the agent
+  // module keeps working unchanged.
+  if (existing.has('chatMessages') && !existing.has('chatHistory')) {
+    try {
+      await _db.collection('chatMessages').rename('chatHistory');
+      logger.info('Reverted chatMessages -> chatHistory (agent module needs the original name)');
+    } catch (e) { logger.warn(`Revert chatMessages failed: ${e.message}`); }
+  }
 
   // 6. checkpoints
   if (!existing.has('checkpoints')) await _db.createCollection('checkpoints');
@@ -124,19 +190,26 @@ async function ensureCollections() {
     logger.info('Seeded 3 default app users');
   }
 
-  // 12. cl2gUploads — Claude export ZIP uploads for CL2G migrations
-  if (!existing.has('cl2gUploads')) await _db.createCollection('cl2gUploads');
-  await _db.collection('cl2gUploads').createIndex({ appUserId: 1, uploadTime: -1 });
+  // 12. claudeUploads — every Claude export ZIP (source-scoped, not direction-
+  //    scoped). Same upload is usable for both CL2C and CL2G destinations.
+  await _db.collection('claudeUploads').createIndex({ appUserId: 1, uploadTime: -1 });
+  // 13. geminiUploads — every Gemini Vault export (manual ZIP + API export).
+  //    Usable for both G2C and G2G destinations.
+  await _db.collection('geminiUploads').createIndex({ appUserId: 1, uploadTime: -1 });
 
-  // 13. cl2cUploads — Claude export ZIP uploads for CL2C migrations
-  if (!existing.has('cl2cUploads')) await _db.createCollection('cl2cUploads');
-  await _db.collection('cl2cUploads').createIndex({ appUserId: 1, uploadTime: -1 });
-
-  // 14. chatHistory — persists agent chat messages per user for cross-device restore
-  if (!existing.has('chatHistory')) await _db.createCollection('chatHistory');
-  // Drop old unique index if it exists, then create correct non-unique index
+  // 14. chatHistory — persists agent chat messages per user for cross-device
+  //     restore. Holds BOTH (a) per-message docs from the agent module
+  //     (src/agent/conversationHistory.js) AND (b) the consolidated
+  //     {appUserId, messages: [...]} doc written by POST /api/chat-history.
+  //     Don't add a unique index — the per-message shape allows many docs
+  //     per user.
   try { await _db.collection('chatHistory').dropIndex('appUserId_1'); } catch (_) {}
   await _db.collection('chatHistory').createIndex({ appUserId: 1, timestamp: -1 });
+
+  // 15. userSessions — persists UI/session state per user for cross-device
+  //     restore. One doc per user; holds step, migDir, options, configs,
+  //     done flags, stats, and cosmetic UI prefs (panel split, etc).
+  await _db.collection('userSessions').createIndex({ appUserId: 1 }, { unique: true });
 
   // 15. agentAuditLog — structured per-session agent trace for the monitor UI
   if (!existing.has('agentAuditLog')) await _db.createCollection('agentAuditLog');
@@ -147,5 +220,15 @@ async function ensureCollections() {
   if (!existing.has('conversationPages')) await _db.createCollection('conversationPages');
   await _db.collection('conversationPages').createIndex({ targetEmail: 1, conversationId: 1 }, { unique: true });
 
-  logger.info('All 16 collections verified with indexes (multi-tenant scoped)');
+  // 17. conversationStore — DB-backed staging area for all 6 migration directions
+  //     (fetch-then-migrate pattern). Indexes created via the shared helper so
+  //     the schema/indexes live alongside the code that reads/writes the collection.
+  try {
+    const { ensureConversationStoreIndexes } = await import('../modules/_shared/conversationStore.js');
+    await ensureConversationStoreIndexes();
+  } catch (e) {
+    logger.warn(`conversationStore index setup non-fatal error: ${e.message}`);
+  }
+
+  logger.info('All 17 collections verified with indexes (multi-tenant scoped)');
 }

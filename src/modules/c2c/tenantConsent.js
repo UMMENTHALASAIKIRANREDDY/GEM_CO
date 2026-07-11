@@ -21,11 +21,15 @@ const ADMIN_CONSENT_URL = (tenantId) =>
   `https://login.microsoftonline.com/${tenantId || 'common'}/adminconsent`;
 
 function _resolveClientId() {
+  // Must match the client_id used by multiTenantAuth.js — otherwise tenants
+  // consent to one app and get re-prompted when we try to acquire app-only
+  // tokens against a different one. Same reason we dropped the
+  // SOURCE_AZURE_CLIENT_ID fallback (it pointed at the C2G source-reader
+  // app, shown as "AllProjects" in the consent screen).
   const clientId =
     process.env.C2C_AZURE_CLIENT_ID?.trim() ||
-    process.env.SOURCE_AZURE_CLIENT_ID?.trim() ||
     process.env.AZURE_CLIENT_ID?.trim();
-  if (!clientId) throw new Error('Azure client_id not configured.');
+  if (!clientId) throw new Error('AZURE_CLIENT_ID not configured.');
   return clientId;
 }
 

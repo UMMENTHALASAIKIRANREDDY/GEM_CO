@@ -1,0 +1,51 @@
+name: Deploy Dev — aimigration.cftools.live
+
+on:
+  push:
+    branches:
+      - dev
+
+jobs:
+  deploy:
+    name: Deploy dev to dev server
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          port: ${{ secrets.SSH_PORT }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            # Fix ownership so the SSH user can run git commands
+            echo "${{ secrets.SSH_PASSWORD }}" | sudo -S chown -R $USER:$USER /data/migration-combinations-dev
+
+            cd /data/migration-combinations-dev
+            git config --global --add safe.directory /data/migration-combinations-dev
+
+            echo "Pulling latest from dev..."
+            git fetch origin
+            git checkout dev
+            git pull origin dev
+
+            echo "Stopping existing dev containers..."
+            echo "${{ secrets.SSH_PASSWORD }}" | sudo -S docker compose -f docker-compose.dev.yml down
+
+            echo "Building new dev image..."
+            echo "${{ secrets.SSH_PASSWORD }}" | sudo -S docker compose -f docker-compose.dev.yml build --no-cache
+
+            echo "Starting dev containers..."
+            echo "${{ secrets.SSH_PASSWORD }}" | sudo -S docker compose -f docker-compose.dev.yml up -d
+
+            echo "Applying dev nginx config..."
+            echo "${{ secrets.SSH_PASSWORD }}" | sudo -S cp /data/migration-combinations-dev/nginx-dev.conf /etc/nginx/sites-available/gemco-dev
+            echo "${{ secrets.SSH_PASSWORD }}" | sudo -S ln -sf /etc/nginx/sites-available/gemco-dev /etc/nginx/sites-enabled/gemco-dev
+            echo "${{ secrets.SSH_PASSWORD }}" | sudo -S nginx -t && echo "${{ secrets.SSH_PASSWORD }}" | sudo -S nginx -s reload || true
+
+            echo "Dev deployment complete!"
+            echo "${{ secrets.SSH_PASSWORD }}" | sudo -S docker compose -f docker-compose.dev.yml ps
