@@ -655,7 +655,7 @@ export async function runAgentLoop(req, res, { message, migrationState: _migrati
     const isReturnGreet  = message === '__step_context__' && isReturningUser && history.length === 0;
 
     const greetingInstruction = isFirstMessage
-      ? `\n\n[GREETING — FIRST VISIT] Welcome ${migrationState.appUserName ?? 'the user'} by name. Introduce yourself as GEM, CloudFuze's migration assistant. In 3-4 sentences: (1) greet them by first name, (2) say what GEM can do — migrate Google Workspace, Microsoft 365 Copilot, and Claude AI conversations, (3) tell them the first step is connecting their cloud accounts on the ${migrationState.panelSwapped ? 'left' : 'right'} panel. Professional, warm, not robotic.`
+      ? `\n\n[GREETING — FIRST VISIT] Welcome ${migrationState.appUserName ?? 'the user'} by name. Introduce yourself as Prime, CloudFuze's migration assistant. In 3-4 sentences: (1) greet them by first name, (2) say what Prime can do — migrate Google Workspace, Microsoft 365 Copilot, and Claude AI conversations, (3) tell them the first step is connecting their cloud accounts on the ${migrationState.panelSwapped ? 'left' : 'right'} panel. Professional, warm, not robotic.`
       : isReturnGreet
         ? `\n\n[GREETING — RETURNING USER] Welcome ${migrationState.appUserName ?? 'back'} back by name. 1 sentence warm greeting, then immediately tell them where they left off based on current state. Be specific. No generic intros.`
         : '';

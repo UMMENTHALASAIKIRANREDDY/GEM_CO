@@ -166,9 +166,14 @@ const Step0=({googleAuthed,setGoogleAuthed,msAuthed,setMsAuthed,googleUsers,setG
   const [tab,setTab]=useState('all');
   const [selectedGoogleAccount,setSelectedGoogleAccount]=useState(()=>googleAccounts?.[0]?.accountId||null);
 
-  const loadGoogleUsers=async()=>{setLgG(true);setErrG('');try{const r=await fetch('/api/google/users');if(r.status===401){setGoogleAuthed(false);setLgG(false);return}const d=await r.json();if(d.users)setGoogleUsers(d.users);else setErrG(d.error||'Failed to load users')}catch(e){setErrG(e.message)}setLgG(false)};
+  // NOTE: 401 from these legacy single-account endpoints must NOT flip googleAuthed/msAuthed —
+  // that state is multi-account-aware and owned by /auth/status. session.googleEmail/msEmail (which
+  // these endpoints require) is only set by the original single-account OAuth callback, so any
+  // account connected/restored via the multi-account flow always 401s here even though it's genuinely
+  // connected. Previously this clobbered the correct auth state and made "Continue" unreachable.
+  const loadGoogleUsers=async()=>{setLgG(true);setErrG('');try{const r=await fetch('/api/google/users');if(r.status===401){setLgG(false);return}const d=await r.json();if(d.users)setGoogleUsers(d.users);else setErrG(d.error||'Failed to load users')}catch(e){setErrG(e.message)}setLgG(false)};
   const loadGoogleAccounts=async()=>{try{const r=await fetch('/api/auth/google/accounts');if(r.ok){const d=await r.json();if(d.accounts)setGoogleAccounts(d.accounts)}}catch(e){}};
-  const loadMsUsers=async()=>{setLgM(true);setErrM('');try{const r=await fetch('/api/ms/users');if(r.status===401){setMsAuthed(false);setLgM(false);return}const d=await r.json();if(d.users)setMsUsers(d.users);else setErrM(d.error||'Failed to load users')}catch(e){setErrM(e.message)}setLgM(false)};
+  const loadMsUsers=async()=>{setLgM(true);setErrM('');try{const r=await fetch('/api/ms/users');if(r.status===401){setLgM(false);return}const d=await r.json();if(d.users)setMsUsers(d.users);else setErrM(d.error||'Failed to load users')}catch(e){setErrM(e.message)}setLgM(false)};
   const loadMsAccounts=async()=>{try{const r=await fetch('/api/auth/ms/accounts');if(r.ok){const d=await r.json();if(d.accounts&&setMsAccounts)setMsAccounts(d.accounts)}}catch(e){}};
 
   // Track the signed-in MS admin email separately (different from msUsers[0] which is just the first user in the tenant).

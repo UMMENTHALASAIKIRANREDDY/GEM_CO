@@ -175,10 +175,17 @@ export function createG2CRouter(deps) {
 
   // ── Auth middleware helpers ───────────────────────────────────────────────
 
+  // NOTE: gate only on isGoogleAuthenticated(appUserId)/isAuthenticated(appUserId) — the
+  // multi-account-aware checks. Do NOT also require req.session.googleEmail/msEmail: those
+  // legacy single-account fields are only set by the original OAuth callback and are never
+  // populated for accounts connected via "+Add Another" or restored after a server restart,
+  // even though the account is genuinely connected. The handlers below only use
+  // googleEmail/msEmail as optional metadata (cache/DB records) — appUserId is what actually
+  // drives auth (service-account lookup / getValidToken), so requiring the legacy fields here
+  // blocked every multi-account session from ever reaching these routes.
   function requireGoogleAuth(req, res, next) {
     const appUserId = req.session?.appUser?._id?.toString() || null;
-    const googleEmail = req.session.googleEmail || null;
-    if (!appUserId || !isGoogleAuthenticated(appUserId) || !googleEmail) {
+    if (!appUserId || !isGoogleAuthenticated(appUserId)) {
       return res.status(401).json({ error: 'Google account not connected. Please sign in with Google first.' });
     }
     next();
@@ -186,8 +193,7 @@ export function createG2CRouter(deps) {
 
   function requireMsAuth(req, res, next) {
     const appUserId = req.session?.appUser?._id?.toString() || null;
-    const msEmail = req.session.msEmail || null;
-    if (!appUserId || !isAuthenticated(appUserId) || !msEmail) {
+    if (!appUserId || !isAuthenticated(appUserId)) {
       return res.status(401).json({ error: 'Microsoft account not connected. Please sign in with Microsoft first.' });
     }
     next();
@@ -195,12 +201,10 @@ export function createG2CRouter(deps) {
 
   function requireWorkspace(req, res, next) {
     const appUserId = req.session?.appUser?._id?.toString() || null;
-    const googleEmail = req.session.googleEmail || null;
-    const msEmail = req.session.msEmail || null;
-    if (!appUserId || !isGoogleAuthenticated(appUserId) || !googleEmail) {
+    if (!appUserId || !isGoogleAuthenticated(appUserId)) {
       return res.status(401).json({ error: 'Google account not connected. Please sign in with Google first.' });
     }
-    if (!isAuthenticated(appUserId) || !msEmail) {
+    if (!isAuthenticated(appUserId)) {
       return res.status(401).json({ error: 'Microsoft account not connected. Please sign in with Microsoft first.' });
     }
     next();
