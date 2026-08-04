@@ -1,9 +1,14 @@
+import { fileURLToPath } from 'url';
+import path from 'path';
 import AdmZip from 'adm-zip';
+import sharp from 'sharp';
 import { getValidToken } from '../core/auth/microsoft.js';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('agent:deployer');
 const GRAPH_V1 = 'https://graph.microsoft.com/v1.0';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const LOGO_PATH = path.join(__dirname, '..', '..', 'ui', 'assets', 'CloudFuze blue.png');
 
 /**
  * Builds and deploys a "Gemini Conversation Agent" declarative agent
@@ -71,7 +76,7 @@ export class AgentDeployer {
 
     // Step 2: Build and publish
     logger.info(`Publishing agent: "${this.agentName}"`);
-    const zipBuffer = this._buildAppPackage();
+    const zipBuffer = await this._buildAppPackage();
     const appInfo = await this._publishToCatalog(zipBuffer);
     logger.info(`Agent published to catalog: ${appInfo.id}`);
 
@@ -84,7 +89,7 @@ export class AgentDeployer {
 
   async updateAgent(catalogId) {
     logger.info(`Updating agent in catalog: ${catalogId}`);
-    const zipBuffer = this._buildAppPackage();
+    const zipBuffer = await this._buildAppPackage();
     const headers = await this._headers();
 
     const response = await fetch(
@@ -185,7 +190,7 @@ NEVER fabricate conversation content or mix content from different conversations
    *  - declarativeAgent.json (agent config)
    *  - color.png + outline.png (icons)
    */
-  _buildAppPackage() {
+  async _buildAppPackage() {
     const zip = new AdmZip();
 
     // 1. Declarative agent manifest
@@ -276,32 +281,25 @@ NEVER fabricate conversation content or mix content from different conversations
 
     zip.addFile('manifest.json', Buffer.from(JSON.stringify(appManifest, null, 2)));
 
-    // 3. Icons — generate simple colored PNGs
-    zip.addFile('color.png', this._generateIcon(192));
-    zip.addFile('outline.png', this._generateIcon(32));
+    // 3. Icons — real CloudFuze branding, resized to Teams/Copilot's exact required dimensions
+    zip.addFile('color.png', await this._generateIcon(192));
+    zip.addFile('outline.png', await this._generateIcon(32, { greyscale: true }));
 
     return zip.toBuffer();
   }
 
   /**
-   * Generate a simple PNG icon (solid color square with "G" text).
-   * Uses a minimal valid PNG — no external dependencies needed.
+   * Render the CloudFuze logo (ui/assets/CloudFuze blue.png) into the square PNG
+   * Teams/Copilot requires: 192x192 color icon, 32x32 outline icon. Letterboxed
+   * onto a transparent square since the source logo is a wide wordmark, not square.
    */
-  _generateIcon(size) {
-    // Minimal valid 1x1 PNG (blue pixel), scaled by the platform
-    // In production, replace with actual brand icon files
-    const pngHeader = Buffer.from([
-      0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
-      0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, // IHDR chunk
-      0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // 1x1
-      0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, // 8-bit RGB
-      0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, // IDAT chunk
-      0x54, 0x08, 0xD7, 0x63, 0x60, 0x60, 0xF8, 0x0F, // compressed data
-      0x00, 0x00, 0x01, 0x01, 0x00, 0x05, 0x18, 0xD8, //
-      0x4D, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, // IEND chunk
-      0x44, 0xAE, 0x42, 0x60, 0x82
-    ]);
-    return pngHeader;
+  async _generateIcon(size, { greyscale = false } = {}) {
+    let pipeline = sharp(LOGO_PATH).resize(size, size, {
+      fit: 'contain',
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    });
+    if (greyscale) pipeline = pipeline.greyscale();
+    return pipeline.png().toBuffer();
   }
 
   /**
