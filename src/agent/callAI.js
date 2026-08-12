@@ -79,7 +79,7 @@ export async function callAI(messages, tools, { model, maxTokens } = {}) {
 
   // OPENAI_API_KEY takes priority — use OpenAI directly even if Azure vars are set
   if (openaiKey) {
-    const resolvedModel = model || process.env.OPENAI_MODEL || 'gpt-4.1-mini';
+    const resolvedModel = model || process.env.OPENAI_MODEL || 'gpt-4o-mini';
     const body = { model: resolvedModel, messages: safeMessages, max_tokens: maxTokens || 1800, temperature: 0.15 };
     if (tools) { body.tools = tools; body.tool_choice = 'auto'; }
     const r = await _fetchWithRetry(
