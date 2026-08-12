@@ -137,7 +137,7 @@ Rules:
         role: 'user',
         content: `State: ${stateCtx}\nAssistant just said: "${snippet}"\n\nReturn 3 chips as JSON array:`,
       },
-    ], null, { model: 'gpt-4.1-mini', maxTokens: 80 });
+    ], null, { model: 'gpt-4o-mini', maxTokens: 80 });
 
     const raw = (res.content || '').trim();
     // Extract JSON array from response (LLM sometimes wraps in markdown)
